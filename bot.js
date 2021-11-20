@@ -8,6 +8,7 @@ const app = express();
 const server = require('http').createServer(app);
 const Web3 = require("web3");
 const WebSocket = require('ws');
+const fetch = require('node-fetch');
 
 // -----------------------------------------
 // 2. GLOBAL VARIABLES
