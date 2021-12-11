@@ -224,7 +224,6 @@ setInterval(() => {
 		gasPriceGwei = Math.round(r.fastest);
 		gasPriceGwei = gasPriceGwei < process.env.MIN_GAS_PRICE_GWEI ? parseFloat(process.env.MIN_GAS_PRICE_GWEI) : gasPriceGwei;
 		gasPriceGwei = gasPriceGwei > process.env.MAX_GAS_PRICE_GWEI ? parseFloat(process.env.MAX_GAS_PRICE_GWEI) : gasPriceGwei;
-		console.log(gasPriceGwei);
 	}).catch(() => { console.log("Error while fetching fastest gwei from gas station.") });
 }, 3*1000);
 
