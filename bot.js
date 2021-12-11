@@ -123,7 +123,7 @@ async function selectProvider(n){
 }
 
 const getProvider = (wssId) => {
-	const provider = new Web3.providers.WebsocketProvider(WSS_URLS[wssId], {headers:{authgf: 'gf928x0209300'},clientConfig:{keepalive:true,keepaliveInterval:30*1000}});
+	const provider = new Web3.providers.WebsocketProvider(WSS_URLS[wssId], {clientConfig:{keepalive:true,keepaliveInterval:30*1000}});
 
 	provider.on('close', () => {
 		setTimeout(() => {
