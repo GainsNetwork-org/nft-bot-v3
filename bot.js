@@ -23,8 +23,9 @@ const LINK_ABI = [{"constant":true,"inputs":[],"name":"name","outputs":[{"name":
 const VAULT_ABI = [{"inputs":[{"internalType":"contractStorageInterfaceV5","name":"_storageT","type":"address"},{"internalType":"uint256","name":"_waitBlocksBase","type":"uint256"},{"internalType":"uint256","name":"_refillLiqP","type":"uint256"},{"internalType":"uint256","name":"_power","type":"uint256"},{"internalType":"uint256","name":"_swapFeeP","type":"uint256"}],"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"string","name":"name","type":"string"},{"indexed":false,"internalType":"address","name":"a","type":"address"}],"name":"AddressUpdated","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"trader","type":"address"},{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"newCurrentBalanceDai","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"maxBalanceDai","type":"uint256"}],"name":"DaiClaimed","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"caller","type":"address"},{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"newCurrentBalanceDai","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"newMaxBalanceDai","type":"uint256"}],"name":"DaiDeposited","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"caller","type":"address"},{"indexed":false,"internalType":"uint256","name":"daiAmount","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"newCurrentBalanceDai","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"maxBalanceDai","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"tokensMinted","type":"uint256"}],"name":"DaiRefilled","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"caller","type":"address"},{"indexed":false,"internalType":"address","name":"trader","type":"address"},{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"newCurrentBalanceDai","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"maxBalanceDai","type":"uint256"}],"name":"DaiSent","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"caller","type":"address"},{"indexed":false,"internalType":"address","name":"trader","type":"address"},{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"currentBalanceDai","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"maxBalanceDai","type":"uint256"}],"name":"DaiToClaim","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"caller","type":"address"},{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"newCurrentBalanceDai","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"newMaxBalanceDai","type":"uint256"}],"name":"DaiWithdrawn","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"string","name":"name","type":"string"},{"indexed":false,"internalType":"uint256","name":"value","type":"uint256"}],"name":"NumberUpdated","type":"event"},{"inputs":[],"name":"PRECISION","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function","constant":true},{"inputs":[],"name":"currentBalanceDai","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function","constant":true},{"inputs":[{"internalType":"address","name":"","type":"address"}],"name":"daiToClaim","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function","constant":true},{"inputs":[],"name":"lastRefill","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function","constant":true},{"inputs":[],"name":"maxBalanceDai","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function","constant":true},{"inputs":[],"name":"power","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function","constant":true},{"inputs":[],"name":"refillLiqP","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function","constant":true},{"inputs":[],"name":"storageT","outputs":[{"internalType":"contractStorageInterfaceV5","name":"","type":"address"}],"stateMutability":"view","type":"function","constant":true},{"inputs":[],"name":"swapFeeP","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function","constant":true},{"inputs":[],"name":"waitBlocksBase","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function","constant":true},{"inputs":[{"internalType":"contractStorageInterfaceV5","name":"_storageT","type":"address"}],"name":"setStorageT","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint256","name":"_waitBlocksBase","type":"uint256"}],"name":"setWaitBlocksBase","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint256","name":"_refillLiqP","type":"uint256"}],"name":"setRefillLiqP","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint256","name":"_power","type":"uint256"}],"name":"setPower","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint256","name":"_swapFeeP","type":"uint256"}],"name":"setSwapFeeP","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint256","name":"_amount","type":"uint256"}],"name":"depositDai","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint256","name":"_amount","type":"uint256"}],"name":"withdrawDai","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"_trader","type":"address"},{"internalType":"uint256","name":"_amount","type":"uint256"}],"name":"sendDaiToTrader","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"claimDai","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"refill","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"canRefill","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function","constant":true},{"inputs":[{"internalType":"uint256","name":"_currentBalanceDai","type":"uint256"},{"internalType":"uint256","name":"_maxBalanceDai","type":"uint256"}],"name":"blocksToWait","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function","constant":true},{"inputs":[{"internalType":"address","name":"_trader","type":"address"}],"name":"backend","outputs":[{"internalType":"uint256","name":"","type":"uint256"},{"internalType":"uint256","name":"","type":"uint256"},{"internalType":"uint256","name":"","type":"uint256"},{"components":[{"internalType":"uint256","name":"leverageUnlocked","type":"uint256"},{"internalType":"address","name":"referral","type":"address"},{"internalType":"uint256","name":"referralRewardsTotal","type":"uint256"}],"internalType":"structStorageInterfaceV5.Trader","name":"","type":"tuple"},{"internalType":"uint256[]","name":"","type":"uint256[]"},{"components":[{"components":[{"internalType":"address","name":"trader","type":"address"},{"internalType":"uint256","name":"pairIndex","type":"uint256"},{"internalType":"uint256","name":"index","type":"uint256"},{"internalType":"uint256","name":"initialPosToken","type":"uint256"},{"internalType":"uint256","name":"positionSizeDai","type":"uint256"},{"internalType":"uint256","name":"openPrice","type":"uint256"},{"internalType":"bool","name":"buy","type":"bool"},{"internalType":"uint256","name":"leverage","type":"uint256"},{"internalType":"uint256","name":"tp","type":"uint256"},{"internalType":"uint256","name":"sl","type":"uint256"}],"internalType":"structStorageInterfaceV5.Trade","name":"trade","type":"tuple"},{"internalType":"uint256","name":"block","type":"uint256"},{"internalType":"uint256","name":"wantedPrice","type":"uint256"},{"internalType":"uint256","name":"slippageP","type":"uint256"},{"internalType":"uint256","name":"spreadReductionP","type":"uint256"},{"internalType":"uint256","name":"tokenId","type":"uint256"}],"internalType":"structStorageInterfaceV5.PendingMarketOrder[]","name":"","type":"tuple[]"},{"internalType":"uint256[][5]","name":"","type":"uint256[][5]"}],"stateMutability":"view","type":"function","constant":true}];
 
 let allowedLink = false, selectedProvider = null, eventSubTrading = null, eventSubCallbacks = null, nonce = null,
-	providers = [], web3 = [], openTrades = [], pairs = [], openInterests = [], nfts = [], nftsBeingUsed = [], ordersTriggered = [],
-	storageContract, tradingContract, tradingAddress, aggregatorContract, callbacksContract, vaultContract, gasPriceGwei,
+	providers = [], web3 = [], blocks = [], gasPriceGwei = process.env.MIN_GAS_PRICE_GWEI,
+	openTrades = [], pairs = [], openInterests = [], nfts = [], nftsBeingUsed = [], ordersTriggered = [],
+	storageContract, tradingContract, tradingAddress, aggregatorContract, callbacksContract, vaultContract,
 	nftTimelock, maxTradesPerPair,
 	nftContract1, nftContract2, nftContract3, nftContract4, nftContract5, linkContract;
 
@@ -35,8 +36,8 @@ let allowedLink = false, selectedProvider = null, eventSubTrading = null, eventS
 console.log("Welcome to the Gains.farm NFT bot!");
 if(!process.env.WSS_URLS || !process.env.PRICES_URL || !process.env.STORAGE_ADDRESS
 || !process.env.PRIVATE_KEY || !process.env.PUBLIC_KEY || !process.env.EVENT_CONFIRMATIONS_SEC 
-|| !process.env.TRIGGER_TIMEOUT || !process.env.GAS_PRICE_GWEI || !process.env.CHECK_REFILL_SEC
-|| !process.env.VAULT_REFILL_ENABLED){
+|| !process.env.TRIGGER_TIMEOUT || !process.env.MIN_GAS_PRICE_GWEI || !process.env.MAX_GAS_PRICE_GWEI 
+|| !process.env.CHECK_REFILL_SEC || !process.env.VAULT_REFILL_ENABLED){
 	console.log("Please fill all parameters in the .env file.");
 	process.exit();
 }
@@ -81,6 +82,7 @@ async function checkLinkAllowance(){
 // -----------------------------------------
 
 const WSS_URLS = process.env.WSS_URLS.split(",");
+blocks = new Array(WSS_URLS.length).fill(0);
 
 async function selectProvider(n){
 	selectedProvider = n;
@@ -145,7 +147,7 @@ const getProvider = (wssId) => {
 				providers[wssId] = getProvider(wssId);
 				web3[wssId] = new Web3(providers[wssId]);
 			}
-		}, 5*1000);
+		}, 1*1000);
 	});
 
 	provider.on('connect', () => {
@@ -168,9 +170,9 @@ const getProvider = (wssId) => {
 					console.log("No need to switch WSS, already connected to " + WSS_URLS[selectedProvider]);
 				}
 			}
-		}, 5*1000);
+		}, 1*1000);
 	});
-	provider.on('error', (error) => console.log("WSS "+WSS_URLS[wssId]+" error", error));
+	provider.on('error', () => { console.log("WSS "+WSS_URLS[wssId]+" error"); provider.disconnect(); });
 	return provider;
 };
 
@@ -180,43 +182,54 @@ for(var i = 0; i < WSS_URLS.length; i++){
 	web3.push(new Web3(provider));
 }
 
-setInterval(async () => {
+function checkWssAlive(){
 	let promises = [];
 	for(let i = 0; i < WSS_URLS.length; i++){
 		(function(index) {
-			web3[index].eth.net.isListening().then(async () => {
-				promises.push({index: index, promise:web3[index].eth.getBlockNumber()});
-				if(promises.length === WSS_URLS.length){ compareBlocks(promises); }
+			web3[index].eth.getBlockNumber().then((b) => {
+				blocks[index] = b;
 			}).catch(() => {
-				promises.push({index: index, promise: null});
-				if(promises.length === WSS_URLS.length){ compareBlocks(promises); }
+				blocks[index] = 0;
 			});
 		})(i);
 	}
-}, 20*1000);
 
-function compareBlocks(promises){
-	let orderedPromises = [];
-	for(let i = 0; i < promises.length; i++){
-		orderedPromises[promises[i].index] = promises[i].promise;
-	}
-	Promise.all(orderedPromises).then((b) => {
+	setTimeout(() => {
+		console.log("Blocks: ", blocks);
 		for(var i = 0; i < WSS_URLS.length; i++){
-			if(b[i] > b[selectedProvider] + 4){
-				console.log("Switched to WSS " + WSS_URLS[i] + " (block #" + b[i] + " vs #" + b[selectedProvider]);
+			if(blocks[i] >= blocks[selectedProvider] + 5){
+				console.log("Switched to WSS "+WSS_URLS[i]+" #"+i+" (" + blocks[i] + " vs " + blocks[selectedProvider]+")");
 				selectProvider(i);
 				break;
 			}
 		}
-	});
+	}, 3*1000);
 }
 
+checkWssAlive();
+setInterval(async () => {
+	checkWssAlive();
+}, 10*1000);
+
 setInterval(() => {
-	console.log("Current WSS: " + WSS_URLS[selectedProvider]);
+	console.log("Current WSS: " + web3[selectedProvider].currentProvider.url + " (#"+selectedProvider+")");
 }, 120*1000);
 
 // -----------------------------------------
-// 5. FETCH PAIRS, NFTS, AND NFT TIMELOCK
+// 5. FETCH DYNAMIC GAS PRICE
+// -----------------------------------------
+
+setInterval(() => {
+	fetch("https://gasstation-mainnet.matic.network/").then(r => r.json()).then((r) => {
+		gasPriceGwei = Math.round(r.fastest);
+		gasPriceGwei = gasPriceGwei < process.env.MIN_GAS_PRICE_GWEI ? parseFloat(process.env.MIN_GAS_PRICE_GWEI) : gasPriceGwei;
+		gasPriceGwei = gasPriceGwei > process.env.MAX_GAS_PRICE_GWEI ? parseFloat(process.env.MAX_GAS_PRICE_GWEI) : gasPriceGwei;
+		console.log(gasPriceGwei);
+	}).catch(() => { console.log("Error while fetching fastest gwei from gas station.") });
+}, 3*1000);
+
+// -----------------------------------------
+// 6. FETCH PAIRS, NFTS, AND NFT TIMELOCK
 // -----------------------------------------
 
 async function fetchTradingVariables(){
@@ -285,7 +298,7 @@ setInterval(() => {
 }, 60*5*1000);
 
 // -----------------------------------------
-// 6. SELECT NFT TO EXECUTE ORDERS
+// 7. SELECT NFT TO EXECUTE ORDERS
 // -----------------------------------------
 
 async function selectNft(){
@@ -298,8 +311,7 @@ async function selectNft(){
 			for(var i = 0; i < nfts.length; i++){
 				const lastSuccess = await storageContract.methods.nftLastSuccess(nfts[i].id).call();
 				if(parseFloat(currentBlock) - parseFloat(lastSuccess) >= nftTimelock
-				//&& !nftsBeingUsed.includes(nfts[i].id)
-				){
+				&& !nftsBeingUsed.includes(nfts[i].id)){
 					console.log("Selected NFT #" + nfts[i].id);
 					resolve(nfts[i]);
 					return;
@@ -314,19 +326,6 @@ async function selectNft(){
 		});
 	});
 }
-
-// -----------------------------------------
-// 7. FETCH DYNAMIC GAS PRICE
-// -----------------------------------------
-
-setInterval(() => {
-	fetch("https://gasstation-mainnet.matic.network/").then(r => r.json()).then((r) => {
-		const gasPrice = Math.round(r.fastest) < 300 ? Math.round(r.fastest) : 300;
-		gasPriceGwei = gasPrice.toString();
-	}).catch(() => {
-		gasPriceGwei = process.env.GAS_PRICE_GWEI;
-	});
-}, 3*1000);
 
 // -----------------------------------------
 // 8. LOAD OPEN TRADES
@@ -663,18 +662,14 @@ function wss(){
 					const orderInfo = {nftId: nft.id, trade: t, type: orderType,
 						name: orderType === 0 ? "TP" : orderType === 1 ? "SL" : orderType === 2 ? "LIQ" : "OPEN LIMIT"};
 
-					console.log("Try to trigger (order type: " + orderInfo.name + ", nft id: "+orderInfo.nftId+")");
-
-					//nonce = await web3[selectedProvider].eth.getTransactionCount(process.env.PUBLIC_KEY);
+					//console.log("Try to trigger (order type: " + orderInfo.name + ", nft id: "+orderInfo.nftId+")");
 
 					tradingContract.methods.executeNftOrder(orderType, t.trader, t.pairIndex, t.index, nft.id, nft.type)
 					.estimateGas({from: process.env.PUBLIC_KEY}, (error, result) => {
 						if(error){
-							console.log("Tx error, not triggering. You probably need to refill your address with LINK or MATIC tokens.");
+							console.log("Tx error (order type: " + orderInfo.name + ", nft id: "+orderInfo.nftId+"), not triggering: ", error.message);
 						}else{
-							if(alreadyTriggered(t, orderType) 
-							//|| nftsBeingUsed.includes(nft.id)
-							) return;
+							if(alreadyTriggered(t, orderType) || nftsBeingUsed.includes(nft.id)) return;
 
 							nftsBeingUsed.push(nft.id);
 							ordersTriggered.push({trade: t, orderType: orderType});
@@ -686,7 +681,6 @@ function wss(){
 							    gasPrice: web3[selectedProvider].utils.toHex(gasPriceGwei*1e9),
 							    gas: web3[selectedProvider].utils.toHex("2000000"),
 							    gasLimit: web3[selectedProvider].utils.toHex("3000000")
-							    //nonce: nonce
 							};
 
 							web3[selectedProvider].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY).then(signed => {
