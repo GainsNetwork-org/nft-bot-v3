@@ -722,7 +722,7 @@ wss();
 
 if(process.env.VAULT_REFILL_ENABLED){
 	async function refill(){
-		await vaultContract.methods.refill().estimateGas({from: process.env.PUBLIC_KEY}, (error, result) => {
+		vaultContract.methods.refill().estimateGas({from: process.env.PUBLIC_KEY}, (error, result) => {
 			if(!error){
 				const tx = {
 					from: process.env.PUBLIC_KEY,
@@ -748,7 +748,7 @@ if(process.env.VAULT_REFILL_ENABLED){
 	}
 
 	async function deplete(){
-		await vaultContract.methods.deplete().estimateGas({from: process.env.PUBLIC_KEY}, (error, result) => {
+		vaultContract.methods.deplete().estimateGas({from: process.env.PUBLIC_KEY}, (error, result) => {
 			if(!error){
 				const tx = {
 					from: process.env.PUBLIC_KEY,
