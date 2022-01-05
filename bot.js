@@ -669,7 +669,9 @@ function wss(){
 						if(error){
 							console.log("Tx error (order type: " + orderInfo.name + ", nft id: "+orderInfo.nftId+"), not triggering: ", error.message);
 						}else{
-							if(alreadyTriggered(t, orderType) || nftsBeingUsed.includes(nft.id)) return;
+							if(alreadyTriggered(t, orderType) 
+							//|| nftsBeingUsed.includes(nft.id)
+							){ return };
 
 							nftsBeingUsed.push(nft.id);
 							ordersTriggered.push({trade: t, orderType: orderType});
