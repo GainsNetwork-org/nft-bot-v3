@@ -654,11 +654,14 @@ function wss(){
 					const spread = spreadsP[t.pairIndex]/1e10*(100-t.spreadReductionP)/100;
 					const priceIncludingSpread = !buy ? price*(1-spread/100) : price*(1+spread/100);
 					const interestDai = buy ? parseFloat(openInterests[t.pairIndex].long) : parseFloat(openInterests[t.pairIndex].short);
+					const collateralDai = buy ? parseFloat(collaterals[t.pairIndex].long) : parseFloat(collaterals[t.pairIndex].short);
 					const newInterestDai = (interestDai + parseFloat(t.leverage)*parseFloat(t.positionSize));
+					const newCollateralDai = (collateralDai + parseFloat(t.positionSize));
 					const maxInterestDai = parseFloat(openInterests[t.pairIndex].max);
+					const maxCollateralDai = parseFloat(collaterals[t.pairIndex].max);
 
 					if(priceIncludingSpread >= parseFloat(t.minPrice)/1e10 && priceIncludingSpread <= parseFloat(t.maxPrice)/1e10
-					&& newInterestDai <= maxInterestDai){
+					&& newInterestDai <= maxInterestDai && newCollateralDai <= maxCollateralDai){
 						orderType = 3;
 					}
 				}
