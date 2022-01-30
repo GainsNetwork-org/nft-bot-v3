@@ -294,7 +294,6 @@ async function fetchTradingVariables(){
 			maxTradesPerPair = maxPerPair;
 
 			console.log("Fetched trading variables.");
-			console.log(openInterests, collaterals, spreadsP);
 		});
 	}).catch(() => {
 		setTimeout(() => { fetchTradingVariables(); }, 2*1000);
