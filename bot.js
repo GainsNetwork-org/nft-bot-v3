@@ -830,12 +830,17 @@ if(process.env.AUTO_HARVEST_SEC > 0){
 		let currentRound = await nftRewardsContract.methods.currentRound().call();
 		currentRound = parseFloat(currentRound.toString());
 
-		nftRewardsContract.methods.claimPoolTokens(currentRound-101, currentRound-1).estimateGas({from: process.env.PUBLIC_KEY}, (error, result) => {
+		if(currentRound === 0) return;
+
+		const fromRound = currentRound < 101 ? 0 : currentRound-101;
+		const toRound =  currentRound - 1;
+
+		nftRewardsContract.methods.claimPoolTokens(fromRound, toRound).estimateGas({from: process.env.PUBLIC_KEY}, (error, result) => {
 			if(!error){
 				const tx = {
 					from: process.env.PUBLIC_KEY,
 				    to : nftRewardsContract.options.address,
-				    data : nftRewardsContract.methods.claimPoolTokens(currentRound-101, currentRound-1).encodeABI(),
+				    data : nftRewardsContract.methods.claimPoolTokens(fromRound, toRound).encodeABI(),
 				    gasPrice: web3[selectedProvider].utils.toHex(gasPriceGwei*1e9),
 				    gas: web3[selectedProvider].utils.toHex("1000000"),
 				    gasLimit: web3[selectedProvider].utils.toHex("500000")
