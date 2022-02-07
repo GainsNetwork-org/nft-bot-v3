@@ -629,20 +629,16 @@ function wss(){
 		if(p.closes === undefined) return;
 		
 		if(spreadsP.length > 0 && allowedLink){
-			for (let i = openTrades.length - 1; i > 0; i--) {
-				const j = Math.floor(Math.random() * (i + 1));
-				const temp = openTrades[i];
-				openTrades[i] = openTrades[j];
-				openTrades[j] = temp;
-			}
 
 			for(var i = 0; i < openTrades.length; i++){
+
 				const t = openTrades[i];
 				const price = p.closes[t.pairIndex];
 				const buy = t.buy.toString() === "true";
 				let orderType = -1;
 
 				if(t.openPrice !== undefined){
+
 					const tp = parseFloat(t.tp)/1e10;
 					const sl = parseFloat(t.sl)/1e10;
 					const open = parseFloat(t.openPrice)/1e10;
@@ -656,7 +652,9 @@ function wss(){
 					}else if(sl.toString() === "0" && ((buy && price <= liqPrice) || (!buy && price >= liqPrice))){
 						orderType = 2;
 					}
+
 				}else{
+
 					const spread = spreadsP[t.pairIndex]/1e10*(100-t.spreadReductionP)/100;
 					const priceIncludingSpread = !buy ? price*(1-spread/100) : price*(1+spread/100);
 					const interestDai = buy ? parseFloat(openInterests[t.pairIndex].long) : parseFloat(openInterests[t.pairIndex].short);
@@ -665,24 +663,25 @@ function wss(){
 					const newCollateralDai = (collateralDai + parseFloat(t.positionSize));
 					const maxInterestDai = parseFloat(openInterests[t.pairIndex].max);
 					const maxCollateralDai = parseFloat(collaterals[t.pairIndex].max);
+					const minPrice = parseFloat(t.minPrice)/1e10;
+					const maxPrice = parseFloat(t.maxPrice)/1e10;
 
 					if(newInterestDai <= maxInterestDai && newCollateralDai <= maxCollateralDai){
-						if(t.type.toString() === "0" && priceIncludingSpread >= parseFloat(t.minPrice)/1e10 && priceIncludingSpread <= parseFloat(t.maxPrice)/1e10
-						|| t.type.toString() === "1" && (buy ? priceIncludingSpread <= parseFloat(t.maxPrice)/1e10 : priceIncludingSpread >= parseFloat(t.minPrice)/1e10)
-						|| t.type.toString() === "2" && (buy ? priceIncludingSpread >= parseFloat(t.minPrice)/1e10 : priceIncludingSpread <= parseFloat(t.maxPrice)/1e10)){
+						if(t.type.toString() === "0" && priceIncludingSpread >= minPrice && priceIncludingSpread <= maxPrice
+						|| t.type.toString() === "1" && (buy ? priceIncludingSpread <= maxPrice : priceIncludingSpread >= minPrice)
+						|| t.type.toString() === "2" && (buy ? priceIncludingSpread >= minPrice : priceIncludingSpread <= maxPrice)){
 							orderType = 3;
 						}
 					}
 				}
 
 				if(orderType > -1 && !alreadyTriggered(t, orderType)){
+
 					const nft = await selectNft();
-					if(nft === null){ 
-						return; 
-					}
+					if(nft === null){ return; }
 
 					const orderInfo = {nftId: nft.id, trade: t, type: orderType,
-						name: orderType === 0 ? "TP" : orderType === 1 ? "SL" : orderType === 2 ? "LIQ" : "OPEN LIMIT"};
+						name: orderType === 0 ? "TP" : orderType === 1 ? "SL" : orderType === 2 ? "LIQ" : "OPEN"};
 
 					//console.log("Try to trigger (order type: " + orderInfo.name + ", nft id: "+orderInfo.nftId+")");
 
@@ -850,7 +849,7 @@ if(process.env.AUTO_HARVEST_SEC > 0){
 				    data : nftRewardsContract.methods.claimPoolTokens(fromRound, toRound).encodeABI(),
 				    maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
 				    maxFeePerGas: web3[selectedProvider].utils.toHex(process.env.MAX_GAS_PRICE_GWEI*1e9),
-				    gas: web3[selectedProvider].utils.toHex("1000000")
+				    gas: web3[selectedProvider].utils.toHex("3000000")
 				};
 
 				web3[selectedProvider].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY).then(signed => {
