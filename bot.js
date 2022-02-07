@@ -364,6 +364,8 @@ async function fetchOpenTrades(){
 
 		Promise.all(openLimitOrdersPromises).then(async (l) => {
 			for(var j = 0; j < l.length; j++){
+				const type = await nftRewardsContract.methods.openLimitOrderTypes(l[j].trader, l[j].pairIndex, l[j].index).call();
+				l[j].type = type;
 				openTrades.push(l[j]);
 			}
 
@@ -492,6 +494,9 @@ async function refreshOpenTrades(event){
 				const id = await storageContract.methods.openLimitOrderIds(v.trader, v.pairIndex, v.index).call();
 				const limit = await storageContract.methods.openLimitOrders(id).call();
 				let found = false;
+
+				const type = await nftRewardsContract.methods.openLimitOrderTypes(l[j].trader, l[j].pairIndex, l[j].index).call();
+				limit.type = type;
 
 				for(var i = 0; i < openTrades.length; i++){
 
@@ -661,9 +666,12 @@ function wss(){
 					const maxInterestDai = parseFloat(openInterests[t.pairIndex].max);
 					const maxCollateralDai = parseFloat(collaterals[t.pairIndex].max);
 
-					if(priceIncludingSpread >= parseFloat(t.minPrice)/1e10 && priceIncludingSpread <= parseFloat(t.maxPrice)/1e10
-					&& newInterestDai <= maxInterestDai && newCollateralDai <= maxCollateralDai){
-						orderType = 3;
+					if(newInterestDai <= maxInterestDai && newCollateralDai <= maxCollateralDai){
+						if(t.type.toString() === "0" && priceIncludingSpread >= parseFloat(t.minPrice)/1e10 && priceIncludingSpread <= parseFloat(t.maxPrice)/1e10
+						|| t.type.toString() === "1" && (buy ? priceIncludingSpread <= parseFloat(t.maxPrice)/1e10 : priceIncludingSpread >= parseFloat(t.minPrice)/1e10)
+						|| t.type.toString() === "2" && (buy ? priceIncludingSpread >= parseFloat(t.minPrice)/1e10 : priceIncludingSpread <= parseFloat(t.maxPrice)/1e10)){
+							orderType = 3;
+						}
 					}
 				}
 
