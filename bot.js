@@ -495,7 +495,7 @@ async function refreshOpenTrades(event){
 				const limit = await storageContract.methods.openLimitOrders(id).call();
 				let found = false;
 
-				const type = await nftRewardsContract.methods.openLimitOrderTypes(l[j].trader, l[j].pairIndex, l[j].index).call();
+				const type = await nftRewardsContract.methods.openLimitOrderTypes(v.trader, v.pairIndex, v.index).call();
 				limit.type = type;
 
 				for(var i = 0; i < openTrades.length; i++){
