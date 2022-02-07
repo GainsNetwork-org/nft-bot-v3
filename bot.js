@@ -322,7 +322,7 @@ async function selectNft(){
 				const lastSuccess = await storageContract.methods.nftLastSuccess(nfts[i].id).call();
 				if(parseFloat(currentBlock) - parseFloat(lastSuccess) >= nftTimelock
 				&& !nftsBeingUsed.includes(nfts[i].id)){
-					console.log("Selected NFT #" + nfts[i].id);
+					//console.log("Selected NFT #" + nfts[i].id);
 					resolve(nfts[i]);
 					return;
 				}
