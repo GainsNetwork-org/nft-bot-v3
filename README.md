@@ -1,11 +1,11 @@
-# Gains.farm NFT Bot (v5 update)
-Bot that executes limit orders for the v5 of Gains.farm, the decentralized leveraged trading platform on Polygon.
+# NFT bot for gTrade v6
+Bot that executes limit orders of gTrade, the decentralized leveraged trading platform on Polygon.
 
 ## Preparation
 
-1. We recommend creating a specific address/wallet, otherwise it might create problems if you use the address the bot uses while it's running (nonce errors).
+1. We recommend creating a specific address/wallet, otherwise it might create problems if you use the address the bot uses while it's running (nonce).
 
--> You can send all your NFTs to this new wallet using the block explorer, using the "transferFrom" function.
+-> You can send your NFTs to this new wallet using the block explorer, using the "transferFrom" function.
 
 Links to the NFTs:
 
@@ -19,13 +19,19 @@ https://polygonscan.com/token/0x2d266a94469d05c9e06d52a4d0d9c23b157767c2#writeCo
 
 Because the "normal" LINK token on Polygon is an ERC20, and oracles only support the ERC677 version, you will need to convert your LINK tokens here: https://pegswap.chain.link/
 
-Each request to trigger an order will cost some LINK (0.003% of pos x leverage for cryptos, 0.0006% for forex) to pay our node operators for our real-time feed.
+Each request to trigger an order will cost LINK (0.002% of collateral x leverage for cryptos, 0.0002% for forex) to pay our node operators for the real-time on-chain feed.
+
+Only the first to trigger an order will pay the LINK cost, as if the trigger is successful, he is guaranteed to get 40% of the trigger reward.
+
+Then, another 40% goes into a pool to be shared proportionally by the number of orders NFT bots executed during the current round (= 50 orders), to incentivize better the execution of smaller trades as they give you access to bigger rewards in a pool.
+
+Finally, 20% goes to the 10 first NFT bots that triggered right after the first to trigger in the same block, to incentivize more bots running and reduce gas wars.
 
 ## Tutorial (run locally)
 
 ### 1. Clone the repo & install the dependencies
 
-1. `git clone https://github.com/GainsFarm/nft-bot-v2.git`
+1. `git clone https://github.com/GainsNetwork/nft-bot-v3.git`
 2. `npm install`
 
 ### 2. Edit the .env variables
@@ -33,6 +39,9 @@ Each request to trigger an order will cost some LINK (0.003% of pos x leverage f
 1. Set WSS_URLS to your dedicated WSS endpoints (recommended, but ignore if you don't have any)
 2. Set PRIVATE_KEY to your account's private key (needed to sign the transactions)
 3. Set PUBLIC_KEY to your account's public key
+4. Set MAX_GAS_PRICE_GWEI to the max gas price you want to pay for each trigger
+5. Set VAULT_REFILL_ENABLED to true if you want to contribute to the decentralization of the vault refilling mechanism (no incentive)
+6. Set AUTO_HARVEST_SEC to the frequency at which you want to harvest your trigger rewards (0 = disabled)
 
 ### 3. Run the bot
 
@@ -59,6 +68,3 @@ In Heroku: `Settings > Reveal Config Vars > Add`
 
 1. Connect Github to your account
 2. Deploy your main branch
-
-## Vault refills
-If you want to help the ecosystem, you can keep the .env variable named "VAULT_REFILL_ENABLED" set to "true", it contributes to the decentralization of the vault refilling mechanism. If you want to disable it (because it does cost some gas), you can set it to false.

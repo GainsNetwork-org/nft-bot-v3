@@ -35,7 +35,7 @@ let allowedLink = false, selectedProvider = null, eventSubTrading = null, eventS
 // 3. INIT: CHECK ENV VARS & LINK ALLOWANCE
 // --------------------------------------------
 
-console.log("Welcome to the Gains.farm NFT bot!");
+console.log("Welcome to the gTrade NFT bot!");
 if(!process.env.WSS_URLS || !process.env.PRICES_URL || !process.env.STORAGE_ADDRESS
 || !process.env.PRIVATE_KEY || !process.env.PUBLIC_KEY || !process.env.EVENT_CONFIRMATIONS_SEC 
 || !process.env.TRIGGER_TIMEOUT || !process.env.MAX_GAS_PRICE_GWEI || !process.env.CHECK_REFILL_SEC 
