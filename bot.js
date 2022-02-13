@@ -44,7 +44,7 @@ const VAULT_ABI = [{"inputs":[{"internalType":"contractStorageInterfaceV5","name
 let allowedLink = false, selectedProvider = null, eventSubTrading = null, eventSubCallbacks = null, nonce = null,
 	providers = [], web3 = [], blocks = [], maxPriorityFeePerGas = 50,
 	openTrades = [], spreadsP = [], openInterests = [], collaterals = [], nfts = [], nftsBeingUsed = [], ordersTriggered = [],
-	storageContract, tradingContract, tradingAddress, aggregatorContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract,
+	storageContract, tradingContract, tradingAddress, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract,
 	nftTimelock, maxTradesPerPair,
 	nftContract1, nftContract2, nftContract3, nftContract4, nftContract5, linkContract;
 
