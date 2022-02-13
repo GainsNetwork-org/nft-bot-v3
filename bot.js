@@ -2,7 +2,24 @@
 // 1. DEPENDENCIES
 // ------------------------------------
 
-require("dotenv").config();
+const dotenv = require("dotenv");
+
+// Load base .env file first
+dotenv.config();
+
+// If there's a specific NODE_ENV set, attempt to load that environment specific .env file
+if(process.env.NODE_ENV) {
+	const environmentSpecificFile = `.env.${process.env.NODE_ENV}`;
+	const fs = require("fs");
+
+	if(fs.existsSync(environmentSpecificFile)) {
+		dotenv.config({
+			path: environmentSpecificFile,
+			override: true
+		});	
+	}
+}
+
 const express = require('express');
 const app = express();
 const server = require('http').createServer(app);
