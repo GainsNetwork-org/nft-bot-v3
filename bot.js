@@ -62,6 +62,13 @@ if(!process.env.WSS_URLS || !process.env.PRICES_URL || !process.env.STORAGE_ADDR
 	process.exit();
 }
 
+// Parse non-string configuration constants from environment variables up front
+const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
+	  CHECK_REFILL_SEC = parseInt(process.env.CHECK_REFILL_SEC, 10),
+	  EVENT_CONFIRMATIONS_SEC = parseInt(process.env.EVENT_CONFIRMATIONS_SEC, 10),
+	  TRIGGER_TIMEOUT = parseInt(process.env.TRIGGER_TIMEOUT, 10),
+	  AUTO_HARVEST_SEC = parseInt(process.env.AUTO_HARVEST_SEC, 10);
+
 async function checkLinkAllowance(){
 	web3[selectedProvider].eth.net.isListening().then(async () => {
 		const allowance = await linkContract.methods.allowance(process.env.PUBLIC_KEY, process.env.STORAGE_ADDRESS).call();
@@ -70,12 +77,13 @@ async function checkLinkAllowance(){
 			console.log("LINK allowance OK.");
 		}else{
 			console.log("LINK not allowed, approving now.");
+
 			const tx = {
 				from: process.env.PUBLIC_KEY,
 			    to : linkContract.options.address,
 			    data : linkContract.methods.approve(process.env.STORAGE_ADDRESS, "115792089237316195423570985008687907853269984665640564039457584007913129639935").encodeABI(),
 			    maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
-			    maxFeePerGas: web3[selectedProvider].utils.toHex(process.env.MAX_GAS_PRICE_GWEI*1e9),
+			    maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
 			    gas: web3[selectedProvider].utils.toHex("100000")
 			};
 
@@ -436,7 +444,7 @@ function watchLiveTradingEvents(){
 
 				setTimeout(() => {
 					refreshOpenTrades(event);
-				}, process.env.EVENT_CONFIRMATIONS_SEC*1000);
+				}, EVENT_CONFIRMATIONS_SEC*1000);
 			});
 		}
 
@@ -454,7 +462,7 @@ function watchLiveTradingEvents(){
 
 				setTimeout(() => {
 					refreshOpenTrades(event);
-				}, process.env.EVENT_CONFIRMATIONS_SEC*1000);
+				}, EVENT_CONFIRMATIONS_SEC*1000);
 			});
 		}
 	}).catch(() => {
@@ -619,9 +627,9 @@ async function refreshOpenTrades(event){
 
 			setTimeout(() => {
 				refreshOpenTrades(event);
-			}, process.env.EVENT_CONFIRMATIONS_SEC*1000);
+			}, EVENT_CONFIRMATIONS_SEC*1000);
 
-			console.log("Watch events ("+eventName+"): Trade not found on the blockchain, trying again in "+(process.env.EVENT_CONFIRMATIONS_SEC/2)+" seconds.");
+			console.log("Watch events ("+eventName+"): Trade not found on the blockchain, trying again in "+(EVENT_CONFIRMATIONS_SEC/2)+" seconds.");
 		}
 	}).catch((e) => { console.log("Problem when refreshing trades", e); });
 }
@@ -738,7 +746,7 @@ function wss(){
 							    to : tradingAddress,
 							    data : tradingContract.methods.executeNftOrder(orderType, t.trader, t.pairIndex, t.index, nft.id, nft.type).encodeABI(),
 							    maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
-							    maxFeePerGas: web3[selectedProvider].utils.toHex(process.env.MAX_GAS_PRICE_GWEI*1e9),
+							    maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
 							    gas: web3[selectedProvider].utils.toHex("2000000")
 							};
 
@@ -749,14 +757,14 @@ function wss(){
 									setTimeout(() => {
 										ordersTriggered = ordersTriggered.filter(item => JSON.stringify(item) !== JSON.stringify({trade:orderInfo.trade, orderType: orderInfo.type}));
 										nftsBeingUsed = nftsBeingUsed.filter(item => item !== orderInfo.nftId);
-									}, process.env.TRIGGER_TIMEOUT*1000);
+									}, TRIGGER_TIMEOUT*1000);
 							    }).on('error', (e) => {
 							    	console.log("Failed to trigger (order type: " + orderInfo.name + ", nft id: "+orderInfo.nftId+")");
 									//console.log("Tx error (" + e + ")");
 							    	setTimeout(() => {
 										ordersTriggered = ordersTriggered.filter(item => JSON.stringify(item) !== JSON.stringify({trade:orderInfo.trade, orderType: orderInfo.type}));
 										nftsBeingUsed = nftsBeingUsed.filter(item => item !== orderInfo.nftId);
-									}, process.env.TRIGGER_TIMEOUT*1000);
+									}, TRIGGER_TIMEOUT*1000);
 							    });
 							}).catch(e => {
 								console.log("Failed to trigger (order type: " + orderInfo.name + ", nft id: "+orderInfo.nftId+")");
@@ -764,7 +772,7 @@ function wss(){
 						    	setTimeout(() => {
 									ordersTriggered = ordersTriggered.filter(item => JSON.stringify(item) !== JSON.stringify({trade:orderInfo.trade, orderType: orderInfo.type}));
 									nftsBeingUsed = nftsBeingUsed.filter(item => item !== orderInfo.nftId);
-								}, process.env.TRIGGER_TIMEOUT*1000);
+								}, TRIGGER_TIMEOUT*1000);
 							});
 						}
 					});
@@ -789,7 +797,7 @@ if(process.env.VAULT_REFILL_ENABLED){
 				    to : vaultContract.options.address,
 				    data : vaultContract.methods.refill().encodeABI(),
 				    maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
-				    maxFeePerGas: web3[selectedProvider].utils.toHex(process.env.MAX_GAS_PRICE_GWEI*1e9),
+				    maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
 				    gas: web3[selectedProvider].utils.toHex("1000000")
 				};
 
@@ -815,7 +823,7 @@ if(process.env.VAULT_REFILL_ENABLED){
 				    to : vaultContract.options.address,
 				    data : vaultContract.methods.deplete().encodeABI(),
 				    maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
-				    maxFeePerGas: web3[selectedProvider].utils.toHex(process.env.MAX_GAS_PRICE_GWEI*1e9),
+				    maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
 				    gas: web3[selectedProvider].utils.toHex("1000000")
 				};
 
@@ -836,14 +844,14 @@ if(process.env.VAULT_REFILL_ENABLED){
 	setInterval(() => {
 		refill();
 		deplete();
-	}, process.env.CHECK_REFILL_SEC*1000);
+	}, CHECK_REFILL_SEC*1000);
 }
 
 // ------------------------------------------
 // 13. AUTO HARVEST REWARDS
 // ------------------------------------------
 
-if(process.env.AUTO_HARVEST_SEC > 0){
+if(AUTO_HARVEST_SEC > 0){
 	async function claimTokens(){
 		nftRewardsContract.methods.claimTokens().estimateGas({from: process.env.PUBLIC_KEY}, (error, result) => {
 			if(!error){
@@ -852,7 +860,7 @@ if(process.env.AUTO_HARVEST_SEC > 0){
 				    to : nftRewardsContract.options.address,
 				    data : nftRewardsContract.methods.claimTokens().encodeABI(),
 				    maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
-				    maxFeePerGas: web3[selectedProvider].utils.toHex(process.env.MAX_GAS_PRICE_GWEI*1e9),
+				    maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
 				    gas: web3[selectedProvider].utils.toHex("1000000")
 				};
 
@@ -886,7 +894,7 @@ if(process.env.AUTO_HARVEST_SEC > 0){
 				    to : nftRewardsContract.options.address,
 				    data : nftRewardsContract.methods.claimPoolTokens(fromRound, toRound).encodeABI(),
 				    maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
-				    maxFeePerGas: web3[selectedProvider].utils.toHex(process.env.MAX_GAS_PRICE_GWEI*1e9),
+				    maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
 				    gas: web3[selectedProvider].utils.toHex("3000000")
 				};
 
@@ -907,7 +915,7 @@ if(process.env.AUTO_HARVEST_SEC > 0){
 	setInterval(async () => {
 		await claimTokens();
 		claimPoolTokens();
-	}, process.env.AUTO_HARVEST_SEC*1000);
+	}, AUTO_HARVEST_SEC*1000);
 }
 
 // -------------------------------------------------
