@@ -82,22 +82,22 @@ async function checkLinkAllowance(){
 
 			const tx = {
 				from: process.env.PUBLIC_KEY,
-			    to : linkContract.options.address,
-			    data : linkContract.methods.approve(process.env.STORAGE_ADDRESS, "115792089237316195423570985008687907853269984665640564039457584007913129639935").encodeABI(),
-			    maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
-			    maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-			    gas: web3[selectedProvider].utils.toHex("100000")
+				to : linkContract.options.address,
+				data : linkContract.methods.approve(process.env.STORAGE_ADDRESS, "115792089237316195423570985008687907853269984665640564039457584007913129639935").encodeABI(),
+				maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
+				maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+				gas: web3[selectedProvider].utils.toHex("100000")
 			};
 
 			web3[selectedProvider].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY).then(signed => {
-			    web3[selectedProvider].eth.sendSignedTransaction(signed.rawTransaction)
-			    .on('receipt', () => {
+				web3[selectedProvider].eth.sendSignedTransaction(signed.rawTransaction)
+				.on('receipt', () => {
 					console.log("LINK successfully approved.");
 					allowedLink = true;
-			    }).on('error', (e) => {
-			    	console.log("LINK approve tx fail (" + e + ")");
+				}).on('error', (e) => {
+					console.log("LINK approve tx fail (" + e + ")");
 					setTimeout(() => { checkLinkAllowance(); }, 2*1000);
-			    });
+				});
 			}).catch(e => {
 				console.log("LINK approve tx fail (" + e + ")");
 				setTimeout(() => { checkLinkAllowance(); }, 2*1000);
@@ -890,33 +890,33 @@ function wss(){
 
 							const tx = {
 								from: process.env.PUBLIC_KEY,
-							    to : tradingAddress,
-							    data : tradingContract.methods.executeNftOrder(orderType, t.trader, t.pairIndex, t.index, nft.id, nft.type).encodeABI(),
-							    maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
-							    maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-							    gas: web3[selectedProvider].utils.toHex("2000000")
+								to : tradingAddress,
+								data : tradingContract.methods.executeNftOrder(orderType, t.trader, t.pairIndex, t.index, nft.id, nft.type).encodeABI(),
+								maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
+								maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+								gas: web3[selectedProvider].utils.toHex("2000000")
 							};
 
 							web3[selectedProvider].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY).then(signed => {
-							    web3[selectedProvider].eth.sendSignedTransaction(signed.rawTransaction)
-							    .on('receipt', () => {
+								web3[selectedProvider].eth.sendSignedTransaction(signed.rawTransaction)
+								.on('receipt', () => {
 									console.log("Triggered (order type: " + orderInfo.name + ", nft id: "+orderInfo.nftId+")");
 									setTimeout(() => {
 										ordersTriggered = ordersTriggered.filter(item => JSON.stringify(item) !== JSON.stringify({trade:orderInfo.trade, orderType: orderInfo.type}));
 										nftsBeingUsed = nftsBeingUsed.filter(item => item !== orderInfo.nftId);
 									}, TRIGGER_TIMEOUT*1000);
-							    }).on('error', (e) => {
-							    	console.log("Failed to trigger (order type: " + orderInfo.name + ", nft id: "+orderInfo.nftId+")");
+								}).on('error', (e) => {
+									console.log("Failed to trigger (order type: " + orderInfo.name + ", nft id: "+orderInfo.nftId+")");
 									//console.log("Tx error (" + e + ")");
-							    	setTimeout(() => {
+									setTimeout(() => {
 										ordersTriggered = ordersTriggered.filter(item => JSON.stringify(item) !== JSON.stringify({trade:orderInfo.trade, orderType: orderInfo.type}));
 										nftsBeingUsed = nftsBeingUsed.filter(item => item !== orderInfo.nftId);
 									}, TRIGGER_TIMEOUT*1000);
-							    });
+								});
 							}).catch(e => {
 								console.log("Failed to trigger (order type: " + orderInfo.name + ", nft id: "+orderInfo.nftId+")");
 								//console.log("Tx error (" + e + ")");
-						    	setTimeout(() => {
+								setTimeout(() => {
 									ordersTriggered = ordersTriggered.filter(item => JSON.stringify(item) !== JSON.stringify({trade:orderInfo.trade, orderType: orderInfo.type}));
 									nftsBeingUsed = nftsBeingUsed.filter(item => item !== orderInfo.nftId);
 								}, TRIGGER_TIMEOUT*1000);
@@ -941,20 +941,20 @@ if(process.env.VAULT_REFILL_ENABLED){
 			if(!error){
 				const tx = {
 					from: process.env.PUBLIC_KEY,
-				    to : vaultContract.options.address,
-				    data : vaultContract.methods.refill().encodeABI(),
-				    maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
-				    maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-				    gas: web3[selectedProvider].utils.toHex("1000000")
+					to : vaultContract.options.address,
+					data : vaultContract.methods.refill().encodeABI(),
+					maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
+					maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+					gas: web3[selectedProvider].utils.toHex("1000000")
 				};
 
 				web3[selectedProvider].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY).then(signed => {
-				    web3[selectedProvider].eth.sendSignedTransaction(signed.rawTransaction)
-				    .on('receipt', () => {
+					web3[selectedProvider].eth.sendSignedTransaction(signed.rawTransaction)
+					.on('receipt', () => {
 						console.log("Vault successfully refilled.");
-				    }).on('error', (e) => {
-				    	console.log("Vault refill tx fail", e);
-				    });
+					}).on('error', (e) => {
+						console.log("Vault refill tx fail", e);
+					});
 				}).catch(e => {
 					console.log("Vault refill tx fail", e);
 				});
@@ -967,20 +967,20 @@ if(process.env.VAULT_REFILL_ENABLED){
 			if(!error){
 				const tx = {
 					from: process.env.PUBLIC_KEY,
-				    to : vaultContract.options.address,
-				    data : vaultContract.methods.deplete().encodeABI(),
-				    maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
-				    maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-				    gas: web3[selectedProvider].utils.toHex("1000000")
+					to : vaultContract.options.address,
+					data : vaultContract.methods.deplete().encodeABI(),
+					maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
+					maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+					gas: web3[selectedProvider].utils.toHex("1000000")
 				};
 
 				web3[selectedProvider].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY).then(signed => {
-				    web3[selectedProvider].eth.sendSignedTransaction(signed.rawTransaction)
-				    .on('receipt', () => {
+					web3[selectedProvider].eth.sendSignedTransaction(signed.rawTransaction)
+					.on('receipt', () => {
 						console.log("Vault successfully depleted.");
-				    }).on('error', (e) => {
-				    	console.log("Vault deplete tx fail", e);
-				    });
+					}).on('error', (e) => {
+						console.log("Vault deplete tx fail", e);
+					});
 				}).catch(e => {
 					console.log("Vault deplete tx fail", e);
 				});
@@ -1004,20 +1004,20 @@ if(AUTO_HARVEST_SEC > 0){
 			if(!error){
 				const tx = {
 					from: process.env.PUBLIC_KEY,
-				    to : nftRewardsContract.options.address,
-				    data : nftRewardsContract.methods.claimTokens().encodeABI(),
-				    maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
-				    maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-				    gas: web3[selectedProvider].utils.toHex("1000000")
+					to : nftRewardsContract.options.address,
+					data : nftRewardsContract.methods.claimTokens().encodeABI(),
+					maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
+					maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+					gas: web3[selectedProvider].utils.toHex("1000000")
 				};
 
 				web3[selectedProvider].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY).then(signed => {
-				    web3[selectedProvider].eth.sendSignedTransaction(signed.rawTransaction)
-				    .on('receipt', () => {
+					web3[selectedProvider].eth.sendSignedTransaction(signed.rawTransaction)
+					.on('receipt', () => {
 						console.log("Tokens claimed.");
-				    }).on('error', (e) => {
-				    	console.log("claimTokens tx fail", e);
-				    });
+					}).on('error', (e) => {
+						console.log("claimTokens tx fail", e);
+					});
 				}).catch(e => {
 					console.log("claimTokens tx fail", e);
 				});
@@ -1038,20 +1038,20 @@ if(AUTO_HARVEST_SEC > 0){
 			if(!error){
 				const tx = {
 					from: process.env.PUBLIC_KEY,
-				    to : nftRewardsContract.options.address,
-				    data : nftRewardsContract.methods.claimPoolTokens(fromRound, toRound).encodeABI(),
-				    maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
-				    maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-				    gas: web3[selectedProvider].utils.toHex("3000000")
+					to : nftRewardsContract.options.address,
+					data : nftRewardsContract.methods.claimPoolTokens(fromRound, toRound).encodeABI(),
+					maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
+					maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+					gas: web3[selectedProvider].utils.toHex("3000000")
 				};
 
 				web3[selectedProvider].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY).then(signed => {
-				    web3[selectedProvider].eth.sendSignedTransaction(signed.rawTransaction)
-				    .on('receipt', () => {
+					web3[selectedProvider].eth.sendSignedTransaction(signed.rawTransaction)
+					.on('receipt', () => {
 						console.log("Pool Tokens claimed.");
-				    }).on('error', (e) => {
-				    	console.log("claimPoolTokens tx fail", e);
-				    });
+					}).on('error', (e) => {
+						console.log("claimPoolTokens tx fail", e);
+					});
 				}).catch(e => {
 					console.log("claimPoolTokens tx fail", e);
 				});
