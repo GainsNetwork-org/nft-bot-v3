@@ -374,29 +374,50 @@ setInterval(() => {
 // -----------------------------------------
 
 async function selectNft(){
-	return new Promise(async resolve => {
-		if(nftTimelock === undefined || nfts.length === 0){ resolve(null); return; }
-		
-		web3[selectedProvider].eth.net.isListening().then(async () => {
-			const currentBlock = await web3[selectedProvider].eth.getBlockNumber();
+	console.log("Selecting NFT...");
 
-			for(var i = 0; i < nfts.length; i++){
-				const lastSuccess = await storageContract.methods.nftLastSuccess(nfts[i].id).call();
-				if(parseFloat(currentBlock) - parseFloat(lastSuccess) >= nftTimelock
-				&& !nftsBeingUsed.includes(nfts[i].id)){
-					//console.log("Selected NFT #" + nfts[i].id);
-					resolve(nfts[i]);
-					return;
-				}
-			}
+	if(nftTimelock === undefined) {
+		console.log("NFT Timelock not loaded yet.");
+	} 
+	
+	if(nfts.length === 0) { 
+		console.log("No NFTs loaded yet.");
 
-			console.log("No suitable NFT to select.");
-			resolve(null);
+		return null; 
+	}
 
-		}).catch(() => {
-			resolve(null);
-		});
-	});
+	console.log("NFTs: total loaded=" + nfts.length + ";currently in use=" + nftsBeingUsed.length + ";");
+
+	try
+	{
+		await web3[selectedProvider].eth.net.isListening();
+
+		const currentBlock = parseFloat(await web3[selectedProvider].eth.getBlockNumber());
+
+		// Load the last successful block for each NFT that we know is not actively being used
+		const nftsWithLastSuccesses = await Promise.all(
+				nfts
+					.filter(nft => !nftsBeingUsed.includes(nft.id))
+					.map(async nft => ({ 
+						nft,
+						lastSuccess: parseFloat(await storageContract.methods.nftLastSuccess(nfts[i].id).call())
+					})));
+
+		// Try to find the first NFT whose last successful block is older than the current block by the required timelock amount
+		const firstEligibleNft = nftsWithLastSuccesses.find(nftwls => currentBlock - nftwls.lastSuccess > nftTimelock);
+
+		if(firstEligibleNft !== undefined) {
+			return firstEligibleNft.nft;
+		}
+
+		console.log("No suitable NFT to select.");
+			
+		return null;
+	} catch(error) { 
+		console.log("Error occurred while trying to select NFT: " + error.message, error);
+
+		return null;
+	}
 }
 
 // -----------------------------------------
@@ -867,9 +888,13 @@ function wss(){
 				}
 
 				if(orderType > -1 && !alreadyTriggered(t, orderType)){
-
 					const nft = await selectNft();
-					if(nft === null){ return; }
+
+					if(nft === null){ 
+						console.log("No NFT available to execute this order at this time.");
+
+						return;
+					}
 
 					const orderInfo = {nftId: nft.id, trade: t, type: orderType,
 						name: orderType === 0 ? "TP" : orderType === 1 ? "SL" : orderType === 2 ? "LIQ" : "OPEN"};
