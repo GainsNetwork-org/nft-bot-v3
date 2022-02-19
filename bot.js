@@ -39,7 +39,8 @@ console.log("Welcome to the gTrade NFT bot!");
 if(!process.env.WSS_URLS || !process.env.PRICES_URL || !process.env.STORAGE_ADDRESS
 || !process.env.PRIVATE_KEY || !process.env.PUBLIC_KEY || !process.env.EVENT_CONFIRMATIONS_SEC 
 || !process.env.TRIGGER_TIMEOUT || !process.env.MAX_GAS_PRICE_GWEI || !process.env.CHECK_REFILL_SEC 
-|| !process.env.VAULT_REFILL_ENABLED || !process.env.AUTO_HARVEST_SEC){
+|| !process.env.VAULT_REFILL_ENABLED || !process.env.AUTO_HARVEST_SEC || !process.env.MIN_PRIORITY_GWEI
+|| !process.env.PRIORITY_GWEI_MULTIPLIER){
 	console.log("Please fill all parameters in the .env file.");
 	process.exit();
 }
@@ -229,7 +230,12 @@ setInterval(() => {
 
 setInterval(() => {
 	fetch("https://gasstation-mainnet.matic.network/v2/").then(r => r.json()).then((r) => {
-		maxPriorityFeePerGas = Math.round(r.fast.maxPriorityFee);
+		maxPriorityFeePerGas = Math.round(
+			Math.max(
+				Math.round(r.fast.maxPriorityFee) * process.env.PRIORITY_GWEI_MULTIPLIER, 
+				process.env.MIN_PRIORITY_GWEI
+			)
+		);
 	}).catch(() => { console.log("Error while fetching fastest gwei from gas station.") });
 }, 3*1000);
 
@@ -351,37 +357,36 @@ async function fetchOpenTrades(){
 
 		openTrades = [];
 
-		let openLimitOrdersPromises = [];
+		let openLimitOrdersTypesPromises = [];
 		const openLimitOrders = await storageContract.methods.getOpenLimitOrders().call();
-		for(var i = 0; i < openLimitOrders.length; i++){
-			openLimitOrdersPromises.push(storageContract.methods.openLimitOrders(i).call());
+		for(let i = 0; i < openLimitOrders.length; i++){
+			const l = openLimitOrders[i];
+			openLimitOrdersTypesPromises.push(nftRewardsContract.methods.openLimitOrderTypes(l.trader, l.pairIndex, l.index).call());
 		}
 
 		let promisesPairTradersArray = [];
-		for(var i = 0; i < spreadsP.length; i++){
+		for(let i = 0; i < spreadsP.length; i++){
 			promisesPairTradersArray.push(storageContract.methods.pairTradersArray(i).call());
 		}
 
-		Promise.all(openLimitOrdersPromises).then(async (l) => {
-			for(var j = 0; j < l.length; j++){
-				const type = await nftRewardsContract.methods.openLimitOrderTypes(l[j].trader, l[j].pairIndex, l[j].index).call();
-				l[j].type = type;
-				openTrades.push(l[j]);
+		Promise.all(openLimitOrdersTypesPromises).then(async (l) => {
+			for(let j = 0; j < l.length; j++){
+				openTrades.push({...openLimitOrders[j], type: l[j]});
 			}
 
 			Promise.all(promisesPairTradersArray).then(async (r) => {
 				let promisesTrade = [];
 
-				for(var j = 0; j < r.length; j ++){
-					for(var a = 0; a < r[j].length; a++){
-						for(var b = 0; b < maxTradesPerPair; b++){
+				for(let j = 0; j < r.length; j ++){
+					for(let a = 0; a < r[j].length; a++){
+						for(let b = 0; b < maxTradesPerPair; b++){
 							promisesTrade.push(storageContract.methods.openTrades(r[j][a], j, b).call());
 						}
 					}
 				}
 
 				Promise.all(promisesTrade).then((trades) => {
-					for(var j = 0; j < trades.length; j++){
+					for(let j = 0; j < trades.length; j++){
 						if(trades[j].leverage.toString() === "0"){ continue; }
 						openTrades.push(trades[j]);
 					}
@@ -414,7 +419,7 @@ function watchLiveTradingEvents(){
 
 				setTimeout(() => {
 					refreshOpenTrades(event);
-				}, process.env.LIVE_EVENT_CONFIRMATIONS_SEC*1000);
+				}, process.env.EVENT_CONFIRMATIONS_SEC*1000);
 			});
 		}
 
@@ -432,7 +437,7 @@ function watchLiveTradingEvents(){
 
 				setTimeout(() => {
 					refreshOpenTrades(event);
-				}, process.env.LIVE_EVENT_CONFIRMATIONS_SEC*1000);
+				}, process.env.EVENT_CONFIRMATIONS_SEC*1000);
 			});
 		}
 	}).catch(() => {
@@ -620,6 +625,19 @@ function alreadyTriggered(trade, orderType){
 	return false;
 }
 
+let forexMarketClosed = false;
+
+setInterval(() => {
+	const d = new Date();
+	const v = d.getUTCDay();    
+	const h = d.getUTCHours();
+	const dom = d.getUTCDate();
+	const mon = d.getUTCMonth();
+
+	forexMarketClosed = (mon === 11 && dom >= 25 && dom <= 27) || (mon === 0 && dom >= 1 && dom <= 3) || 
+						(v === 5 && h >= 21) || (v === 6) || (v === 0 && h < 21);
+}, 5000);
+
 function wss(){
 	let socket = new WebSocket(process.env.PRICES_URL);
 	socket.onclose = () => { setTimeout(() => { wss() }, 2000); };
@@ -633,6 +651,9 @@ function wss(){
 			for(var i = 0; i < openTrades.length; i++){
 
 				const t = openTrades[i];
+
+				if(forexMarketClosed && t.pairIndex >= 21 && t.pairIndex <= 30) continue;
+
 				const price = p.closes[t.pairIndex];
 				const buy = t.buy.toString() === "true";
 				let orderType = -1;
@@ -866,8 +887,8 @@ if(process.env.AUTO_HARVEST_SEC > 0){
 		});
 	}
 
-	setInterval(() => {
-		claimTokens();
+	setInterval(async () => {
+		await claimTokens();
 		claimPoolTokens();
 	}, process.env.AUTO_HARVEST_SEC*1000);
 }
