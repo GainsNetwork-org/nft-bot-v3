@@ -35,7 +35,7 @@ const abis = require('./abis');
 
 let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, eventSubTrading = null, eventSubCallbacks = null, nonce = null,
 	web3Providers = [], web3Clients = [], maxPriorityFeePerGas = 50,
-	openTrades = [], spreadsP = [], openInterests = [], collaterals = [], nfts = [], nftsBeingUsed = [], ordersTriggered = [],
+	knownOpenTrades= new Map(), spreadsP = [], openInterests = [], collaterals = [], nfts = [], nftsBeingUsed = [], ordersTriggered = [],
 	storageContract, tradingContract, tradingAddress, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract,
 	nftTimelock, maxTradesPerPair = 0,
 	nftContract1, nftContract2, nftContract3, nftContract4, nftContract5, linkContract;
@@ -492,6 +492,10 @@ async function selectNft(){
 // 8. LOAD OPEN TRADES
 // -----------------------------------------
 
+function buildOpenTradeKey(tradeDetails) {
+	return `t=${tradeDetails.trader};pi=${tradeDetails.pairIndex};i=${tradeDetails.index};`;
+}
+
 async function fetchOpenTrades(){
 	console.log("Fetching open trades...");
 	
@@ -499,7 +503,7 @@ async function fetchOpenTrades(){
 		await web3Clients[currentlySelectedWeb3ClientIndex].eth.net.isListening();
 
 		if(spreadsP.length === 0){
-			console.log("Spreads are not yet loaded; will retry loading open trades shortly!");
+			console.log("Spreads are not yet loaded; will retry fetching open trades shortly!");
 			
 			setTimeout(() => { fetchOpenTrades(); }, 2*1000);
 
@@ -515,9 +519,9 @@ async function fetchOpenTrades(){
 				fetchOpenPairTrades()
 			]);
 		
-		openTrades = openLimitOrders.concat(pairTraders);
+		knownOpenTrades = new Map(openLimitOrders.concat(pairTraders).map(trade => [buildOpenTradeKey(trade), trade]));
 
-		console.log("Fetched " + openTrades.length + " total open trade(s).");
+		console.log("Fetched " + knownOpenTrades.size + " total open trade(s).");
 
 	} catch(error) {
 		console.log("Error fetching open trades: " + error.message, error);
@@ -631,38 +635,33 @@ function watchLiveTradingEvents(){
 // -----------------------------------------
 // 10. REFRESH INTERNAL OPEN TRADES LIST
 // -----------------------------------------
+const MAX_EVENT_RETRY_TIMES = 10;
 
 async function refreshOpenTrades(event){
-	web3Clients[currentlySelectedWeb3ClientIndex].eth.net.isListening().then(async () => {
-		const eventName = event.event.toString();
-		const v = event.returnValues;
+	try {
+		const eventName = event.event;
+		const eventValues = event.returnValues;
 		let failed = false;
 
 		// UNREGISTER OPEN LIMIT ORDER
 		// => IF OPEN LIMIT CANCELED OR OPEN LIMIT EXECUTED
 		if(eventName === "OpenLimitCanceled" 
-		|| (eventName === "LimitExecuted" && v.orderType.toString() === "3")){
-
-			const trader = eventName === "OpenLimitCanceled" ? v.trader : v.t[0];
-			const pairIndex = eventName === "OpenLimitCanceled" ? v.pairIndex : v.t[1];
-			const index = eventName === "OpenLimitCanceled" ? v.index : v.limitIndex;
+				|| 
+			(eventName === "LimitExecuted" && eventValues.orderType.toString() === "3")) {
+			const trader = eventName === "OpenLimitCanceled" ? eventValues.trader : eventValues.t[0];
+			const pairIndex = eventName === "OpenLimitCanceled" ? eventValues.pairIndex : eventValues.t[1];
+			const index = eventName === "OpenLimitCanceled" ? eventValues.index : eventValues.limitIndex;
 
 			const hasLimitOrder = await storageContract.methods.hasOpenLimitOrder(trader, pairIndex, index).call();
 
-			if(hasLimitOrder.toString() === "false"){
+			if(hasLimitOrder.toString() === "false") {
+				const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
+				const existingKnownOpenTrade = knownOpenTrades.get(tradeKey);
 
-				for(var i = 0; i < openTrades.length; i++){
-
-					if(openTrades[i].trader === trader 
-					&& openTrades[i].pairIndex === pairIndex
-					&& openTrades[i].index === index){
-
-						openTrades[i] = openTrades[openTrades.length-1];
-						openTrades.pop();
-
-						console.log("Watch events ("+eventName+"): Removed limit");
-						break;
-					}
+				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')) {
+					knownOpenTrades.delete(tradeKey);
+					
+					console.log("Watch events ("+eventName+"): Removed limit");
 				}
 			}else{
 				failed = true;
@@ -672,52 +671,46 @@ async function refreshOpenTrades(event){
 		// STORE/UPDATE OPEN LIMIT ORDER
 		// => IF OPEN LIMIT ORDER PLACED OR OPEN LIMIT ORDER UPDATED
 		if(eventName === "OpenLimitPlaced" 
-		|| eventName === "OpenLimitUpdated"){
+				|| 
+			eventName === "OpenLimitUpdated"){
+			const hasLimitOrder = await storageContract.methods.hasOpenLimitOrder(eventValues.trader, eventValues.pairIndex, eventValues.index).call();
 
-			const hasLimitOrder = await storageContract.methods.hasOpenLimitOrder(v.trader, v.pairIndex, v.index).call();
+			if(hasLimitOrder.toString() === "true") {
+				const id = await storageContract.methods.openLimitOrderIds(eventValues.trader, eventValues.pairIndex, eventValues.index).call();
+				const limitOrder = await storageContract.methods.openLimitOrders(id).call();
 
-			if(hasLimitOrder.toString() === "true"){
+				const type = await nftRewardsContract.methods.openLimitOrderTypes(eventValues.trader, eventValues.pairIndex, eventValues.index).call();
+				limitOrder.type = type;
 
-				const id = await storageContract.methods.openLimitOrderIds(v.trader, v.pairIndex, v.index).call();
-				const limit = await storageContract.methods.openLimitOrders(id).call();
-				let found = false;
+				const tradeKey = buildOpenTradeKey(eventValues);
+				const existingKnownOpenTrade = knownOpenTrades.get(tradeKey);
 
-				const type = await nftRewardsContract.methods.openLimitOrderTypes(v.trader, v.pairIndex, v.index).call();
-				limit.type = type;
+				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')){
+					knownOpenTrades.set(tradeKey, limitOrder);
 
-				for(var i = 0; i < openTrades.length; i++){
+					console.log("Watch events ("+eventName+"): Updated limit");
+				} else {
+					knownOpenTrades.set(tradeKey, limitOrder); 
 
-					if(openTrades[i].trader === v.trader 
-					&& openTrades[i].pairIndex === v.pairIndex
-					&& openTrades[i].index === v.index){
-
-						openTrades[i] = limit;
-						found = true;
-
-						console.log("Watch events ("+eventName+"): Updated limit");
-						break;
-					}
-				}
-
-				if(!found){ 
-					openTrades.push(limit); 
 					console.log("Watch events ("+eventName+"): Stored limit");
 				}
-			}else{
+			} else {
 				failed = true;
 			}
 		}
 
 		// STORE/UPDATE TRADE
 		// => IF MARKET OPEN EXECUTED OR OPEN TRADE LIMIT EXECUTED OR TP/SL UPDATED OR TRADE UPDATED (MARKET CLOSED)
-		if((eventName === "MarketExecuted" && v.open.toString() === "true") 
-		|| (eventName === "LimitExecuted" && v.orderType.toString() === "3")
-		|| eventName === "TpUpdated" || eventName === "SlUpdated" || eventName === "SlCanceled"
-		|| eventName === "MarketCloseCanceled"){
-
-			const trader = eventName !== "MarketExecuted" && eventName !== "LimitExecuted" ? v.trader : v.t[0];
-			const pairIndex = eventName !== "MarketExecuted" && eventName !== "LimitExecuted" ? v.pairIndex : v.t[1];
-			const index = eventName !== "MarketExecuted" && eventName !== "LimitExecuted" ? v.index : v.t[2];
+		if((eventName === "MarketExecuted" && eventValues.open === true) 
+				|| 
+			(eventName === "LimitExecuted" && eventValues.orderType.toString() === "3")
+				|| 
+			eventName === "TpUpdated" || eventName === "SlUpdated" || eventName === "SlCanceled"
+				|| 
+			eventName === "MarketCloseCanceled"){
+			const trader = eventName !== "MarketExecuted" && eventName !== "LimitExecuted" ? eventValues.trader : eventValues.t[0];
+			const pairIndex = eventName !== "MarketExecuted" && eventName !== "LimitExecuted" ? eventValues.pairIndex : eventValues.t[1];
+			const index = eventName !== "MarketExecuted" && eventName !== "LimitExecuted" ? eventValues.index : eventValues.t[2];
 
 			const [trade, tradeInfo, initialAccFees] = await Promise.all([
 				storageContract.methods.openTrades(trader, pairIndex, index).call(),
@@ -725,78 +718,64 @@ async function refreshOpenTrades(event){
 				pairInfosContract.methods.tradeInitialAccFees(trader, pairIndex, index).call()
 			]);
 			
-			if(parseFloat(trade.leverage) > 0){
-				let found = false;
+			if(parseFloat(trade.leverage) > 0) {
+				const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
+				const existingKnownOpenTrade = knownOpenTrades.get(tradeKey);
 
-				for(var i = 0; i < openTrades.length; i++){
+				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
+					knownOpenTrades.set(tradeKey, trade); 
 
-					if(openTrades[i] !== undefined
-					&& openTrades[i].trade !== undefined 
-					&& openTrades[i].trade.trader === trader 
-					&& openTrades[i].trade.pairIndex === pairIndex
-					&& openTrades[i].trade.index === index){
-
-						openTrades[i].trade = trade;
-						found = true;
-
-						console.log("Watch events ("+eventName+"): Updated trade");
-						break;
-					}
-				}
-
-				if(!found){ 
-					openTrades.push({trade, tradeInfo, initialAccFees: {
-						rollover: initialAccFees.rollover / 1e18,
-						funding: initialAccFees.funding / 1e18,
-						openedAfterUpdate: initialAccFees.openedAfterUpdate.toString() === "true",
-					}});
+					console.log("Watch events ("+eventName+"): Updated trade");
+				} else {
+					knownOpenTrades.set(tradeKey, trade); 
 
 					console.log("Watch events ("+eventName+"): Stored trade");
 				}
-			}else{
+			} else {
 				failed = true;
 			}
 		}
 
 		// UNREGISTER TRADE
 		// => IF MARKET CLOSE EXECUTED OR CLOSE LIMIT EXECUTED
-		if((eventName === "MarketExecuted" && v.open.toString() === "false") 
-		|| (eventName === "LimitExecuted" && v.orderType !== "3")){
-
-			const trade = await storageContract.methods.openTrades(v.t[0], v.t[1], v.t[2]).call();
+		if((eventName === "MarketExecuted" && eventValues.open.toString() === "false") 
+				|| 
+			(eventName === "LimitExecuted" && eventValues.orderType !== "3")){
+			const [ trader, pairIndex, index ] = eventValues.t;
+			const trade = await storageContract.methods.openTrades(trader, pairIndex, index).call();
 
 			if(parseFloat(trade.leverage) === 0){
-				for(var i = 0; i < openTrades.length; i++){
+				const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
+				const existingKnownOpenTrade = knownOpenTrades.get(tradeKey);
+				
+				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
+					knownOpenTrades.delete(tradeKey);
 
-					if(openTrades[i] !== undefined
-					&& openTrades[i].trade !== undefined
-					&& openTrades[i].trade.trader === v.t[0] 
-					&& openTrades[i].trade.pairIndex === v.t[1]
-					&& openTrades[i].trade.index === v.t[2]){
-
-						openTrades[i] = openTrades[openTrades.length-1];
-						openTrades.pop();
-
-						console.log("Watch events ("+eventName+"): Removed trade");
-						break;
-					}
+					console.log("Watch events (" + eventName + "): Removed trade");
 				}
-			}else{
+			} else {
 				failed = true;
 			}
 		}
-		if(failed){
 
-			if(event.triedTimes == 10){ return; }
-			event.triedTimes ++;
+		if(failed) {
+			if(event.triedTimes == MAX_EVENT_RETRY_TIMES) { 
+				console.log("WARNING: Failed to process event '" + eventName + "' (from block #" + event.blockNumber + ") the max number of times (" + MAX_EVENT_RETRY_TIMES + "). This event will be dropped and not tried again.", event);
+				
+				return; 
+			}
+
+			event.triedTimes++;
 
 			setTimeout(() => {
 				refreshOpenTrades(event);
 			}, EVENT_CONFIRMATIONS_SEC*1000);
 
-			console.log("Watch events ("+eventName+"): Trade not found on the blockchain, trying again in "+(EVENT_CONFIRMATIONS_SEC/2)+" seconds.");
+			console.log("Watch events ("+eventName+"): Trade not found on the blockchain, trying again in " + (EVENT_CONFIRMATIONS_SEC/2) + " seconds.");
 		}
-	}).catch((e) => { console.log("Problem when refreshing trades", e); });
+	} catch(error) {
+		console.log("Problem when refreshing trades: " + error.message, error); 
+	}
 }
 
 async function refreshPairFundingFees(event){
@@ -908,8 +887,9 @@ function wss(){
 		if(spreadsP.length > 0 && allowedLink){
 			const isForexMarketClosed = forex.isForexCurrentlyOpen() === false;
 
-			for(var i = 0; i < openTrades.length; i++){
-				const t = openTrades[i].trade !== undefined ? openTrades[i].trade : openTrades[i];
+			for(var i = 0; i < knownOpenTrades.size; i++){
+
+				const t = knownOpenTrades[i];
 
 				if(isForexMarketClosed && t.pairIndex >= 21 && t.pairIndex <= 30) continue;
 
