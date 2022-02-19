@@ -673,13 +673,21 @@ async function refreshOpenTrades(event){
 		if(eventName === "OpenLimitPlaced" 
 				|| 
 			eventName === "OpenLimitUpdated"){
-			const hasLimitOrder = await storageContract.methods.hasOpenLimitOrder(eventValues.trader, eventValues.pairIndex, eventValues.index).call();
+			const { trader, pairIndex, index } = eventValues;
+			const hasLimitOrder = await storageContract.methods.hasOpenLimitOrder(trader, pairIndex, index).call();
 
 			if(hasLimitOrder.toString() === "true") {
-				const id = await storageContract.methods.openLimitOrderIds(eventValues.trader, eventValues.pairIndex, eventValues.index).call();
-				const limitOrder = await storageContract.methods.openLimitOrders(id).call();
+				const id = await storageContract.methods.openLimitOrderIds(trader, pairIndex, index).call();
+				
+				const [
+					limitOrder,
+					type 
+				] = await Promise.all(
+					[
+						storageContract.methods.openLimitOrders(id).call(),
+						nftRewardsContract.methods.openLimitOrderTypes(trader, pairIndex, index).call()
+					]);
 
-				const type = await nftRewardsContract.methods.openLimitOrderTypes(eventValues.trader, eventValues.pairIndex, eventValues.index).call();
 				limitOrder.type = type;
 
 				const tradeKey = buildOpenTradeKey(eventValues);
@@ -769,7 +777,7 @@ async function refreshOpenTrades(event){
 
 			setTimeout(() => {
 				refreshOpenTrades(event);
-			}, EVENT_CONFIRMATIONS_SEC*1000);
+			}, EVENT_CONFIRMATIONS_SEC/2*1000);
 
 			console.log("Watch events ("+eventName+"): Trade not found on the blockchain, trying again in " + (EVENT_CONFIRMATIONS_SEC/2) + " seconds.");
 		}
