@@ -1070,68 +1070,72 @@ if(process.env.VAULT_REFILL_ENABLED){
 
 if(AUTO_HARVEST_SEC > 0){
 	async function claimTokens(){
-		nftRewardsContract.methods.claimTokens().estimateGas({from: process.env.PUBLIC_KEY}, (error, result) => {
-			if(!error){
-				const tx = {
-					from: process.env.PUBLIC_KEY,
-					to : nftRewardsContract.options.address,
-					data : nftRewardsContract.methods.claimTokens().encodeABI(),
-					maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
-					maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-					gas: web3[selectedProvider].utils.toHex("1000000")
-				};
+		const tx = {
+			from: process.env.PUBLIC_KEY,
+			to : nftRewardsContract.options.address,
+			data : nftRewardsContract.methods.claimTokens().encodeABI(),
+			maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
+			maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+			gas: web3[selectedProvider].utils.toHex("1000000")
+		};
 
-				web3[selectedProvider].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY).then(signed => {
-					web3[selectedProvider].eth.sendSignedTransaction(signed.rawTransaction)
-					.on('receipt', () => {
-						console.log("Tokens claimed.");
-					}).on('error', (e) => {
-						console.log("claimTokens tx fail", e);
-					});
-				}).catch(e => {
-					console.log("claimTokens tx fail", e);
-				});
-			}
-		});
+		const signed = await web3[selectedProvider].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
+
+		try {
+			await web3[selectedProvider].eth.sendSignedTransaction(signed.rawTransaction);
+			
+			console.log("Tokens claimed.");
+		} catch (error) {
+			console.log("claimTokens tx fail: " + error.message, error);
+		};
 	}
 
 	async function claimPoolTokens(){
 		let currentRound = await nftRewardsContract.methods.currentRound().call();
 		currentRound = parseFloat(currentRound.toString());
 
-		if(currentRound === 0) return;
+		if(currentRound === 0) {
+			console.log("Current round is 0, skipping claimPoolTokens for now.");
+
+			return;
+		}
 
 		const fromRound = currentRound < 101 ? 0 : currentRound-101;
 		const toRound =  currentRound - 1;
 
-		nftRewardsContract.methods.claimPoolTokens(fromRound, toRound).estimateGas({from: process.env.PUBLIC_KEY}, (error, result) => {
-			if(!error){
-				const tx = {
-					from: process.env.PUBLIC_KEY,
-					to : nftRewardsContract.options.address,
-					data : nftRewardsContract.methods.claimPoolTokens(fromRound, toRound).encodeABI(),
-					maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
-					maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-					gas: web3[selectedProvider].utils.toHex("3000000")
-				};
+		const tx = {
+			from: process.env.PUBLIC_KEY,
+			to : nftRewardsContract.options.address,
+			data : nftRewardsContract.methods.claimPoolTokens(fromRound, toRound).encodeABI(),
+			maxPriorityFeePerGas: web3[selectedProvider].utils.toHex(maxPriorityFeePerGas*1e9),
+			maxFeePerGas: web3[selectedProvider].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+			gas: web3[selectedProvider].utils.toHex("3000000")
+		};
 
-				web3[selectedProvider].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY).then(signed => {
-					web3[selectedProvider].eth.sendSignedTransaction(signed.rawTransaction)
-					.on('receipt', () => {
-						console.log("Pool Tokens claimed.");
-					}).on('error', (e) => {
-						console.log("claimPoolTokens tx fail", e);
-					});
-				}).catch(e => {
-					console.log("claimPoolTokens tx fail", e);
-				});
-			}
-		});
+		const signed = await web3[selectedProvider].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
+			
+		try {	
+			await web3[selectedProvider].eth.sendSignedTransaction(signed.rawTransaction)
+			
+			console.log("Pool Tokens claimed.");
+		} catch (error) {
+			console.log("claimPoolTokens tx fail: " + error.message, error);
+		}
 	}
 
 	setInterval(async () => {
-		await claimTokens();
-		claimPoolTokens();
+		console.log("Harvesting rewards...");
+		
+		try
+		{
+			await Promise.all(
+				[
+					claimTokens(),
+					claimPoolTokens()
+				]);
+		} catch (error) {
+			console.log("Harvesting rewards failed unexpectedly: " + error.message, error);
+		}
 	}, AUTO_HARVEST_SEC*1000);
 }
 
