@@ -105,47 +105,81 @@ async function checkLinkAllowance(){
 const WSS_URLS = process.env.WSS_URLS.split(",");
 blocks = new Array(WSS_URLS.length).fill(0);
 
-async function selectProvider(n){
-	selectedProvider = n;
-	storageContract = new web3[n].eth.Contract(abis.STORAGE, process.env.STORAGE_ADDRESS);
+async function selectProvider(newProvider){
+	console.log("Selecting new provider...");
+	
+	const executionStartTime = Date.now();
 
-	const aggregatorAddress = await storageContract.methods.priceAggregator().call();
-	const callbacksAddress = await storageContract.methods.callbacks().call();
-	tradingAddress = await storageContract.methods.trading().call();
-	const vaultAddress = await storageContract.methods.vault().call();
-	const nftAddress1 = await storageContract.methods.nfts(0).call();
-	const nftAddress2 = await storageContract.methods.nfts(1).call();
-	const nftAddress3 = await storageContract.methods.nfts(2).call();
-	const nftAddress4 = await storageContract.methods.nfts(3).call();
-	const nftAddress5 = await storageContract.methods.nfts(4).call();
-	const linkAddress = await storageContract.methods.linkErc677().call();
-
-	const aggregatorContract = new web3[n].eth.Contract(abis.AGGREGATOR, aggregatorAddress);
-	const pairsStorageAddress = await aggregatorContract.methods.pairsStorage().call();
-	const nftRewardsAddress = await aggregatorContract.methods.nftRewards().call();
-	pairsStorageContract = new web3[n].eth.Contract(abis.PAIRS_STORAGE, pairsStorageAddress);
-	nftRewardsContract = new web3[n].eth.Contract(abis.NFT_REWARDS, nftRewardsAddress);
-
-	callbacksContract = new web3[n].eth.Contract(abis.CALLBACKS, callbacksAddress);
-	tradingContract = new web3[n].eth.Contract(abis.TRADING, tradingAddress);
-	vaultContract = new web3[n].eth.Contract(abis.VAULT, vaultAddress);
-
-	nftContract1 = new web3[n].eth.Contract(abis.NFT, nftAddress1);
-	nftContract2 = new web3[n].eth.Contract(abis.NFT, nftAddress2);
-	nftContract3 = new web3[n].eth.Contract(abis.NFT, nftAddress3);
-	nftContract4 = new web3[n].eth.Contract(abis.NFT, nftAddress4);
-	nftContract5 = new web3[n].eth.Contract(abis.NFT, nftAddress5);
-
-	linkContract = new web3[n].eth.Contract(abis.LINK, linkAddress);
-
+	// Unsubscribe from existing events first
 	if(eventSubTrading !== null && eventSubTrading.id !== null){ eventSubTrading.unsubscribe(); }
 	if(eventSubCallbacks !== null && eventSubCallbacks.id !== null){ eventSubCallbacks.unsubscribe(); }
 	eventSubTrading = null;
 	eventSubCallbacks = null;
+	
+	storageContract = new web3[newProvider].eth.Contract(abis.STORAGE, process.env.STORAGE_ADDRESS);
 
+	// Retrieve all necessary details from the storage contract
+	const [
+		aggregatorAddress,
+		callbacksAddress,
+		tradingAddress,
+		vaultAddress,
+		nftAddress1,
+		nftAddress2,
+		nftAddress3,
+		nftAddress4,
+		nftAddress5,
+		linkAddress
+	] = await Promise.all([
+		storageContract.methods.priceAggregator().call(),
+		storageContract.methods.callbacks().call(),
+		storageContract.methods.trading().call(),
+		storageContract.methods.vault().call(),
+		storageContract.methods.nfts(0).call(),
+		storageContract.methods.nfts(1).call(),
+		storageContract.methods.nfts(2).call(),
+		storageContract.methods.nfts(3).call(),
+		storageContract.methods.nfts(4).call(),
+		storageContract.methods.linkErc677().call()
+	]);
+
+	const aggregatorContract = new web3[newProvider].eth.Contract(abis.AGGREGATOR, aggregatorAddress);
+	
+	// Retrieve all necessary details from the aggregator contract
+	const [
+		pairsStorageAddress,
+		nftRewardsAddress
+	 ] = await Promise.all([
+		aggregatorContract.methods.pairsStorage().call(),
+		aggregatorContract.methods.nftRewards().call()
+	 ]);
+	
+	pairsStorageContract = new web3[newProvider].eth.Contract(abis.PAIRS_STORAGE, pairsStorageAddress);
+	nftRewardsContract = new web3[newProvider].eth.Contract(abis.NFT_REWARDS, nftRewardsAddress);
+
+	callbacksContract = new web3[newProvider].eth.Contract(abis.CALLBACKS, callbacksAddress);
+	tradingContract = new web3[newProvider].eth.Contract(abis.TRADING, tradingAddress);
+	vaultContract = new web3[newProvider].eth.Contract(abis.VAULT, vaultAddress);
+
+	nftContract1 = new web3[newProvider].eth.Contract(abis.NFT, nftAddress1);
+	nftContract2 = new web3[newProvider].eth.Contract(abis.NFT, nftAddress2);
+	nftContract3 = new web3[newProvider].eth.Contract(abis.NFT, nftAddress3);
+	nftContract4 = new web3[newProvider].eth.Contract(abis.NFT, nftAddress4);
+	nftContract5 = new web3[newProvider].eth.Contract(abis.NFT, nftAddress5);
+
+	linkContract = new web3[newProvider].eth.Contract(abis.LINK, linkAddress);
+
+	// Update the globally selected provider with this new provider
+	selectedProvider = newProvider;
+	
+	// Subscribe to events using the new provider
+	watchLiveTradingEvents();
+	
+	// Fire and forget refreshing of data using new provider
 	fetchTradingVariables();
 	fetchOpenTrades();
-	watchLiveTradingEvents();
+	
+	console.log("New provider selection completed. Took: " + (Date.now() - executionStartTime) + "ms");
 }
 
 const getProvider = (wssId) => {
