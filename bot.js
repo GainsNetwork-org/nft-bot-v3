@@ -425,67 +425,77 @@ async function selectNft(){
 // -----------------------------------------
 
 async function fetchOpenTrades(){
-	web3[selectedProvider].eth.net.isListening().then(async () => {
+	console.log("Fetching open trades...");
+	
+	try {
+		await web3[selectedProvider].eth.net.isListening();
 
 		if(spreadsP.length === 0){
+			console.log("Spreads are not yet loaded; will retry loading open trades shortly!");
+			
 			setTimeout(() => { fetchOpenTrades(); }, 2*1000);
+
 			return;
 		}
 
-		openTrades = [];
+		const [
+			openLimitOrders, 
+			pairTraders
+		] = await Promise.all(
+			[
+				fetchOpenLimitOrders(),
+				fetchOpenPairTrades()
+			]);
+		
+		openTrades = openLimitOrders.concat(pairTraders);
 
-		let openLimitOrdersTypesPromises = [];
-		const openLimitOrders = await storageContract.methods.getOpenLimitOrders().call();
-		for(let i = 0; i < openLimitOrders.length; i++){
-			const l = openLimitOrders[i];
-			openLimitOrdersTypesPromises.push(nftRewardsContract.methods.openLimitOrderTypes(l.trader, l.pairIndex, l.index).call());
-		}
+		console.log("Fetched " + openTrades.length + " total open trade(s).");
 
-		let promisesPairTradersArray = [];
-		for(let i = 0; i < spreadsP.length; i++){
-			promisesPairTradersArray.push(storageContract.methods.pairTradersArray(i).call());
-		}
-
-		Promise.all(openLimitOrdersTypesPromises).then(async (l) => {
-			for(let j = 0; j < l.length; j++){
-				openTrades.push({...openLimitOrders[j], type: l[j]});
-			}
-
-			Promise.all(promisesPairTradersArray).then(async (r) => {
-				let promisesTrade = [];
-
-				for(let j = 0; j < r.length; j ++){
-					for(let a = 0; a < r[j].length; a++){
-						for(let b = 0; b < maxTradesPerPair; b++){
-							promisesTrade.push(storageContract.methods.openTrades(r[j][a], j, b).call());
-							promisesTrade.push(storageContract.methods.openTradesInfo(r[j][a], j, b).call());
-							promisesTrade.push(pairInfosContract.methods.tradeInitialAccFees(r[j][a], j, b).call());
-						}
-					}
-				}
-
-				Promise.all(promisesTrade).then((trades) => {
-					for(let j = 0; j < trades.length; j+=3){
-						if(trades[j].leverage.toString() === "0"){ continue; }
-
-						openTrades.push({
-							trade: trades[j],
-							tradeInfo: trades[j+1],
-							initialAccFees: {
-								rollover: trades[j+2].rollover / 1e18,
-								funding: trades[j+2].funding / 1e18,
-								openedAfterUpdate: trades[j+2].openedAfterUpdate.toString() === "true",
-							}
-						});
-					}
-
-					console.log("Fetched open trades: " + openTrades.length);
-				});
-			});
-		});
-	}).catch(() => {
+	} catch(error) {
+		console.log("Error fetching open trades: " + error.message, error);
+		
 		setTimeout(() => { fetchOpenTrades(); }, 2*1000);
-	});
+	}
+	
+	async function fetchOpenLimitOrders() {		
+		console.log("Fetching open limit orders...");
+		
+		const openLimitOrders = await storageContract.methods.getOpenLimitOrders().call();
+		
+		const openLimitOrdersWithTypes = await Promise.all(openLimitOrders.map(async olo => {
+			const type = await nftRewardsContract.methods.openLimitOrderTypes(olo.trader, olo.pairIndex, olo.index).call();
+
+			return { ...olo, type };
+		}));
+
+		console.log("Fetched " + openLimitOrdersWithTypes.length + " open limit order(s).");
+
+		return openLimitOrdersWithTypes;
+	}
+
+	async function fetchOpenPairTrades() {
+		console.log("Fetching open pair trades...");
+
+		const openPairTrades = await Promise.all(spreadsP.map(async (_, spreadPIndex) => {
+			const pairTraderAddresses = await storageContract.methods.pairTradersArray(spreadPIndex).call();
+
+			return pairTraderAddresses.flatMap(async pairTraderAddress => {
+				const openTradesCalls = new Array(maxTradesPerPair);
+
+				for(let pairTradeIndex = 0; pairTradeIndex < maxTradesPerPair; pairTradeIndex++){
+					openTradesCalls.push(storageContract.methods.openTrades(pairTraderAddress, spreadPIndex, pairTradeIndex).call());
+				}
+				
+				const openTradesForTraderAddress = await Promise.all(openTradesCalls);
+				
+				return openTradesForTraderAddress.filter(openTrade => openTrade.leverage !== 0);
+			})
+		}));
+
+		console.log("Fetched " + openPairTrades.length + " open pair trade(s).");
+
+		return openPairTrades;
+	}
 }
 // -----------------------------------------
 // 9. WATCH TRADING EVENTS
