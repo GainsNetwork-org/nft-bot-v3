@@ -178,6 +178,7 @@ async function selectProvider(newProviderIndex){
 	// Fire and forget refreshing of data using new provider
 	fetchTradingVariables();
 	fetchOpenTrades();
+	checkLinkAllowance();
 	
 	console.log("New provider selection completed. Took: " + (Date.now() - executionStartTime) + "ms");
 }
@@ -211,26 +212,9 @@ const getProvider = (wssId) => {
 	});
 
 	provider.on('connect', () => {
-		setTimeout(() => {
-			if(provider.connected){
-				console.log('Connected to WSS '+WEB3_PROVIDER_URLS[wssId]+'.');
-
-				let connectedProvider = -1;
-				for(var i = 0; i < WEB3_PROVIDER_URLS.length; i++){
-					if(providers[i].connected && i !== wssId){
-						connectedProvider = i;
-						break;
-					}
-				}
-				if(connectedProvider === -1 || currentlySelectedWeb3ProviderIndex === null){
-					selectProvider(wssId);
-					console.log("Switched to WSS " + WEB3_PROVIDER_URLS[currentlySelectedWeb3ProviderIndex]);
-					checkLinkAllowance();
-				}else{
-					console.log("No need to switch WSS, already connected to " + WEB3_PROVIDER_URLS[currentlySelectedWeb3ProviderIndex]);
-				}
-			}
-		}, 1*1000);
+		if(provider.connected){
+			console.log('Connected to WSS '+WEB3_PROVIDER_URLS[wssId]+'.');
+		}
 	});
 	provider.on('error', () => { console.log("WSS "+WEB3_PROVIDER_URLS[wssId]+" error"); provider.disconnect(); });
 	return provider;
