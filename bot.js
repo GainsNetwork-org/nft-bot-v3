@@ -37,7 +37,7 @@ let allowedLink = false, selectedProvider = null, eventSubTrading = null, eventS
 	providers = [], web3 = [], blocks = [], maxPriorityFeePerGas = 50,
 	openTrades = [], spreadsP = [], openInterests = [], collaterals = [], nfts = [], nftsBeingUsed = [], ordersTriggered = [],
 	storageContract, tradingContract, tradingAddress, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract,
-	nftTimelock, maxTradesPerPair,
+	nftTimelock, maxTradesPerPair = 0,
 	nftContract1, nftContract2, nftContract3, nftContract4, nftContract5, linkContract;
 
 // --------------------------------------------
@@ -476,25 +476,28 @@ async function fetchOpenTrades(){
 	async function fetchOpenPairTrades() {
 		console.log("Fetching open pair trades...");
 
-		const openPairTrades = await Promise.all(spreadsP.map(async (_, spreadPIndex) => {
+		const allOpenPairTrades = (await Promise.all(spreadsP.map(async (_, spreadPIndex) => {
 			const pairTraderAddresses = await storageContract.methods.pairTradersArray(spreadPIndex).call();
 
-			return pairTraderAddresses.flatMap(async pairTraderAddress => {
+			const openTradesForPairTraders = await Promise.all(pairTraderAddresses.map(async pairTraderAddress => {
 				const openTradesCalls = new Array(maxTradesPerPair);
 
 				for(let pairTradeIndex = 0; pairTradeIndex < maxTradesPerPair; pairTradeIndex++){
-					openTradesCalls.push(storageContract.methods.openTrades(pairTraderAddress, spreadPIndex, pairTradeIndex).call());
+					openTradesCalls[pairTradeIndex] = storageContract.methods.openTrades(pairTraderAddress, spreadPIndex, pairTradeIndex).call();
 				}
 				
 				const openTradesForTraderAddress = await Promise.all(openTradesCalls);
 				
-				return openTradesForTraderAddress.filter(openTrade => openTrade.leverage !== 0);
-			})
-		}));
+				// Filter out any of the trades that aren't *really* open (NOTE: these will have an empty trader address, so just test against that)
+				return openTradesForTraderAddress.filter(openTrade => openTrade.trader === pairTraderAddress);
+			}));
 
-		console.log("Fetched " + openPairTrades.length + " open pair trade(s).");
+			return openTradesForPairTraders;
+		}))).flat(2);
 
-		return openPairTrades;
+		console.log("Fetched " + allOpenPairTrades.length + " open pair trade(s).");
+
+		return allOpenPairTrades;
 	}
 }
 // -----------------------------------------
