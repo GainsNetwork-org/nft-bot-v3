@@ -261,97 +261,107 @@ setInterval(() => {
 // -----------------------------------------
 
 async function fetchTradingVariables(){
-	web3[selectedProvider].eth.net.isListening().then(async () => {
-		const maxPerPair = await storageContract.methods.maxTradesPerPair().call();
-		const nftSuccessTimelock = await storageContract.methods.nftSuccessTimelock().call();
-		const pairsCount = await pairsStorageContract.methods.pairsCount().call();
-		const maxNegativePnlP = await pairInfosContract.methods.maxNegativePnlOnOpenP().call();
+	const executionStartTime = new Date().getTime();
 
-		nfts = [];
+	try
+	{
+		await Promise.all(
+			[
+				fetchNfts(),
+				fetchPairs()
+			]);
 
-		const nftsCount1 = await nftContract1.methods.balanceOf(process.env.PUBLIC_KEY).call();
-		const nftsCount2 = await nftContract2.methods.balanceOf(process.env.PUBLIC_KEY).call();
-		const nftsCount3 = await nftContract3.methods.balanceOf(process.env.PUBLIC_KEY).call();
-		const nftsCount4 = await nftContract4.methods.balanceOf(process.env.PUBLIC_KEY).call();
-		const nftsCount5 = await nftContract5.methods.balanceOf(process.env.PUBLIC_KEY).call();
+		const executionEndTime = new Date().getTime();
 
-		for(var i = 0; i < nftsCount1; i++){
-			const id = await nftContract1.methods.tokenOfOwnerByIndex(process.env.PUBLIC_KEY, i).call();
-			nfts.push({id: id, type: 1});
-		}
-		for(var i = 0; i < nftsCount2; i++){
-			const id = await nftContract2.methods.tokenOfOwnerByIndex(process.env.PUBLIC_KEY, i).call();
-			nfts.push({id: id, type: 2});
-		}
-		for(var i = 0; i < nftsCount3; i++){
-			const id = await nftContract3.methods.tokenOfOwnerByIndex(process.env.PUBLIC_KEY, i).call();
-			nfts.push({id: id, type: 3});
-		}
-		for(var i = 0; i < nftsCount4; i++){
-			const id = await nftContract4.methods.tokenOfOwnerByIndex(process.env.PUBLIC_KEY, i).call();
-			nfts.push({id: id, type: 4});
-		}
-		for(var i = 0; i < nftsCount5; i++){
-			const id = await nftContract5.methods.tokenOfOwnerByIndex(process.env.PUBLIC_KEY, i).call();
-			nfts.push({id: id, type: 5});
-		}
+		console.log("Done fetching trading variables. Took: " + (executionEndTime - executionStartTime) + "ms");
+	} catch(error) {
+		console.log("Error while fetching trading variables: " + error.message, error);
 
+		setTimeout(() => { fetchTradingVariables(); }, 2*1000);
+	};
+
+	async function fetchNfts() {
+		await web3[selectedProvider].eth.net.isListening();
+		
+		const [
+			nftSuccessTimelock, 
+			nftsCount1,
+			nftsCount2,
+			nftsCount3,
+			nftsCount4,
+			nftsCount5
+		] = await Promise.all(
+			[
+				storageContract.methods.nftSuccessTimelock().call(),
+				nftContract1.methods.balanceOf(process.env.PUBLIC_KEY).call(),
+				nftContract2.methods.balanceOf(process.env.PUBLIC_KEY).call(),
+				nftContract3.methods.balanceOf(process.env.PUBLIC_KEY).call(),
+				nftContract4.methods.balanceOf(process.env.PUBLIC_KEY).call(),
+				nftContract4.methods.balanceOf(process.env.PUBLIC_KEY).call(),
+			]);
+
+		nfts = await Promise.all(
+			[
+				{ nftContract: nftContract1, nftType: 1, count: nftsCount1 }, 
+				{ nftContract: nftContract2, nftType: 2, count: nftsCount2 },
+				{ nftContract: nftContract3, nftType: 3, count: nftsCount3 },
+				{ nftContract: nftContract4, nftType: 4, count: nftsCount4 },
+				{ nftContract: nftContract5, nftType: 5, count: nftsCount5 }
+			].map(async nft =>
+				{
+					for(let i = 0; i < nft.count; i++) {
+						const nftId = await nft.nftContract.methods.tokenOfOwnerByIndex(process.env.PUBLIC_KEY, i).call();
+						
+						return { id: nftId, type: nft.nftType };
+					}
+				}));
+
+		nftTimelock = nftSuccessTimelock;
+	}
+
+	async function fetchPairs() {
+		const [
+			maxPerPair, 
+			pairsCount
+		] = await Promise.all(
+			[
+				storageContract.methods.maxTradesPerPair().call(),				
+				pairsStorageContract.methods.pairsCount().call()
+			]);
+			
 		let pairsPromises = [];
 		for(var i = 0; i < pairsCount; i++){
 			pairsPromises.push(pairsStorageContract.methods.pairsBackend(i).call());
 		}
 
-		Promise.all(pairsPromises).then(async (s) => {
-			for(var j = 0; j < s.length; j++){
-				const openInterestLong = await storageContract.methods.openInterestDai(j, 0).call();
-				const openInterestShort = await storageContract.methods.openInterestDai(j, 1).call();
-				const openInterestMax = await storageContract.methods.openInterestDai(j, 2).call();
-				openInterests[j] = {long: openInterestLong, short: openInterestShort, max: openInterestMax};
+		const pairs = await Promise.all(pairsPromises);
+		spreadsP = new Array(pairs.length);
+		
+		await Promise.all(pairs.map(async (pair, pairIndex) => {
+			const [
+				openInterestLong,
+				openInterestShort,
+				openInterestMax,
+				collateralLong,
+				collateralShort,
+				collateralMax
+				] = await Promise.all(
+					[
+					storageContract.methods.openInterestDai(pairIndex, 0).call(),
+					storageContract.methods.openInterestDai(pairIndex, 1).call(),
+					storageContract.methods.openInterestDai(pairIndex, 2).call(),
+					pairsStorageContract.methods.groupsCollaterals(pairIndex, 0).call(),
+					pairsStorageContract.methods.groupsCollaterals(pairIndex, 1).call(),
+					pairsStorageContract.methods.groupMaxCollateral(pairIndex).call()
+				]);
 
-				const collateralLong = await pairsStorageContract.methods.groupsCollaterals(j, 0).call();
-				const collateralShort = await pairsStorageContract.methods.groupsCollaterals(j, 1).call();
-				const collateralMax = await pairsStorageContract.methods.groupMaxCollateral(j).call();
-				collaterals[j] = {long: collateralLong, short: collateralShort, max: collateralMax};
-			}
+			openInterests[pairIndex] = {long: openInterestLong, short: openInterestShort, max: openInterestMax};
+			collaterals[pairIndex] = {long: collateralLong, short: collateralShort, max: collateralMax};
+			spreadsP[pairIndex] = pair["0"].spreadP;
+		}));
 
-			const pairInfos = await pairInfosContract.methods.getPairInfos([...Array(parseInt(pairsCount)).keys()]).call();
-
-			pairParams = pairInfos["0"].map((value) => {
-				return {
-					onePercentDepthAbove: parseFloat(value.onePercentDepthAbove), 
-					onePercentDepthBelow: parseFloat(value.onePercentDepthBelow), 
-					rolloverFeePerBlockP: parseFloat(value.rolloverFeePerBlockP) / 1e12, 
-					fundingFeePerBlockP: parseFloat(value.fundingFeePerBlockP) / 1e12
-				}
-			});
-
-			pairRolloverFees = pairInfos["1"].map((value) => {
-				return {
-					accPerCollateral: parseFloat(value.accPerCollateral) / 1e18,
-					lastUpdateBlock: parseInt(value.lastUpdateBlock)
-				}
-			});
-
-			pairFundingFees = pairInfos["2"].map((value) => {
-				return {
-					accPerOiLong: parseFloat(value.accPerOiLong) / 1e18, 
-					accPerOiShort: parseFloat(value.accPerOiShort) / 1e18, 
-					lastUpdateBlock: parseInt(value.lastUpdateBlock)
-				}
-			});
-
-			spreadsP = [];
-			for(var j = 0; j < s.length; j++){ spreadsP.push(s[j]["0"].spreadP); }
-
-			nftTimelock = nftSuccessTimelock;
-			maxTradesPerPair = maxPerPair;
-			maxNegativePnlOnOpenP = parseFloat(maxNegativePnlP) / 1e10;
-
-			console.log("Fetched trading variables.");
-		});
-	}).catch(() => {
-		setTimeout(() => { fetchTradingVariables(); }, 2*1000);
-	});
+		maxTradesPerPair = maxPerPair;
+	}
 }
 
 setInterval(() => {
