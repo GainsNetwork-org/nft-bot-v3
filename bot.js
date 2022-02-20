@@ -33,9 +33,9 @@ const abis = require('./abis');
 // 2. GLOBAL VARIABLES
 // -----------------------------------------
 
-let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, eventSubTrading = null, eventSubCallbacks = null, nonce = null,
+let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, eventSubTrading = null, eventSubCallbacks = null,
 	web3Providers = [], web3Clients = [], maxPriorityFeePerGas = 50,
-	knownOpenTrades= new Map(), spreadsP = [], openInterests = [], collaterals = [], nfts = [], nftsBeingUsed = [], ordersTriggered = [],
+	knownOpenTrades = new Map(), spreadsP = [], openInterests = [], collaterals = [], nfts = [], nftsBeingUsed = new Set(), ordersTriggered = new Set(),
 	storageContract, tradingContract, tradingAddress, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract,
 	nftTimelock, maxTradesPerPair = 0,
 	nftContract1, nftContract2, nftContract3, nftContract4, nftContract5, linkContract;
@@ -454,7 +454,7 @@ async function selectNft(){
 		return null; 
 	}
 
-	console.log("NFTs: total loaded=" + nfts.length + ";currently in use=" + nftsBeingUsed.length + ";");
+	console.log("NFTs: total loaded=" + nfts.length + ";currently in use=" + nftsBeingUsed.size + ";");
 
 	try
 	{
@@ -465,7 +465,7 @@ async function selectNft(){
 		// Load the last successful block for each NFT that we know is not actively being used
 		const nftsWithLastSuccesses = await Promise.all(
 				nfts
-					.filter(nft => !nftsBeingUsed.includes(nft.id))
+					.filter(nft => !nftsBeingUsed.has(nft.id))
 					.map(async nft => ({ 
 						nft,
 						lastSuccess: parseFloat(await storageContract.methods.nftLastSuccess(nfts[i].id).call())
@@ -804,7 +804,7 @@ async function refreshPairFundingFees(event){
 // ---------------------------------------------
 
 function alreadyTriggered(trade, orderType){
-	for(var i = 0; i < ordersTriggered.length; i++){
+	for(var i = 0; i < ordersTriggered.size; i++){
 		if(ordersTriggered[i].orderType === orderType){
 			const t = ordersTriggered[i].trade;
 			if(trade.trader === t.trader && trade.pairIndex === t.pairIndex && trade.index === t.index){
@@ -818,207 +818,139 @@ function alreadyTriggered(trade, orderType){
 // Start monitoring forex
 forex.startForexMonitoring();
 
-// Calculate liquidation price
-function getRolloverFee (
-  posDai,
-  pairIndex,
-  initialAccRolloverFees,
-  openedAfterUpdate
-){
-	if(!openedAfterUpdate || !blocks[selectedProvider]) return 0;
-
-	const { accPerCollateral, lastUpdateBlock } = pairRolloverFees[pairIndex];
-	const { rolloverFeePerBlockP } = pairParams[pairIndex];
-
-	const pendingAccRolloverFees = accPerCollateral + (blocks[selectedProvider] - lastUpdateBlock) * rolloverFeePerBlockP;
-
-	return posDai * (pendingAccRolloverFees - initialAccRolloverFees);
-};
-function getFundingFee(
-  leveragedPosDai,
-  pairIndex,
-  initialAccFundingFees,
-  buy,
-  openedAfterUpdate
-){
-	if(!openedAfterUpdate || !blocks[selectedProvider]) return 0;
-
-	const { accPerOiLong, accPerOiShort, lastUpdateBlock } = pairFundingFees[pairIndex];
-	const { fundingFeePerBlockP } = pairParams[pairIndex];
-
-	const { long: longOi, short: shortOi } = openInterests[pairIndex];
-	const fundingFeesPaidByLongs = (longOi - shortOi) * fundingFeePerBlockP * (blocks[selectedProvider] - lastUpdateBlock);
-
-	const pendingAccFundingFees = buy
-	? accPerOiLong + fundingFeesPaidByLongs / longOi
-	: accPerOiShort + (fundingFeesPaidByLongs * -1) / shortOi;
-
-	return leveragedPosDai * (pendingAccFundingFees - initialAccFundingFees);
-};
-function getTradeLiquidationPrice(t){
-	const {trade, tradeInfo, initialAccFees} = t;
-	const posDai = trade.initialPosToken / 1e18 * tradeInfo.tokenPriceDai / 1e10;
-
-	const openPrice = parseFloat(trade.openPrice) / 1e10;
-	const buy = trade.buy.toString() === "true";
-
-	const liqPriceDistance =
-		(openPrice *
-			(posDai * 0.9 -
-				getRolloverFee(
-					posDai,
-					trade.pairIndex,
-					initialAccFees.rollover,
-					initialAccFees.openedAfterUpdate
-				) -
-				getFundingFee(
-					posDai * trade.leverage,
-					trade.pairIndex,
-					initialAccFees.funding,
-					trade.buy,
-					initialAccFees.openedAfterUpdate
-				))) /
-		posDai /
-		trade.leverage;
-
- 	return trade.buy ? openPrice - liqPriceDistance : openPrice + liqPriceDistance;
-}
-
-function wss(){
+function wss() {
 	let socket = new WebSocket(process.env.PRICES_URL);
 	socket.onclose = () => { setTimeout(() => { wss() }, 2000); };
 	socket.onerror = () => { socket.close(); };
 	socket.onmessage = async (msg) => {
-		const p = JSON.parse(msg.data);
-		if(p.closes === undefined) return;
+		if(spreadsP.length === 0) {
+			console.log("WARNING: Spreads are not yet loaded; unable to process any trades!");
+
+			return;
+		}
+
+		if(!allowedLink) {
+			console.log("WARNING: link is not currently allowed; unable to process any trades!");
+
+			return;
+		}
+
+		const messageData = JSON.parse(msg.data);
 		
-		if(spreadsP.length > 0 && allowedLink){
-			const isForexMarketClosed = forex.isForexCurrentlyOpen() === false;
+		if(messageData.closes === undefined) {
+			console.log('No closes in this message; ignoring.')
 
-			for(var i = 0; i < knownOpenTrades.size; i++){
+			return;
+		}
 
-				const t = knownOpenTrades[i];
+		const forexMarketClosed = !forex.isForexMarketOpen();
 
-				if(isForexMarketClosed && t.pairIndex >= 21 && t.pairIndex <= 30) continue;
+		for(const openTrade of knownOpenTrades.values()) {
+			if(forexMarketClosed && openTrade.pairIndex >= 21 && openTrade.pairIndex <= 30) {
+				console.log("The trade is a forex trade, but the forex market is currently closed; skipping.");
 
-				const price = p.closes[t.pairIndex];
-				if(!(price > 0)) continue;
+				continue;
+			}
 
-				let orderType = -1;
+			const price = messageData.closes[openTrade.pairIndex];
+			const buy = openTrade.buy.toString() === "true";
+			let orderType = -1;
 
-				if(openTrades[i].trade !== undefined){
-					const buy = t.buy.toString() === "true";
+			if(openTrade.openPrice !== undefined) {
+				const tp = parseFloat(openTrade.tp)/1e10;
+				const sl = parseFloat(openTrade.sl)/1e10;
+				const open = parseFloat(openTrade.openPrice)/1e10;
+				const lev = parseFloat(openTrade.leverage);
+				const liqPrice = buy ? open - 0.9/lev*open : open + 0.9/lev*open;
 
-					const tp = parseFloat(t.tp)/1e10;
-					const sl = parseFloat(t.sl)/1e10;
-					const lev = parseFloat(t.leverage);
-					const liqPrice = getTradeLiquidationPrice(openTrades[i]);
+				if(tp.toString() !== "0" && ((buy && price >= tp) || (!buy && price <= tp))) {
+					orderType = 0;
+				} else if(sl.toString() !== "0" && ((buy && price <= sl) || (!buy && price >= sl))) {
+					orderType = 1;
+				} else if(sl.toString() === "0" && ((buy && price <= liqPrice) || (!buy && price >= liqPrice))) {
+					orderType = 2;
+				}
+			} else {
+				const spread = spreadsP[openTrade.pairIndex]/1e10*(100-openTrade.spreadReductionP)/100;
+				const priceIncludingSpread = !buy ? price*(1-spread/100) : price*(1+spread/100);
+				const interestDai = buy ? parseFloat(openInterests[openTrade.pairIndex].long) : parseFloat(openInterests[openTrade.pairIndex].short);
+				const collateralDai = buy ? parseFloat(collaterals[openTrade.pairIndex].long) : parseFloat(collaterals[openTrade.pairIndex].short);
+				const newInterestDai = (interestDai + parseFloat(openTrade.leverage)*parseFloat(openTrade.positionSize));
+				const newCollateralDai = (collateralDai + parseFloat(openTrade.positionSize));
+				const maxInterestDai = parseFloat(openInterests[openTrade.pairIndex].max);
+				const maxCollateralDai = parseFloat(collaterals[openTrade.pairIndex].max);
+				const minPrice = parseFloat(openTrade.minPrice)/1e10;
+				const maxPrice = parseFloat(openTrade.maxPrice)/1e10;
 
-					if(tp.toString() !== "0" && ((buy && price >= tp) || (!buy && price <= tp))){
-						orderType = 0;
-					}else if(sl.toString() !== "0" && ((buy && price <= sl) || (!buy && price >= sl))){
-						orderType = 1;
-					}else if((buy && price <= liqPrice) || (!buy && price >= liqPrice)){
-						orderType = 2;
-					}
-
-				}else{
-					const buy = t.buy.toString() === "true";
-					const posDai = parseFloat(t.leverage) * parseFloat(t.positionSize);
-
-					const baseSpreadP = spreadsP[t.pairIndex]/1e10*(100-t.spreadReductionP)/100;
-					
-					const onePercentDepth = buy ? pairParams[t.pairIndex].onePercentDepthAbove : pairParams[t.pairIndex].onePercentDepthBelow;
-					const interestDai = buy ? parseFloat(openInterests[t.pairIndex].long) : parseFloat(openInterests[t.pairIndex].short);
-   					
-   					const priceImpactP = (interestDai / 1e18 + (posDai / 1e18) / 2) / onePercentDepth;
-   					const spreadP = onePercentDepth > 0 ? baseSpreadP + priceImpactP : baseSpreadP;
-					const priceIncludingSpread = !buy ? price * (1 - spreadP / 100) : price * (1 + spreadP/100);
-
-					const collateralDai = buy ? parseFloat(collaterals[t.pairIndex].long) : parseFloat(collaterals[t.pairIndex].short);
-					
-					const newInterestDai = (interestDai + posDai);
-					const newCollateralDai = (collateralDai + parseFloat(t.positionSize));
-					
-					const maxInterestDai = parseFloat(openInterests[t.pairIndex].max);
-					const maxCollateralDai = parseFloat(collaterals[t.pairIndex].max);
-					
-					const minPrice = parseFloat(t.minPrice)/1e10;
-					const maxPrice = parseFloat(t.maxPrice)/1e10;
-
-					if(newInterestDai <= maxInterestDai && newCollateralDai <= maxCollateralDai
-					&& (onePercentDepth === 0 || priceImpactP * t.leverage <= maxNegativePnlOnOpenP)){
-						if(t.type.toString() === "0" && priceIncludingSpread >= minPrice && priceIncludingSpread <= maxPrice
-						|| t.type.toString() === "1" && (buy ? priceIncludingSpread <= maxPrice : priceIncludingSpread >= minPrice)
-						|| t.type.toString() === "2" && (buy ? priceIncludingSpread >= minPrice : priceIncludingSpread <= maxPrice)){
-							orderType = 3;
-						}
+				if(newInterestDai <= maxInterestDai && newCollateralDai <= maxCollateralDai){
+					if(openTrade.type.toString() === "0" && priceIncludingSpread >= minPrice && priceIncludingSpread <= maxPrice
+					|| openTrade.type.toString() === "1" && (buy ? priceIncludingSpread <= maxPrice : priceIncludingSpread >= minPrice)
+					|| openTrade.type.toString() === "2" && (buy ? priceIncludingSpread >= minPrice : priceIncludingSpread <= maxPrice)){
+						orderType = 3;
 					}
 				}
+			}
 
-				if(orderType > -1 && !alreadyTriggered(t, orderType)){
-					const nft = await selectNft();
+			if(orderType > -1) {
+				const triggeredOrderTrackingInfo = {
+					trade: openTrade, 
+					type: orderType,
+					name: orderType === 0 ? "TP" : orderType === 1 ? "SL" : orderType === 2 ? "LIQ" : "OPEN"
+				};
 
-					if(nft === null){ 
-						console.log("No NFT available to execute this order at this time.");
+				const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier(triggeredOrderTrackingInfo);
 
-						return;
-					}
+				if(ordersTriggered.has(triggeredOrderTrackingInfoIdentifier)) {
+					console.log("Order has already been triggered; skipping.");
 
-					const orderInfo = {nftId: nft.id, trade: t, type: orderType,
-						name: orderType === 0 ? "TP" : orderType === 1 ? "SL" : orderType === 2 ? "LIQ" : "OPEN"};
+					continue;
+				}
 
-					//console.log("Try to trigger (order type: " + orderInfo.name + ", nft id: "+orderInfo.nftId+")");
+				const availableNft = await selectNft();
 
-					tradingContract.methods.executeNftOrder(orderType, t.trader, t.pairIndex, t.index, nft.id, nft.type)
-					.estimateGas({from: process.env.PUBLIC_KEY}, (error, result) => {
-						if(error){
-							console.log("Tx error (order type: " + orderInfo.name + ", nft id: "+orderInfo.nftId+"), not triggering: ", error.message);
-						}else{
-							if(alreadyTriggered(t, orderType) || nftsBeingUsed.includes(nft.id)) return;
+				// If there are no more NFTs available, we can stop trying to trigger any other trades
+				if(availableNft === null) { 
+					console.log("No NFTS available; unable to trigger any other trades at this time!");
 
-							nftsBeingUsed.push(nft.id);
-							ordersTriggered.push({trade: t, orderType: orderType});
+					return; 
+				}
 
-							const tx = {
-								from: process.env.PUBLIC_KEY,
-								to : tradingAddress,
-								data : tradingContract.methods.executeNftOrder(orderType, t.trader, t.pairIndex, t.index, nft.id, nft.type).encodeABI(),
-								maxPriorityFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(maxPriorityFeePerGas*1e9),
-								maxFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-								gas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex("2000000")
-							};
+				//console.log("Trying to trigger " + triggeredOrderTrackingInfo.name + " order with nft: " + triggeredOrderTrackingInfo.nftId + ")");
 
-							web3Clients[currentlySelectedWeb3ClientIndex].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY).then(signed => {
-								web3Clients[currentlySelectedWeb3ClientIndex].eth.sendSignedTransaction(signed.rawTransaction)
-								.on('receipt', () => {
-									console.log("Triggered (order type: " + orderInfo.name + ", nft id: "+orderInfo.nftId+")");
-									setTimeout(() => {
-										ordersTriggered = ordersTriggered.filter(item => JSON.stringify(item) !== JSON.stringify({trade:orderInfo.trade, orderType: orderInfo.type}));
-										nftsBeingUsed = nftsBeingUsed.filter(item => item !== orderInfo.nftId);
-									}, TRIGGER_TIMEOUT*1000);
-								}).on('error', (e) => {
-									console.log("Failed to trigger (order type: " + orderInfo.name + ", nft id: "+orderInfo.nftId+")");
-									//console.log("Tx error (" + e + ")");
-									setTimeout(() => {
-										ordersTriggered = ordersTriggered.filter(item => JSON.stringify(item) !== JSON.stringify({trade:orderInfo.trade, orderType: orderInfo.type}));
-										nftsBeingUsed = nftsBeingUsed.filter(item => item !== orderInfo.nftId);
-									}, TRIGGER_TIMEOUT*1000);
-								});
-							}).catch(e => {
-								console.log("Failed to trigger (order type: " + orderInfo.name + ", nft id: "+orderInfo.nftId+")");
-								//console.log("Tx error (" + e + ")");
-								setTimeout(() => {
-									ordersTriggered = ordersTriggered.filter(item => JSON.stringify(item) !== JSON.stringify({trade:orderInfo.trade, orderType: orderInfo.type}));
-									nftsBeingUsed = nftsBeingUsed.filter(item => item !== orderInfo.nftId);
-								}, TRIGGER_TIMEOUT*1000);
-							});
-						}
-					});
+				const tx = {
+					from: process.env.PUBLIC_KEY,
+					to : tradingAddress,
+					data : tradingContract.methods.executeNftOrder(orderType, openTrade.trader, openTrade.pairIndex, openTrade.index, availableNft.id, availableNft.type).encodeABI(),
+					maxPriorityFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(maxPriorityFeePerGas*1e9),
+					maxFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+					gas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex("2000000")
+				};
+
+				const signedTransaction = await web3Clients[currentlySelectedWeb3ClientIndex].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
+
+				try
+				{
+					// Track that these are being actively used in processing of this order
+					nftsBeingUsed.add(availableNft.id);
+					ordersTriggered.add(triggeredOrderTrackingInfoIdentifier);
+					
+					await web3Clients[currentlySelectedWeb3ClientIndex].eth.sendSignedTransaction(signedTransaction.rawTransaction)
+					
+					console.log("Triggered (order type: " + triggeredOrderTrackingInfo.name + ", nft id: " + availableNft.nftId + ")");
+				} catch(error) {
+					console.log("An unexpected error occurred trying to trigger an order (order type: " + triggeredOrderTrackingInfo.name + ", nft id: " + availableNft.nftId + ")", error);
+				} finally {
+					// Always clean up tracking state around active processing of this order
+					ordersTriggered.delete(triggeredOrderTrackingInfoIdentifier);
+					nftsBeingUsed.delete(availableNft.nftId);
 				}
 			}
 		}
-	};
+
+		function buildTriggeredOrderTrackingInfoIdentifier(orderTrackingInfo) {
+			return orderTrackingInfo.trade.trader + "-" + orderTrackingInfo.trade.pairIndex + "-" + orderTrackingInfo.trade.index + "-" + orderTrackingInfo.type;
+		}		
+	}
 }
 
 wss();
