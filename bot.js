@@ -468,7 +468,7 @@ async function selectNft(){
 					.filter(nft => !nftsBeingUsed.has(nft.id))
 					.map(async nft => ({ 
 						nft,
-						lastSuccess: parseFloat(await storageContract.methods.nftLastSuccess(nfts[i].id).call())
+						lastSuccess: parseFloat(await storageContract.methods.nftLastSuccess(nft.id).call())
 					})));
 
 		// Try to find the first NFT whose last successful block is older than the current block by the required timelock amount
