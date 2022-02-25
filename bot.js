@@ -349,6 +349,8 @@ async function fetchTradingVariables(){
 	};
 
 	async function fetchNfts() {
+		console.log("Fetching available NFTs...");
+		
 		await web3Clients[currentlySelectedWeb3ClientIndex].eth.net.isListening();
 		
 		const [
@@ -367,24 +369,31 @@ async function fetchTradingVariables(){
 				nftContract4.methods.balanceOf(process.env.PUBLIC_KEY).call(),
 				nftContract4.methods.balanceOf(process.env.PUBLIC_KEY).call(),
 			]);
-
-		nfts = await Promise.all(
+	
+		nfts = (await Promise.all(
 			[
 				{ nftContract: nftContract1, nftType: 1, count: nftsCount1 }, 
 				{ nftContract: nftContract2, nftType: 2, count: nftsCount2 },
 				{ nftContract: nftContract3, nftType: 3, count: nftsCount3 },
 				{ nftContract: nftContract4, nftType: 4, count: nftsCount4 },
 				{ nftContract: nftContract5, nftType: 5, count: nftsCount5 }
-			].map(async nft =>
-				{
-					for(let i = 0; i < nft.count; i++) {
-						const nftId = await nft.nftContract.methods.tokenOfOwnerByIndex(process.env.PUBLIC_KEY, i).call();
-						
-						return { id: nftId, type: nft.nftType };
-					}
-				}));
-
+			].map(async nft => {
+				const allNftIdsOfTypeCalls = new Array(nft.count);
+				
+				for(let i = 0; i < nft.count; i++) {
+					allNftIdsOfTypeCalls[i] = nft.nftContract.methods.tokenOfOwnerByIndex(process.env.PUBLIC_KEY, i).call()
+				}
+	
+				const allNftIdsOfType = await Promise.all(allNftIdsOfTypeCalls);
+	
+				return allNftIdsOfType
+					.filter(nftId => nftId !== "0")
+					.map(nftId => ({ id: nftId, type: nft.nftType }));
+			}))).flat();
+	
 		nftTimelock = nftSuccessTimelock;
+		
+		console.log("NFTs fetched: available=" + nfts.length + ";timelock=" + nftTimelock);
 	}
 
 	async function fetchPairs() {
