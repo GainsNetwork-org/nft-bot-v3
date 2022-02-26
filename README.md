@@ -21,11 +21,11 @@ Because the "normal" LINK token on Polygon is an ERC20, and oracles only support
 
 Each request to trigger an order will cost LINK (0.002% of collateral x leverage for cryptos, 0.0002% for forex) to pay our node operators for the real-time on-chain feed.
 
-Only the first to trigger an order will pay the LINK cost, as if the trigger is successful, he is guaranteed to get 40% of the trigger reward.
+Only the first to trigger an order will pay the LINK cost, as if the trigger is successful, he is guaranteed to get 55% of the trigger reward.
 
-Then, another 40% goes into a pool to be shared proportionally by the number of orders NFT bots executed during the current round (= 50 orders), to incentivize better the execution of smaller trades as they give you access to bigger rewards in a pool.
+Then, another 10% goes into a pool to be shared proportionally by the number of orders NFT bots executed during the current round (= 50 orders), to incentivize better the execution of smaller trades as they give you access to bigger rewards in a pool.
 
-Finally, 20% goes to the 10 first NFT bots that triggered right after the first to trigger in the same block, to incentivize more bots running and reduce gas wars.
+Finally, 35% goes to the 10 first NFT bots that triggered right after the first to trigger in the same block, to incentivize more bots running and reduce gas wars.
 
 ## Tutorial (run locally)
 
