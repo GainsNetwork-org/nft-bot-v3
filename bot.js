@@ -47,7 +47,7 @@ let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, eventSubTrading 
 console.log("Welcome to the gTrade NFT bot!");
 if(!process.env.WSS_URLS || !process.env.PRICES_URL || !process.env.STORAGE_ADDRESS
 || !process.env.PRIVATE_KEY || !process.env.PUBLIC_KEY || !process.env.EVENT_CONFIRMATIONS_SEC 
-|| !process.env.TRIGGER_TIMEOUT || !process.env.MAX_GAS_PRICE_GWEI || !process.env.CHECK_REFILL_SEC 
+|| !process.env.MAX_GAS_PRICE_GWEI || !process.env.CHECK_REFILL_SEC
 || !process.env.VAULT_REFILL_ENABLED || !process.env.AUTO_HARVEST_SEC || !process.env.MIN_PRIORITY_GWEI
 || !process.env.PRIORITY_GWEI_MULTIPLIER || !process.env.PAIR_INFOS_ADDRESS){
 	console.log("Please fill all parameters in the .env file.");
@@ -58,7 +58,6 @@ if(!process.env.WSS_URLS || !process.env.PRICES_URL || !process.env.STORAGE_ADDR
 const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
 	  CHECK_REFILL_SEC = parseInt(process.env.CHECK_REFILL_SEC, 10),
 	  EVENT_CONFIRMATIONS_SEC = parseInt(process.env.EVENT_CONFIRMATIONS_SEC, 10),
-	  TRIGGER_TIMEOUT = parseInt(process.env.TRIGGER_TIMEOUT, 10),
 	  AUTO_HARVEST_SEC = parseInt(process.env.AUTO_HARVEST_SEC, 10);
 
 async function checkLinkAllowance(){
