@@ -399,7 +399,7 @@ async function fetchTradingVariables(){
 			pairsCount
 		] = await Promise.all(
 			[
-				storageContract.methods.maxTradesPerPair().call(),				
+				storageContract.methods.maxTradesPerPair().call(),
 				pairsStorageContract.methods.pairsCount().call()
 			]);
 			
@@ -469,7 +469,7 @@ async function selectOnlyNft() {
 
 	// If there's no timelock then just return immediately
 	if(nftTimelock === 0) {
-		return onlyNft.nft;
+		return onlyNft;
 	}
 
 	const currentBlock = await web3Clients[currentlySelectedWeb3ClientIndex].eth.getBlockNumber();
@@ -479,7 +479,7 @@ async function selectOnlyNft() {
 		return null;	
 	}
 	
-	return onlyNft.nft;	
+	return onlyNft;	
 }
 
 async function selectNftFromMultiple() {
@@ -489,7 +489,7 @@ async function selectNftFromMultiple() {
 		return selectNftRoundRobin();
 	}
 	
-	return selectNftUsingTimelock();
+	return await selectNftUsingTimelock();
 }
 
 function selectNftRoundRobin() {
@@ -497,10 +497,10 @@ function selectNftRoundRobin() {
 
 	const nextNft = nfts[nextNftIndex];
 	
-	// If we're about to go past the end of the arrary, just go back to beginning
+	// If we're about to go past the end of the array, just go back to beginning
 	nfts.nextIndex = nextNftIndex === nfts.length - 1 ? 0 : nextNftIndex + 1;
 
-	return nextNft.nft;
+	return nextNft;
 }
 
 async function selectNftUsingTimelock() {
