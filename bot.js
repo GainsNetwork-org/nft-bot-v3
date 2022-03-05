@@ -61,7 +61,7 @@ const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
 	  AUTO_HARVEST_SEC = parseInt(process.env.AUTO_HARVEST_SEC, 10);
 
 async function checkLinkAllowance(){
-	web3Clients[currentlySelectedWeb3ClientIndex].eth.net.isListening().then(async () => {
+	try {
 		const allowance = await linkContract.methods.allowance(process.env.PUBLIC_KEY, process.env.STORAGE_ADDRESS).call();
 		if(parseFloat(allowance) > 0){
 			allowedLink = true;
@@ -92,9 +92,9 @@ async function checkLinkAllowance(){
 				setTimeout(() => { checkLinkAllowance(); }, 2*1000);
 			});
 		}
-	}).catch(() => {
+	} catch {
 		setTimeout(() => { checkLinkAllowance(); }, 5*1000);
-	});
+	}
 }
 
 // -----------------------------------------
@@ -350,8 +350,6 @@ async function fetchTradingVariables(){
 	async function fetchNfts() {
 		console.log("Fetching available NFTs...");
 		
-		await web3Clients[currentlySelectedWeb3ClientIndex].eth.net.isListening();
-		
 		const [
 			nftSuccessTimelock, 
 			nftsCount1,
@@ -466,8 +464,6 @@ async function selectNft(){
 
 	try
 	{
-		await web3Clients[currentlySelectedWeb3ClientIndex].eth.net.isListening();
-
 		const currentBlock = parseFloat(await web3Clients[currentlySelectedWeb3ClientIndex].eth.getBlockNumber());
 
 		// Load the last successful block for each NFT that we know is not actively being used
@@ -508,8 +504,6 @@ async function fetchOpenTrades(){
 	console.log("Fetching open trades...");
 	
 	try {
-		await web3Clients[currentlySelectedWeb3ClientIndex].eth.net.isListening();
-
 		if(spreadsP.length === 0){
 			console.log("Spreads are not yet loaded; will retry fetching open trades shortly!");
 			
@@ -585,7 +579,7 @@ async function fetchOpenTrades(){
 // -----------------------------------------
 
 function watchLiveTradingEvents(){
-	web3Clients[currentlySelectedWeb3ClientIndex].eth.net.isListening().then(async () => {
+	try {
 		if(eventSubTrading === null){
 			eventSubTrading = tradingContract.events.allEvents({ fromBlock: 'latest' }).on('data', function (event){
 				const eventName = event.event.toString();
@@ -621,23 +615,9 @@ function watchLiveTradingEvents(){
 				}, EVENT_CONFIRMATIONS_SEC*1000);
 			});
 		}
-
-		if(eventSubPairInfos === null){
-			eventSubPairInfos = pairInfosContract.events.allEvents({ fromBlock: 'latest' }).on('data', function (event){
-				const eventName = event.event.toString();
-
-				if(eventName !== "AccFundingFeesStored"){
-					return;
-				}
-
-				setTimeout(() => {
-					refreshPairFundingFees(event);
-				}, process.env.EVENT_CONFIRMATIONS_SEC*1000);
-			});
-		}
-	}).catch(() => {
+	} catch {
 		setTimeout(() => { watchLiveTradingEvents(); }, 2*1000);
-	});
+	}
 }
 
 // -----------------------------------------
