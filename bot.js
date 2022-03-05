@@ -475,7 +475,7 @@ async function selectOnlyNft() {
 	const currentBlock = await web3Clients[currentlySelectedWeb3ClientIndex].eth.getBlockNumber();
 
 	// Make sure the NFT is outside the timelock
-	if(currentBlock - onlyNft.lastSuccess < nftTimelock) {
+	if(currentBlock - onlyNft.lastSuccess <= nftTimelock) {
 		return null;	
 	}
 	
@@ -518,7 +518,7 @@ async function selectNftUsingTimelock() {
 					})));
 
 		// Try to find the first NFT whose last successful block is older than the current block by the required timelock amount
-		const firstEligibleNft = nftsWithLastSuccesses.find(nftwls => currentBlock - nftwls.lastSuccess > nftTimelock);
+		const firstEligibleNft = nftsWithLastSuccesses.find(nftwls => currentBlock - nftwls.lastSuccess >= nftTimelock);
 
 		if(firstEligibleNft !== undefined) {
 			return firstEligibleNft.nft;
@@ -945,7 +945,7 @@ function wss() {
 					return; 
 				}
 
-				//console.log("Trying to trigger " + triggeredOrderTrackingInfo.name + " order with nft: " + triggeredOrderTrackingInfo.nftId + ")");
+				//console.log("Trying to trigger " + triggeredOrderTrackingInfo.name + " order with nft: " + triggeredOrderTrackingInfo.id + ")");
 
 				const tx = {
 					from: process.env.PUBLIC_KEY,
@@ -966,13 +966,13 @@ function wss() {
 					
 					await web3Clients[currentlySelectedWeb3ClientIndex].eth.sendSignedTransaction(signedTransaction.rawTransaction)
 					
-					console.log("Triggered (order type: " + triggeredOrderTrackingInfo.name + ", nft id: " + availableNft.nftId + ")");
+					console.log("Triggered (order type: " + triggeredOrderTrackingInfo.name + ", nft id: " + availableNft.id + ")");
 				} catch(error) {
-					console.log("An unexpected error occurred trying to trigger an order (order type: " + triggeredOrderTrackingInfo.name + ", nft id: " + availableNft.nftId + ")", error);
+					console.log("An unexpected error occurred trying to trigger an order (order type: " + triggeredOrderTrackingInfo.name + ", nft id: " + availableNft.id + ")", error);
 				} finally {
 					// Always clean up tracking state around active processing of this order
 					ordersTriggered.delete(triggeredOrderTrackingInfoIdentifier);
-					nftsBeingUsed.delete(availableNft.nftId);
+					nftsBeingUsed.delete(availableNft.id);
 				}
 			}
 		}
