@@ -37,7 +37,7 @@ let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, eventSubTrading 
 	web3Providers = [], web3Clients = [], maxPriorityFeePerGas = 50,
 	knownOpenTrades = new Map(), spreadsP = [], openInterests = [], collaterals = [], nfts = [], nftsBeingUsed = new Set(), ordersTriggered = new Set(),
 	storageContract, tradingContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract,
-	nftTimelock, maxTradesPerPair = 0,
+	nftTimelock = 0, maxTradesPerPair = 0,
 	nftContract1, nftContract2, nftContract3, nftContract4, nftContract5, linkContract;
 
 // --------------------------------------------
@@ -447,24 +447,66 @@ setInterval(() => {
 // 7. SELECT NFT TO EXECUTE ORDERS
 // -----------------------------------------
 
-async function selectNft(){
-	console.log("Selecting NFT...");
-
-	if(nftTimelock === undefined) {
-		console.log("NFT Timelock not loaded yet.");
-	} 
-	
+let selectNft = () => {
 	if(nfts.length === 0) { 
 		console.log("No NFTs loaded yet.");
 
 		return null; 
 	}
 
-	console.log("NFTs: total loaded=" + nfts.length + ";currently in use=" + nftsBeingUsed.size + ";");
+	// Self patch to the optimal implementation on first call
+	if(nfts.length === 1) {
+		selectNft = selectOnlyNft;
+	} else {
+		selectNft = selectNftFromMultiple;
+	}
 
+	return selectNft();
+}
+
+async function selectOnlyNft() {
+	const onlyNft = nfts[0];
+
+	// If there's no timelock then just return immediately
+	if(nftTimelock === 0) {
+		return onlyNft.nft;
+	}
+
+	const currentBlock = await web3Clients[currentlySelectedWeb3ClientIndex].eth.getBlockNumber();
+
+	// Make sure the NFT is outside the timelock
+	if(currentBlock - onlyNft.lastSuccess < nftTimelock) {
+		return null;	
+	}
+	
+	return onlyNft.nft;	
+}
+
+async function selectNftFromMultiple() {
+	console.log("NFTs: total loaded=" + nfts.length);
+	
+	if(nftTimelock === 0) {
+		return selectNftRoundRobin();
+	}
+	
+	return selectNftUsingTimelock();
+}
+
+function selectNftRoundRobin() {
+	let nextNftIndex = nfts.nextIndex ?? 0;
+
+	const nextNft = nfts[nextNftIndex];
+	
+	// If we're about to go past the end of the arrary, just go back to beginning
+	nfts.nextIndex = nextNftIndex === nfts.length - 1 ? 0 : nextNftIndex + 1;
+
+	return nextNft.nft;
+}
+
+async function selectNftUsingTimelock() {
 	try
 	{
-		const currentBlock = parseFloat(await web3Clients[currentlySelectedWeb3ClientIndex].eth.getBlockNumber());
+		const currentBlock = await web3Clients[currentlySelectedWeb3ClientIndex].eth.getBlockNumber();
 
 		// Load the last successful block for each NFT that we know is not actively being used
 		const nftsWithLastSuccesses = await Promise.all(
