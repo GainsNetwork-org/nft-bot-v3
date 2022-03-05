@@ -388,7 +388,7 @@ async function fetchTradingVariables(){
 					.map(nftId => ({ id: nftId, type: nft.nftType }));
 			}))).flat();
 	
-		nftTimelock = nftSuccessTimelock;
+		nftTimelock = parseInt(nftSuccessTimelock, 10);
 		
 		console.log("NFTs fetched: available=" + nfts.length + ";timelock=" + nftTimelock);
 	}
