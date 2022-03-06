@@ -32,7 +32,7 @@ const abis = require('./abis');
 
 let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, eventSubTrading = null, eventSubCallbacks = null,
 	web3Providers = [], web3Clients = [], maxPriorityFeePerGas = 50,
-	knownOpenTrades = new Map(), spreadsP = [], openInterests = [], collaterals = [], nfts = [], nftsBeingUsed = new Set(), ordersTriggered = new Set(),
+	knownOpenTrades = new Map(), spreadsP = [], openInterests = [], collaterals = [], nfts = [], nftsBeingUsed = new Set(), triggeredOrders = new Map(),
 	storageContract, tradingContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract,
 	nftTimelock = 0, maxTradesPerPair = 0,
 	nftContract1, nftContract2, nftContract3, nftContract4, nftContract5, linkContract;
@@ -436,10 +436,11 @@ async function fetchTradingVariables(){
 	}
 }
 
+// Force refresh every 60 seconds (for now)
 setInterval(() => {
 	fetchTradingVariables();
 	fetchOpenTrades();
-}, 60*5*1000);
+}, 60*1000);
 
 // -----------------------------------------
 // 7. SELECT NFT TO EXECUTE ORDERS
@@ -790,8 +791,15 @@ async function refreshOpenTrades(event){
 					type: eventValues.orderType,
 				});
 
-				// Stop tracking having triggered this order (in case we were)
-				ordersTriggered.delete(triggeredOrderTrackingInfoIdentifier);
+				const triggeredOrderTimerId = triggeredOrders.get(triggeredOrderTrackingInfoIdentifier);
+				
+				// If we were tracking this triggered order, stop tracking it now and clear the timeout so it doesn't
+				// interrupt the event loop for no reason later
+				if(triggeredOrderTimerId !== undefined) {
+					clearTimeout(triggeredOrderTimerId);
+					
+					triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
+				}
 
 				const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 				const existingKnownOpenTrade = knownOpenTrades.get(tradeKey);
@@ -870,7 +878,7 @@ function wss() {
 		}
 
 		if(!allowedLink) {
-			console.log("WARNING: link is not currently allowed; unable to process any trades!");
+			//console.log("WARNING: link is not currently allowed; unable to process any trades!");
 
 			return;
 		}
@@ -939,7 +947,7 @@ function wss() {
 
 				const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier(triggeredOrderTrackingInfo);
 
-				if(ordersTriggered.has(triggeredOrderTrackingInfoIdentifier)) {
+				if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
 					console.log("Order has already been triggered; skipping.");
 
 					continue;
@@ -966,25 +974,35 @@ function wss() {
 				};
 
 				const signedTransaction = await web3Clients[currentlySelectedWeb3ClientIndex].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
+				let triggeredOrderCleanupTimerId;
 
 				try
 				{
 					// Track that these are being actively used in processing of this order
 					nftsBeingUsed.add(availableNft.id);
-					ordersTriggered.add(triggeredOrderTrackingInfoIdentifier);
 					
 					await web3Clients[currentlySelectedWeb3ClientIndex].eth.sendSignedTransaction(signedTransaction.rawTransaction)
 					
 					console.log("Triggered (order type: " + triggeredOrderTrackingInfo.name + ", nft id: " + availableNft.id + ")");
+
+					triggeredOrderCleanupTimerId = setTimeout(() => {
+						if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
+							console.log(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
+						}
+					}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
 				} catch(error) {
 					console.log("An unexpected error occurred trying to trigger an order (order type: " + triggeredOrderTrackingInfo.name + ", nft id: " + availableNft.id + ")", error);
 
-					setTimeout(() => {
-						ordersTriggered.delete(triggeredOrderTrackingInfoIdentifier);
+					triggeredOrderCleanupTimerId = setTimeout(() => {
+						if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
+							console.log(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previous failed, but it was already removed?`);
+						}
+
 					}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
 				} finally {
 					// Always clean up tracking state around active processing of this order
 					nftsBeingUsed.delete(availableNft.id);
+					triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderCleanupTimerId);
 				}
 			}
 		}		
