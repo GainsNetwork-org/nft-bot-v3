@@ -58,7 +58,8 @@ if(!process.env.WSS_URLS || !process.env.PRICES_URL || !process.env.STORAGE_ADDR
 const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
 	  CHECK_REFILL_SEC = parseInt(process.env.CHECK_REFILL_SEC, 10),
 	  EVENT_CONFIRMATIONS_SEC = parseInt(process.env.EVENT_CONFIRMATIONS_SEC, 10),
-	  AUTO_HARVEST_SEC = parseInt(process.env.AUTO_HARVEST_SEC, 10);
+	  AUTO_HARVEST_SEC = parseInt(process.env.AUTO_HARVEST_SEC, 10),
+	  FAILED_ORDER_TRIGGER_TIMEOUT_MS = (process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC ?? '').length > 0 ? parseInt(process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC, 10) * 1000 : 60 * 1000;
 
 async function checkLinkAllowance(){
 	try {
@@ -542,6 +543,10 @@ function buildOpenTradeKey(tradeDetails) {
 	return `t=${tradeDetails.trader};pi=${tradeDetails.pairIndex};i=${tradeDetails.index};`;
 }
 
+function buildTriggeredOrderTrackingInfoIdentifier(orderTrackingInfo) {
+	return orderTrackingInfo.trade.trader + "-" + orderTrackingInfo.trade.pairIndex + "-" + orderTrackingInfo.trade.index + "-" + orderTrackingInfo.type;
+}
+
 async function fetchOpenTrades(){
 	console.log("Fetching open trades...");
 	
@@ -783,6 +788,14 @@ async function refreshOpenTrades(event){
 			const trade = await storageContract.methods.openTrades(trader, pairIndex, index).call();
 
 			if(parseFloat(trade.leverage) === 0){
+				const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
+					trade: trade, 
+					type: eventValues.orderType,
+				});
+
+				// Stop tracking having triggered this order (in case we were)
+				ordersTriggered.delete(triggeredOrderTrackingInfoIdentifier);
+
 				const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 				const existingKnownOpenTrade = knownOpenTrades.get(tradeKey);
 				
@@ -924,8 +937,7 @@ function wss() {
 			if(orderType > -1) {
 				const triggeredOrderTrackingInfo = {
 					trade: openTrade, 
-					type: orderType,
-					name: orderType === 0 ? "TP" : orderType === 1 ? "SL" : orderType === 2 ? "LIQ" : "OPEN"
+					type: orderType
 				};
 
 				const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier(triggeredOrderTrackingInfo);
@@ -969,16 +981,15 @@ function wss() {
 					console.log("Triggered (order type: " + triggeredOrderTrackingInfo.name + ", nft id: " + availableNft.id + ")");
 				} catch(error) {
 					console.log("An unexpected error occurred trying to trigger an order (order type: " + triggeredOrderTrackingInfo.name + ", nft id: " + availableNft.id + ")", error);
+
+					setTimeout(() => {
+						ordersTriggered.delete(triggeredOrderTrackingInfoIdentifier);
+					}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
 				} finally {
 					// Always clean up tracking state around active processing of this order
-					ordersTriggered.delete(triggeredOrderTrackingInfoIdentifier);
 					nftsBeingUsed.delete(availableNft.id);
 				}
 			}
-		}
-
-		function buildTriggeredOrderTrackingInfoIdentifier(orderTrackingInfo) {
-			return orderTrackingInfo.trade.trader + "-" + orderTrackingInfo.trade.pairIndex + "-" + orderTrackingInfo.trade.index + "-" + orderTrackingInfo.type;
 		}		
 	}
 }
