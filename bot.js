@@ -20,9 +20,6 @@ if(process.env.NODE_ENV) {
 	}
 }
 
-const express = require('express');
-const app = express();
-const server = require('http').createServer(app);
 const Web3 = require("web3");
 const WebSocket = require('ws');
 const fetch = require('node-fetch');
@@ -1133,10 +1130,3 @@ if(AUTO_HARVEST_SEC > 0){
 		}
 	}, AUTO_HARVEST_SEC*1000);
 }
-
-// -------------------------------------------------
-// 14. CREATE SERVER (USEFUL FOR CLOUD PLATFORMS)
-// -------------------------------------------------
-
-const port = process.env.PORT || 4002;
-server.listen(port, () => console.log(`Listening on port ${port}`));
