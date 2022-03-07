@@ -655,6 +655,8 @@ function wss(){
 				if(forexMarketClosed && t.pairIndex >= 21 && t.pairIndex <= 30) continue;
 
 				const price = p.closes[t.pairIndex];
+				if(!(price > 0)) continue;
+
 				const buy = t.buy.toString() === "true";
 				let orderType = -1;
 
