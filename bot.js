@@ -962,7 +962,7 @@ function wss() {
 					return; 
 				}
 
-				//console.log("Trying to trigger " + triggeredOrderTrackingInfo.name + " order with nft: " + triggeredOrderTrackingInfo.id + ")");
+				//console.log("Trying to trigger " + triggeredOrderTrackingInfoIdentifier + " order with nft: " + triggeredOrderTrackingInfo.id + ")");
 
 				const tx = {
 					from: process.env.PUBLIC_KEY,
@@ -983,7 +983,7 @@ function wss() {
 					
 					await web3Clients[currentlySelectedWeb3ClientIndex].eth.sendSignedTransaction(signedTransaction.rawTransaction)
 					
-					console.log("Triggered (order type: " + triggeredOrderTrackingInfo.name + ", nft id: " + availableNft.id + ")");
+					console.log("Triggered (order type: " + triggeredOrderTrackingInfo.type + ", nft id: " + availableNft.id + ")");
 
 					triggeredOrderCleanupTimerId = setTimeout(() => {
 						if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
@@ -991,7 +991,7 @@ function wss() {
 						}
 					}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
 				} catch(error) {
-					console.log("An unexpected error occurred trying to trigger an order (order type: " + triggeredOrderTrackingInfo.name + ", nft id: " + availableNft.id + ")", error);
+					console.log("An unexpected error occurred trying to trigger an order (order type: " + triggeredOrderTrackingInfo.type + ", nft id: " + availableNft.id + ")", error);
 
 					triggeredOrderCleanupTimerId = setTimeout(() => {
 						if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
