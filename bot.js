@@ -978,22 +978,20 @@ function wss() {
 					maxFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
 					gas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex("2000000")
 				};
-
-				const signedTransaction = await web3Clients[currentlySelectedWeb3ClientIndex].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
-
+				
 				try
 				{
 					// Track that these are being actively used in processing of this order
 					nftsBeingUsed.add(availableNft.id);
+
+					const signedTransaction = await web3Clients[currentlySelectedWeb3ClientIndex].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
 
 					triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 						if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
 							console.log(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
 						}
 					}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
-					
-					
-					
+										
 					await web3Clients[currentlySelectedWeb3ClientIndex].eth.sendSignedTransaction(signedTransaction.rawTransaction)
 					
 					console.log("Triggered (order type: " + orderType + ", nft id: " + availableNft.id + ")");
