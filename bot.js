@@ -985,16 +985,19 @@ function wss() {
 				{
 					// Track that these are being actively used in processing of this order
 					nftsBeingUsed.add(availableNft.id);
-					
-					await web3Clients[currentlySelectedWeb3ClientIndex].eth.sendSignedTransaction(signedTransaction.rawTransaction)
-					
-					console.log("Triggered (order type: " + orderType + ", nft id: " + availableNft.id + ")");
 
 					triggeredOrderCleanupTimerId = setTimeout(() => {
 						if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
 							console.log(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
 						}
 					}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
+					
+					// Track that we're triggering this order
+					triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderCleanupTimerId);
+					
+					await web3Clients[currentlySelectedWeb3ClientIndex].eth.sendSignedTransaction(signedTransaction.rawTransaction)
+					
+					console.log("Triggered (order type: " + orderType + ", nft id: " + availableNft.id + ")");
 				} catch(error) {
 					console.log(`An unexpected error occurred trying to trigger an order for ${triggeredOrderTrackingInfoIdentifier} with nft id: ${availableNft.id}.`, error);
 
@@ -1007,7 +1010,6 @@ function wss() {
 				} finally {
 					// Always clean up tracking state around active processing of this order
 					nftsBeingUsed.delete(availableNft.id);
-					triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderCleanupTimerId);
 				}
 			}
 		}		
