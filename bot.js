@@ -793,12 +793,12 @@ async function refreshOpenTrades(event){
 					orderType: eventValues.orderType
 				});
 
-				const triggeredOrderTimerId = triggeredOrders.get(triggeredOrderTrackingInfoIdentifier);
+				const triggeredOrderDetails = triggeredOrders.get(triggeredOrderTrackingInfoIdentifier);
 				
 				// If we were tracking this triggered order, stop tracking it now and clear the timeout so it doesn't
 				// interrupt the event loop for no reason later
-				if(triggeredOrderTimerId !== undefined) {
-					clearTimeout(triggeredOrderTimerId);
+				if(triggeredOrderDetails !== undefined) {
+					clearTimeout(triggeredOrderDetails.cleanupTimerId);
 					
 					triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 				}
@@ -961,11 +961,12 @@ function wss() {
 					return; 
 				}
 
-				if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
-					console.log("Order has already been triggered; skipping.");
+				const triggeredOrderDetails = { 
+					cleanupTimerId: null,
+				};
 
-					continue;
-				}
+				// Track that we're triggering this order
+				triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderDetails);
 
 				console.log("Trying to trigger " + triggeredOrderTrackingInfoIdentifier + " order with nft: " + availableNft.id + ")");
 
@@ -979,21 +980,19 @@ function wss() {
 				};
 
 				const signedTransaction = await web3Clients[currentlySelectedWeb3ClientIndex].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
-				let triggeredOrderCleanupTimerId;
 
 				try
 				{
 					// Track that these are being actively used in processing of this order
 					nftsBeingUsed.add(availableNft.id);
 
-					triggeredOrderCleanupTimerId = setTimeout(() => {
+					triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 						if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
 							console.log(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
 						}
 					}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
 					
-					// Track that we're triggering this order
-					triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderCleanupTimerId);
+					
 					
 					await web3Clients[currentlySelectedWeb3ClientIndex].eth.sendSignedTransaction(signedTransaction.rawTransaction)
 					
@@ -1001,7 +1000,7 @@ function wss() {
 				} catch(error) {
 					console.log(`An unexpected error occurred trying to trigger an order for ${triggeredOrderTrackingInfoIdentifier} with nft id: ${availableNft.id}.`, error);
 
-					triggeredOrderCleanupTimerId = setTimeout(() => {
+					triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 						if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
 							console.log(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previous failed, but it was already removed?`);
 						}
@@ -1012,7 +1011,7 @@ function wss() {
 					nftsBeingUsed.delete(availableNft.id);
 				}
 			}
-		}		
+		}
 	}
 }
 
