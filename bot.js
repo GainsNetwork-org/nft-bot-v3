@@ -56,7 +56,7 @@ const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
 	  CHECK_REFILL_SEC = parseInt(process.env.CHECK_REFILL_SEC, 10),
 	  EVENT_CONFIRMATIONS_SEC = parseInt(process.env.EVENT_CONFIRMATIONS_SEC, 10),
 	  AUTO_HARVEST_SEC = parseInt(process.env.AUTO_HARVEST_SEC, 10),
-	  FAILED_ORDER_TRIGGER_TIMEOUT_MS = (process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC ?? '').length > 0 ? parseInt(process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC, 10) * 1000 : 60 * 1000;
+	  FAILED_ORDER_TRIGGER_TIMEOUT_MS = (process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC ?? '').length > 0 ? parseFloat(process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC, 10) * 1000 : 60 * 1000;
 
 async function checkLinkAllowance(){
 	try {
@@ -541,8 +541,8 @@ function buildOpenTradeKey(tradeDetails) {
 	return `t=${tradeDetails.trader};pi=${tradeDetails.pairIndex};i=${tradeDetails.index};`;
 }
 
-function buildTriggeredOrderTrackingInfoIdentifier(orderTrackingInfo) {
-	return orderTrackingInfo.trade.trader + "-" + orderTrackingInfo.trade.pairIndex + "-" + orderTrackingInfo.trade.index + "-" + orderTrackingInfo.type;
+function buildTriggeredOrderTrackingInfoIdentifier({ trader, pairIndex, index, orderType }) {
+	return trader + "-" + pairIndex + "-" + index + "-" + orderType;
 }
 
 async function fetchOpenTrades(){
@@ -787,8 +787,10 @@ async function refreshOpenTrades(event){
 
 			if(parseFloat(trade.leverage) === 0){
 				const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
-					trade: trade, 
-					type: eventValues.orderType,
+					trader,
+					pairIndex,
+					index,
+					orderType: eventValues.orderType
 				});
 
 				const triggeredOrderTimerId = triggeredOrders.get(triggeredOrderTrackingInfoIdentifier);
@@ -894,13 +896,15 @@ function wss() {
 		const forexMarketClosed = !forex.isForexMarketOpen();
 
 		for(const openTrade of knownOpenTrades.values()) {
-			if(forexMarketClosed && openTrade.pairIndex >= 21 && openTrade.pairIndex <= 30) {
+			const { pairIndex } = openTrade;
+			
+			if(forexMarketClosed && pairIndex >= 21 && pairIndex <= 30) {
 				console.log("The trade is a forex trade, but the forex market is currently closed; skipping.");
 
 				continue;
 			}
 
-			const price = messageData.closes[openTrade.pairIndex];
+			const price = messageData.closes[pairIndex];
 			const buy = openTrade.buy.toString() === "true";
 			let orderType = -1;
 
@@ -919,14 +923,14 @@ function wss() {
 					orderType = 2;
 				}
 			} else {
-				const spread = spreadsP[openTrade.pairIndex]/1e10*(100-openTrade.spreadReductionP)/100;
+				const spread = spreadsP[pairIndex]/1e10*(100-openTrade.spreadReductionP)/100;
 				const priceIncludingSpread = !buy ? price*(1-spread/100) : price*(1+spread/100);
-				const interestDai = buy ? parseFloat(openInterests[openTrade.pairIndex].long) : parseFloat(openInterests[openTrade.pairIndex].short);
-				const collateralDai = buy ? parseFloat(collaterals[openTrade.pairIndex].long) : parseFloat(collaterals[openTrade.pairIndex].short);
+				const interestDai = buy ? parseFloat(openInterests[pairIndex].long) : parseFloat(openInterests[pairIndex].short);
+				const collateralDai = buy ? parseFloat(collaterals[pairIndex].long) : parseFloat(collaterals[pairIndex].short);
 				const newInterestDai = (interestDai + parseFloat(openTrade.leverage)*parseFloat(openTrade.positionSize));
 				const newCollateralDai = (collateralDai + parseFloat(openTrade.positionSize));
-				const maxInterestDai = parseFloat(openInterests[openTrade.pairIndex].max);
-				const maxCollateralDai = parseFloat(collaterals[openTrade.pairIndex].max);
+				const maxInterestDai = parseFloat(openInterests[pairIndex].max);
+				const maxCollateralDai = parseFloat(collaterals[pairIndex].max);
 				const minPrice = parseFloat(openTrade.minPrice)/1e10;
 				const maxPrice = parseFloat(openTrade.maxPrice)/1e10;
 
@@ -940,12 +944,13 @@ function wss() {
 			}
 
 			if(orderType > -1) {
-				const triggeredOrderTrackingInfo = {
-					trade: openTrade, 
-					type: orderType
-				};
-
-				const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier(triggeredOrderTrackingInfo);
+				const { trader, index } = openTrade;
+				const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
+					trader: trader,
+					pairIndex: pairIndex,
+					index: index,
+					orderType
+				});
 
 				if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
 					console.log("Order has already been triggered; skipping.");
@@ -962,12 +967,12 @@ function wss() {
 					return; 
 				}
 
-				//console.log("Trying to trigger " + triggeredOrderTrackingInfoIdentifier + " order with nft: " + triggeredOrderTrackingInfo.id + ")");
+				console.log("Trying to trigger " + triggeredOrderTrackingInfoIdentifier + " order with nft: " + availableNft.id + ")");
 
 				const tx = {
 					from: process.env.PUBLIC_KEY,
 					to: tradingContract.options.address,
-					data : tradingContract.methods.executeNftOrder(orderType, openTrade.trader, openTrade.pairIndex, openTrade.index, availableNft.id, availableNft.type).encodeABI(),
+					data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
 					maxPriorityFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(maxPriorityFeePerGas*1e9),
 					maxFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
 					gas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex("2000000")
@@ -983,7 +988,7 @@ function wss() {
 					
 					await web3Clients[currentlySelectedWeb3ClientIndex].eth.sendSignedTransaction(signedTransaction.rawTransaction)
 					
-					console.log("Triggered (order type: " + triggeredOrderTrackingInfo.type + ", nft id: " + availableNft.id + ")");
+					console.log("Triggered (order type: " + orderType + ", nft id: " + availableNft.id + ")");
 
 					triggeredOrderCleanupTimerId = setTimeout(() => {
 						if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
@@ -991,7 +996,7 @@ function wss() {
 						}
 					}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
 				} catch(error) {
-					console.log("An unexpected error occurred trying to trigger an order (order type: " + triggeredOrderTrackingInfo.type + ", nft id: " + availableNft.id + ")", error);
+					console.log(`An unexpected error occurred trying to trigger an order for ${triggeredOrderTrackingInfoIdentifier} with nft id: ${availableNft.id}.`, error);
 
 					triggeredOrderCleanupTimerId = setTimeout(() => {
 						if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
