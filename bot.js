@@ -723,7 +723,7 @@ async function refreshOpenTrades(event){
 
 				limitOrder.type = type;
 
-				const tradeKey = buildOpenTradeKey(eventValues);
+				const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 				const existingKnownOpenTrade = knownOpenTrades.get(tradeKey);
 
 				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')){
