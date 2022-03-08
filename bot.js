@@ -537,8 +537,8 @@ async function selectNftUsingTimelock() {
 // 8. LOAD OPEN TRADES
 // -----------------------------------------
 
-function buildOpenTradeKey(tradeDetails) {
-	return `t=${tradeDetails.trader};pi=${tradeDetails.pairIndex};i=${tradeDetails.index};`;
+function buildOpenTradeKey({ trader, pairIndex, index }) {
+	return `t=${trader};pi=${pairIndex};i=${index};`;
 }
 
 function buildTriggeredOrderTrackingInfoIdentifier({ trader, pairIndex, index, orderType }) {
@@ -566,7 +566,7 @@ async function fetchOpenTrades(){
 				fetchOpenPairTrades()
 			]);
 		
-		knownOpenTrades = new Map(openLimitOrders.concat(pairTraders).map(trade => [buildOpenTradeKey(trade), trade]));
+		knownOpenTrades = new Map(openLimitOrders.concat(pairTraders).map(trade => [buildOpenTradeKey({ trader: trade.trader ?? trade.eventValues.t[0], pairIndex: trade.pairIndex, index: trade.index }), trade]));
 
 		console.log("Fetched " + knownOpenTrades.size + " total open trade(s).");
 
@@ -952,12 +952,6 @@ function wss() {
 					orderType
 				});
 
-				if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
-					console.log("Order has already been triggered; skipping.");
-
-					continue;
-				}
-
 				const availableNft = await selectNft();
 
 				// If there are no more NFTs available, we can stop trying to trigger any other trades
@@ -965,6 +959,12 @@ function wss() {
 					console.log("No NFTS available; unable to trigger any other trades at this time!");
 
 					return; 
+				}
+
+				if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
+					console.log("Order has already been triggered; skipping.");
+
+					continue;
 				}
 
 				console.log("Trying to trigger " + triggeredOrderTrackingInfoIdentifier + " order with nft: " + availableNft.id + ")");
