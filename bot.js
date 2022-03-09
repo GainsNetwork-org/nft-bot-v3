@@ -471,11 +471,18 @@ async function selectOnlyNft() {
 		return onlyNft;
 	}
 
-	const currentBlock = await web3Clients[currentlySelectedWeb3ClientIndex].eth.getBlockNumber();
+	const [ 
+		currentBlock,
+		nftLastSuccess
+	 ] = await Promise.all(
+		 [ 
+			web3Clients[currentlySelectedWeb3ClientIndex].eth.getBlockNumber(),
+			storageContract.methods.nftLastSuccess(onlyNft.id).call()
+		 ]);
 
-	// Make sure the NFT is outside the timelock
-	if(currentBlock - onlyNft.lastSuccess <= nftTimelock) {
-		return null;	
+	// If the NFT is still time locked we return null because we still can't use it
+	if(currentBlock - nftLastSuccess <= nftTimelock) {
+		return null;
 	}
 	
 	return onlyNft;	
