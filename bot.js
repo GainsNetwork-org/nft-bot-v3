@@ -944,14 +944,6 @@ function wss() {
 			}
 
 			if(orderType > -1) {
-				const { trader, index } = openTrade;
-				const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
-					trader,
-					pairIndex,
-					index,
-					orderType
-				});
-
 				const availableNft = await selectNft();
 
 				// If there are no more NFTs available, we can stop trying to trigger any other trades
@@ -961,28 +953,42 @@ function wss() {
 					return; 
 				}
 
+				// Track that these are being actively used in processing of this order
+				nftsBeingUsed.add(availableNft.id);
+
 				const triggeredOrderDetails = { 
 					cleanupTimerId: null,
 				};
 
-				// Track that we're triggering this order
-				triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderDetails);
+				const { trader, index } = openTrade;
+				const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
+					trader,
+					pairIndex,
+					index,
+					orderType
+				});
 
-				console.log("Trying to trigger " + triggeredOrderTrackingInfoIdentifier + " order with nft: " + availableNft.id + ")");
+				try {
+					// Make sure this order hasn't already been triggered
+					if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
+						console.log("Order has already been triggered; skipping.");
 
-				const tx = {
-					from: process.env.PUBLIC_KEY,
-					to: tradingContract.options.address,
-					data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
-					maxPriorityFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(maxPriorityFeePerGas*1e9),
-					maxFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-					gas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex("2000000")
-				};
-				
-				try
-				{
-					// Track that these are being actively used in processing of this order
-					nftsBeingUsed.add(availableNft.id);
+						continue;
+					}
+
+					// Track that we're triggering this order
+					triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderDetails);
+
+					console.log("Trying to trigger " + triggeredOrderTrackingInfoIdentifier + " order with nft: " + availableNft.id + ")");
+
+					const tx = {
+						from: process.env.PUBLIC_KEY,
+						to: tradingContract.options.address,
+						data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
+						maxPriorityFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(maxPriorityFeePerGas*1e9),
+						maxFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+						gas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex("2000000")
+					};
 
 					const signedTransaction = await web3Clients[currentlySelectedWeb3ClientIndex].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
 
