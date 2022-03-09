@@ -566,7 +566,7 @@ async function fetchOpenTrades(){
 				fetchOpenPairTrades()
 			]);
 		
-		knownOpenTrades = new Map(openLimitOrders.concat(pairTraders).map(trade => [buildOpenTradeKey({ trader: trade.trader ?? trade.eventValues.t[0], pairIndex: trade.pairIndex, index: trade.index }), trade]));
+		knownOpenTrades = new Map(openLimitOrders.concat(pairTraders).map(trade => [buildOpenTradeKey({ trader: trade.trader, pairIndex: trade.pairIndex, index: trade.index }), trade]));
 
 		console.log("Fetched " + knownOpenTrades.size + " total open trade(s).");
 
@@ -946,9 +946,9 @@ function wss() {
 			if(orderType > -1) {
 				const { trader, index } = openTrade;
 				const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
-					trader: trader,
-					pairIndex: pairIndex,
-					index: index,
+					trader,
+					pairIndex,
+					index,
 					orderType
 				});
 
