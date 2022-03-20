@@ -9,6 +9,7 @@ const server = require('http').createServer(app);
 const Web3 = require("web3");
 const WebSocket = require('ws');
 const fetch = require('node-fetch');
+const forex = require('./forex.js');
 
 // -----------------------------------------
 // 2. GLOBAL VARIABLES
@@ -625,18 +626,8 @@ function alreadyTriggered(trade, orderType){
 	return false;
 }
 
-let forexMarketClosed = false;
-
-setInterval(() => {
-	const d = new Date();
-	const v = d.getUTCDay();    
-	const h = d.getUTCHours();
-	const dom = d.getUTCDate();
-	const mon = d.getUTCMonth();
-
-	forexMarketClosed = (mon === 11 && dom >= 25 && dom <= 27) || (mon === 0 && dom >= 1 && dom <= 3) || 
-						(v === 5 && h >= 21) || (v === 6) || (v === 0 && h < 21);
-}, 5000);
+// Start monitoring forex
+forex.startForexMonitoring();
 
 function wss(){
 	let socket = new WebSocket(process.env.PRICES_URL);
@@ -647,12 +638,13 @@ function wss(){
 		if(p.closes === undefined) return;
 		
 		if(spreadsP.length > 0 && allowedLink){
+			const isForexMarketClosed = forex.isForexCurrentlyOpen() === false;
 
 			for(var i = 0; i < openTrades.length; i++){
 
 				const t = openTrades[i];
 
-				if(forexMarketClosed && t.pairIndex >= 21 && t.pairIndex <= 30) continue;
+				if(isForexMarketClosed && t.pairIndex >= 21 && t.pairIndex <= 30) continue;
 
 				const price = p.closes[t.pairIndex];
 				if(!(price > 0)) continue;
