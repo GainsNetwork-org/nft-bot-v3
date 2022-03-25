@@ -13,19 +13,19 @@ function isForexOpen(dateToCheck) {
 
 	const isClosed =
 		// XMas
-		(month == 12 && dateOfMonth >= 25 && dateOfMonth <= 27)
+		(month === 12 && dateOfMonth >= 25 && dateOfMonth <= 27)
 			||
 		// New Year's Eve
-		(month == 1 && dateOfMonth >= 1 && dateOfMonth <= 3)
+		(month === 1 && dateOfMonth >= 1 && dateOfMonth <= 3)
 			||
 		// Friday after 4PM
-		(weekday == 5 && hour >= 16)
+		(weekday === 5 && hour >= 16)
 			||
 		// Saturday
-		(weekday == 6)
+		(weekday === 6)
 			||
 		// Sunday before 5PM
-		(weekday == 7 && hour < 18);
+		(weekday === 7 && hour < 17);
 
 	return !isClosed;
 }
