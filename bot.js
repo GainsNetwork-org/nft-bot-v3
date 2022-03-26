@@ -157,7 +157,6 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	tradingContract = new newWeb3Client.eth.Contract(abis.TRADING, tradingAddress);
 	vaultContract = new newWeb3Client.eth.Contract(abis.VAULT, vaultAddress);
 
-
 	linkContract = new newWeb3Client.eth.Contract(abis.LINK, linkAddress);
 
 	// Update the globally selected provider with this new provider
@@ -760,7 +759,7 @@ function wss() {
 		const messageData = JSON.parse(msg.data);
 
 		if(messageData.closes === undefined) {
-			console.log('No closes in this message; ignoring.')
+			console.log('No closes in this message; nothing to do.')
 
 			return;
 		}
@@ -818,86 +817,88 @@ function wss() {
 				}
 			}
 
-			if(orderType > -1) {
-				// Attempt to lease an available NFT to process this order
-				const availableNft = await nftManager.leaseAvailableNft(currentlySelectedWeb3Client);
+			if(orderType === -1) {
+				continue;
+			}
 
-				// If there are no more NFTs available, we can stop trying to trigger any other trades
-				if(availableNft === null) {
-					console.log("No NFTS available; unable to trigger any other trades at this time!");
+			// Attempt to lease an available NFT to process this order
+			const availableNft = await nftManager.leaseAvailableNft(currentlySelectedWeb3Client);
 
-					return;
-				}
+			// If there are no more NFTs available, we can stop trying to trigger any other trades
+			if(availableNft === null) {
+				console.log("No NFTS available; unable to trigger any other trades at this time!");
 
-				const { trader, index } = openTrade;
-					const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
-						trader,
-						pairIndex,
-						index,
-						orderType
-					});
+				return;
+			}
 
-				const triggeredOrderDetails = {
-					cleanupTimerId: null,
+			const { trader, index } = openTrade;
+				const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
+					trader,
+					pairIndex,
+					index,
+					orderType
+				});
+
+			const triggeredOrderDetails = {
+				cleanupTimerId: null,
+			};
+
+			// Make sure this order hasn't already been triggered
+			if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
+				console.log("Order has already been triggered; skipping.");
+
+				continue;
+			}
+
+			// Track that we're triggering this order
+			triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderDetails);
+
+			console.log("Trying to trigger " + triggeredOrderTrackingInfoIdentifier + " order with nft: " + availableNft.id + ")");
+
+			try {
+				const tx = {
+					from: process.env.PUBLIC_KEY,
+					to: tradingContract.options.address,
+					data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
+					maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(priorityTransactionMaxPriorityFeePerGas*1e9),
+					maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+					gas: MAX_GAS_PER_TRANSACTION,
+					nonce: nonceManager.getNextNonce(),
 				};
 
-				// Make sure this order hasn't already been triggered
-				if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
-					console.log("Order has already been triggered; skipping.");
+				const signedTransaction = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
 
-					continue;
-				}
+				triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
+					if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
+						console.log(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
+					}
+				}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
 
-				// Track that we're triggering this order
-				triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderDetails);
+				await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction)
 
-				console.log("Trying to trigger " + triggeredOrderTrackingInfoIdentifier + " order with nft: " + availableNft.id + ")");
+				console.log(`Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
+			} catch(error) {
+				console.log(`An unexpected error occurred trying to trigger an order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`, error);
 
-				try {
-					const tx = {
-						from: process.env.PUBLIC_KEY,
-						to: tradingContract.options.address,
-						data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
-						maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(priorityTransactionMaxPriorityFeePerGas*1e9),
-						maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-						gas: MAX_GAS_PER_TRANSACTION,
-						nonce: nonceManager.getNextNonce(),
-					};
+				// TODO: add checking of reverted reason and handle each case more specifically
+				//const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 
-					const signedTransaction = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
-
+				//if(error.message.includes("NO_TRADE")) {
+					// The trade is gone, just remove it from known trades
+				//	knownOpenTrades.delete(tradeKey);
+				//	triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
+				//} else {
+					// Wait a bit and then clean from triggered orders list so it might get tried again
 					triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
-						if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-							console.log(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
+						if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
+							console.log(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
 						}
-					}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
 
-					await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction)
-
-					console.log(`Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
-				} catch(error) {
-					console.log(`An unexpected error occurred trying to trigger an order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`, error);
-
-					// TODO: add checking of reverted reason and handle each case more specifically
-					//const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
-
-					//if(error.message.includes("NO_TRADE")) {
-						// The trade is gone, just remove it from known trades
-					//	knownOpenTrades.delete(tradeKey);
-					//	triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
-					//} else {
-						// Wait a bit and then clean from triggered orders list so it might get tried again
-						triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
-							if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-								console.log(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
-							}
-
-						}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
-					//}
-				} finally {
-					// Always release the NFT back to the NFT manager
-					nftManager.releaseNft(availableNft);
-				}
+					}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
+				//}
+			} finally {
+				// Always release the NFT back to the NFT manager
+				nftManager.releaseNft(availableNft);
 			}
 		}
 
