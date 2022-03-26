@@ -8,7 +8,7 @@ import Web3 from "web3";
 import { WebSocket } from "ws";
 import fetch from "node-fetch";
 import { default as abis } from "./abis.js";
-import { isForexCurrentlyOpen, startForexMonitoring } from "./forex.js";
+import { isForexCurrentlyOpen, isForexPair, startForexMonitoring } from "./forex.js";
 import { NonceManager } from "./NonceManager.js";
 import { NFTManager } from "./NftManager.js";
 
@@ -770,19 +770,31 @@ function wss() {
 		}
 
 		const forexMarketClosed = !isForexCurrentlyOpen();
-		let skippedForexTradeCount = 0;
+		let closeForexMarketTradeCount = 0;
 
 		for(const openTrade of knownOpenTrades.values()) {
-			const { pairIndex } = openTrade;
-
-			if(forexMarketClosed && pairIndex >= 21 && pairIndex <= 30) {
-				skippedForexTradeCount++;
-
-				continue;
-			}
+			const { pairIndex, buy } = openTrade;
 
 			const price = messageData.closes[pairIndex];
-			const buy = openTrade.buy;
+
+			// If it's a forex pair, we need to do some additional checks before processing
+			if(isForexPair(pairIndex)) {
+				appLogger.debug(`Checking if forex trade for pair ${pairIndex} can/should be processed...`);
+
+				if(forexMarketClosed) {
+					closeForexMarketTradeCount++;
+
+					continue;
+				}
+
+				// Under certain conditions the price is not available for some forex pairs, so we need to make sure to skip them
+				if((price ?? 0) === 0) {
+					appLogger.warn(`Received undefined or zero close price for forex pair ${pairIndex}; skipping!`);
+
+					continue;
+				}
+			}
+
 			let orderType = -1;
 
 			if(openTrade.openPrice !== undefined) {
@@ -924,8 +936,8 @@ function wss() {
 			}
 		}
 
-		if(skippedForexTradeCount > 0) {
-			appLogger.debug(`${skippedForexTradeCount} trades were forex trades, but the forex market is currently closed so they were skipped.`);
+		if(closeForexMarketTradeCount > 0) {
+			appLogger.debug(`${closeForexMarketTradeCount} trades were forex trades, but the forex market is currently closed so they were skipped.`);
 		}
 	}
 }
