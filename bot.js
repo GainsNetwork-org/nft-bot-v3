@@ -367,6 +367,8 @@ async function fetchTradingVariables(){
 			]);
 
 		appLogger.info(`Done fetching trading variables; took ${performance.now() - executionStart}ms.`);
+
+		setTimeout(() => { fetchTradingVariables(); }, 60*1000);
 	} catch(error) {
 		appLogger.error("Error while fetching trading variables!", error);
 
@@ -423,13 +425,6 @@ async function fetchTradingVariables(){
 	}
 }
 
-// Force refresh every 60 seconds (for now)
-setInterval(() => {
-	fetchTradingVariables();
-	fetchOpenTrades();
-}, 60*1000);
-
-
 // -----------------------------------------
 // 8. LOAD OPEN TRADES
 // -----------------------------------------
@@ -466,6 +461,8 @@ async function fetchOpenTrades(){
 			]);
 
 		knownOpenTrades = new Map(openLimitOrders.concat(pairTraders).map(trade => [buildOpenTradeKey({ trader: trade.trader, pairIndex: trade.pairIndex, index: trade.index }), trade]));
+
+		setTimeout(() => { fetchOpenTrades(); }, 60*1000);
 
 		appLogger.info(`Fetched ${knownOpenTrades.size} total open trade(s).`);
 	} catch(error) {
