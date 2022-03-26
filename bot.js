@@ -210,6 +210,7 @@ function createWeb3Provider(providerUrl) {
 function createWeb3Client(providerUrl, nonceManager ) {
 	const provider = createWeb3Provider(providerUrl);
 	const web3Client = new Web3(provider);
+	web3Client.eth.handleRevert = true;
 
 	const connectHandler = async() => {
 		if(!nonceManager.isInitialized) {
