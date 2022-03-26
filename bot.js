@@ -30,7 +30,7 @@ const abis = require('./abis');
 // 2. GLOBAL VARIABLES
 // -----------------------------------------
 
-let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, eventSubTrading = null, eventSubCallbacks = null,
+let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, currentlySelectedWeb3Client = null, eventSubTrading = null, eventSubCallbacks = null,
 	web3Providers = [], web3Clients = [], maxPriorityFeePerGas = 50,
 	knownOpenTrades = new Map(), spreadsP = [], openInterests = [], collaterals = [], nfts = [], nftsBeingUsed = new Set(), triggeredOrders = new Map(),
 	storageContract, tradingContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract,
@@ -58,7 +58,7 @@ const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
 	  AUTO_HARVEST_SEC = parseInt(process.env.AUTO_HARVEST_SEC, 10),
 	  FAILED_ORDER_TRIGGER_TIMEOUT_MS = (process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC ?? '').length > 0 ? parseFloat(process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC, 10) * 1000 : 60 * 1000;
 
-async function checkLinkAllowance(){
+async function checkLinkAllowance() {
 	try {
 		const allowance = await linkContract.methods.allowance(process.env.PUBLIC_KEY, process.env.STORAGE_ADDRESS).call();
 		if(parseFloat(allowance) > 0){
@@ -71,13 +71,13 @@ async function checkLinkAllowance(){
 				from: process.env.PUBLIC_KEY,
 				to : linkContract.options.address,
 				data : linkContract.methods.approve(process.env.STORAGE_ADDRESS, "115792089237316195423570985008687907853269984665640564039457584007913129639935").encodeABI(),
-				maxPriorityFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(maxPriorityFeePerGas*1e9),
-				maxFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-				gas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex("100000")
+				maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(maxPriorityFeePerGas*1e9),
+				maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+				gas: currentlySelectedWeb3Client.utils.toHex("100000")
 			};
 
-			web3Clients[currentlySelectedWeb3ClientIndex].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY).then(signed => {
-				web3Clients[currentlySelectedWeb3ClientIndex].eth.sendSignedTransaction(signed.rawTransaction)
+			currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY).then(signed => {
+				currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction)
 				.on('receipt', () => {
 					console.log("LINK successfully approved.");
 					allowedLink = true;
@@ -168,6 +168,7 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 
 	// Update the globally selected provider with this new provider
 	currentlySelectedWeb3ClientIndex = newWeb3ClientIndex;
+	currentlySelectedWeb3Client = web3Clients[newWeb3ClientIndex];
 	
 	// Subscribe to events using the new provider
 	watchLiveTradingEvents();
@@ -303,7 +304,7 @@ setInterval(async () => {
 }, 10*1000);
 
 setInterval(() => {
-	console.log("Current Web3 client: " + web3Clients[currentlySelectedWeb3ClientIndex].currentProvider.url + " (#"+currentlySelectedWeb3ClientIndex+")");
+	console.log("Current Web3 client: " + currentlySelectedWeb3Client.currentProvider.url + " (#"+currentlySelectedWeb3ClientIndex+")");
 }, 120*1000);
 
 // -----------------------------------------
@@ -476,7 +477,7 @@ async function selectOnlyNft() {
 		nftLastSuccess
 	 ] = await Promise.all(
 		 [ 
-			web3Clients[currentlySelectedWeb3ClientIndex].eth.getBlockNumber(),
+			currentlySelectedWeb3Client.eth.getBlockNumber(),
 			storageContract.methods.nftLastSuccess(onlyNft.id).call()
 		 ]);
 
@@ -512,7 +513,7 @@ function selectNftRoundRobin() {
 async function selectNftUsingTimelock() {
 	try
 	{
-		const currentBlock = await web3Clients[currentlySelectedWeb3ClientIndex].eth.getBlockNumber();
+		const currentBlock = await currentlySelectedWeb3Client.eth.getBlockNumber();
 
 		// Load the last successful block for each NFT that we know is not actively being used
 		const nftsWithLastSuccesses = await Promise.all(
@@ -900,7 +901,7 @@ function wss() {
 			return;
 		}
 
-		const forexMarketClosed = !forex.isForexMarketOpen();
+		const forexMarketClosed = !forex.isForexCurrentlyOpen();
 
 		for(const openTrade of knownOpenTrades.values()) {
 			const { pairIndex } = openTrade;
@@ -992,12 +993,12 @@ function wss() {
 						from: process.env.PUBLIC_KEY,
 						to: tradingContract.options.address,
 						data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
-						maxPriorityFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(maxPriorityFeePerGas*1e9),
-						maxFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-						gas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex("2000000")
+						maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(maxPriorityFeePerGas*1e9),
+						maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+						gas: currentlySelectedWeb3Client.utils.toHex("2000000")
 					};
 
-					const signedTransaction = await web3Clients[currentlySelectedWeb3ClientIndex].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
+					const signedTransaction = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
 
 					triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 						if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
@@ -1005,7 +1006,7 @@ function wss() {
 						}
 					}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
 										
-					await web3Clients[currentlySelectedWeb3ClientIndex].eth.sendSignedTransaction(signedTransaction.rawTransaction)
+					await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction)
 					
 					console.log("Triggered (order type: " + orderType + ", nft id: " + availableNft.id + ")");
 				} catch(error) {
@@ -1034,29 +1035,27 @@ wss();
 
 if(process.env.VAULT_REFILL_ENABLED){
 	async function refill(){
-		vaultContract.methods.refill().estimateGas({from: process.env.PUBLIC_KEY}, (error, result) => {
-			if(!error){
-				const tx = {
-					from: process.env.PUBLIC_KEY,
-					to : vaultContract.options.address,
-					data : vaultContract.methods.refill().encodeABI(),
-					maxPriorityFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(maxPriorityFeePerGas*1e9),
-					maxFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-					gas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex("1000000")
-				};
+		const tx = {
+			from: process.env.PUBLIC_KEY,
+			to : vaultContract.options.address,
+			data : vaultContract.methods.refill().encodeABI(),
+			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(maxPriorityFeePerGas*1e9),
+			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+			gas: currentlySelectedWeb3Client.utils.toHex("1000000")
+		};
 
-				web3Clients[currentlySelectedWeb3ClientIndex].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY).then(signed => {
-					web3Clients[currentlySelectedWeb3ClientIndex].eth.sendSignedTransaction(signed.rawTransaction)
-					.on('receipt', () => {
-						console.log("Vault successfully refilled.");
-					}).on('error', (e) => {
-						console.log("Vault refill tx fail", e);
-					});
-				}).catch(e => {
-					console.log("Vault refill tx fail", e);
-				});
-			}
-		});
+		try{
+			const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY)
+			
+			currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction)
+			.on('receipt', () => {
+				console.log("Vault successfully refilled.");
+			}).on('error', (error) => {
+				console.log("Vault refill tx fail", error);
+			});
+		} catch(error) {
+			console.log("Vault refill tx fail", error);
+		};
 	}
 
 	async function deplete(){
@@ -1066,13 +1065,13 @@ if(process.env.VAULT_REFILL_ENABLED){
 					from: process.env.PUBLIC_KEY,
 					to : vaultContract.options.address,
 					data : vaultContract.methods.deplete().encodeABI(),
-					maxPriorityFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(maxPriorityFeePerGas*1e9),
-					maxFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-					gas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex("1000000")
+					maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(maxPriorityFeePerGas*1e9),
+					maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+					gas: currentlySelectedWeb3Client.utils.toHex("1000000")
 				};
 
-				web3Clients[currentlySelectedWeb3ClientIndex].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY).then(signed => {
-					web3Clients[currentlySelectedWeb3ClientIndex].eth.sendSignedTransaction(signed.rawTransaction)
+				currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY).then(signed => {
+					currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction)
 					.on('receipt', () => {
 						console.log("Vault successfully depleted.");
 					}).on('error', (e) => {
@@ -1101,15 +1100,15 @@ if(AUTO_HARVEST_SEC > 0){
 			from: process.env.PUBLIC_KEY,
 			to : nftRewardsContract.options.address,
 			data : nftRewardsContract.methods.claimTokens().encodeABI(),
-			maxPriorityFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(maxPriorityFeePerGas*1e9),
-			maxFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-			gas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex("1000000")
+			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(maxPriorityFeePerGas*1e9),
+			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+			gas: currentlySelectedWeb3Client.utils.toHex("1000000")
 		};
 
-		const signed = await web3Clients[currentlySelectedWeb3ClientIndex].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
+		const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
 
 		try {
-			await web3Clients[currentlySelectedWeb3ClientIndex].eth.sendSignedTransaction(signed.rawTransaction);
+			await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
 			
 			console.log("Tokens claimed.");
 		} catch (error) {
@@ -1134,15 +1133,15 @@ if(AUTO_HARVEST_SEC > 0){
 			from: process.env.PUBLIC_KEY,
 			to : nftRewardsContract.options.address,
 			data : nftRewardsContract.methods.claimPoolTokens(fromRound, toRound).encodeABI(),
-			maxPriorityFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(maxPriorityFeePerGas*1e9),
-			maxFeePerGas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-			gas: web3Clients[currentlySelectedWeb3ClientIndex].utils.toHex("3000000")
+			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(maxPriorityFeePerGas*1e9),
+			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+			gas: currentlySelectedWeb3Client.utils.toHex("3000000")
 		};
 
-		const signed = await web3Clients[currentlySelectedWeb3ClientIndex].eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
+		const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
 			
 		try {	
-			await web3Clients[currentlySelectedWeb3ClientIndex].eth.sendSignedTransaction(signed.rawTransaction)
+			await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction)
 			
 			console.log("Pool Tokens claimed.");
 		} catch (error) {
