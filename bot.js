@@ -58,9 +58,12 @@ const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
 	  AUTO_HARVEST_SEC = parseInt(process.env.AUTO_HARVEST_SEC, 10),
 	  FAILED_ORDER_TRIGGER_TIMEOUT_MS = (process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC ?? '').length > 0 ? parseFloat(process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC, 10) * 1000 : 60 * 1000;
 
+const DRY_RUN_MODE = process.env.DRY_RUN_MODE === "true";
+
 async function checkLinkAllowance() {
 	try {
 		const allowance = await linkContract.methods.allowance(process.env.PUBLIC_KEY, process.env.STORAGE_ADDRESS).call();
+
 		if(parseFloat(allowance) > 0){
 			allowedLink = true;
 			console.log("LINK allowance OK.");
@@ -76,19 +79,18 @@ async function checkLinkAllowance() {
 				gas: currentlySelectedWeb3Client.utils.toHex("100000")
 			};
 
-			currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY).then(signed => {
-				currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction)
-				.on('receipt', () => {
-					console.log("LINK successfully approved.");
-					allowedLink = true;
-				}).on('error', (e) => {
-					console.log("LINK approve tx fail (" + e + ")");
-					setTimeout(() => { checkLinkAllowance(); }, 2*1000);
-				});
-			}).catch(e => {
-				console.log("LINK approve tx fail (" + e + ")");
-				setTimeout(() => { checkLinkAllowance(); }, 2*1000);
-			});
+			try {
+				const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY)
+				
+				await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction)
+				
+				console.log("LINK successfully approved.");
+				allowedLink = true;
+			} catch(error) {
+				console.log("LINK approve tx fail (" + error + ")");
+				
+				throw error;
+			}
 		}
 	} catch {
 		setTimeout(() => { checkLinkAllowance(); }, 5*1000);
@@ -1047,41 +1049,33 @@ if(process.env.VAULT_REFILL_ENABLED){
 		try{
 			const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY)
 			
-			currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction)
-			.on('receipt', () => {
-				console.log("Vault successfully refilled.");
-			}).on('error', (error) => {
-				console.log("Vault refill tx fail", error);
-			});
+			await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction)
+			
+			console.log("Vault successfully refilled.");
 		} catch(error) {
 			console.log("Vault refill tx fail", error);
 		};
 	}
 
 	async function deplete(){
-		vaultContract.methods.deplete().estimateGas({from: process.env.PUBLIC_KEY}, (error, result) => {
-			if(!error){
-				const tx = {
-					from: process.env.PUBLIC_KEY,
-					to : vaultContract.options.address,
-					data : vaultContract.methods.deplete().encodeABI(),
-					maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(maxPriorityFeePerGas*1e9),
-					maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-					gas: currentlySelectedWeb3Client.utils.toHex("1000000")
-				};
+		const tx = {
+			from: process.env.PUBLIC_KEY,
+			to : vaultContract.options.address,
+			data : vaultContract.methods.deplete().encodeABI(),
+			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(maxPriorityFeePerGas*1e9),
+			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+			gas: currentlySelectedWeb3Client.utils.toHex("1000000")
+		};
 
-				currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY).then(signed => {
-					currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction)
-					.on('receipt', () => {
-						console.log("Vault successfully depleted.");
-					}).on('error', (e) => {
-						console.log("Vault deplete tx fail", e);
-					});
-				}).catch(e => {
-					console.log("Vault deplete tx fail", e);
-				});
-			}
-		});
+		try {
+			const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
+
+			currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
+
+			console.log("Vault successfully depleted.");
+		} catch(error) {
+			console.log("Vault deplete tx fail", error);
+		}
 	}
 
 	setInterval(() => {
