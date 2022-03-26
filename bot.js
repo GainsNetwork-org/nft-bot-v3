@@ -23,8 +23,10 @@ if(process.env.NODE_ENV) {
 const Web3 = require("web3");
 const WebSocket = require('ws');
 const fetch = require('node-fetch');
-const forex = require('./forex.js');
-const abis = require('./abis');
+const abis = require('./abis.js');
+const { isForexCurrentlyOpen, startForexMonitoring } = require('./forex.js');
+const { NonceManager } = require("./NonceManager.js");
+const { NFTManager } = require("./NftManager.js");
 
 // -----------------------------------------
 // 2. GLOBAL VARIABLES
@@ -32,10 +34,9 @@ const abis = require('./abis');
 
 let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, currentlySelectedWeb3Client = null, eventSubTrading = null, eventSubCallbacks = null,
 	web3Clients = [], priorityTransactionMaxPriorityFeePerGas = 50, standardTransactionGasFees = { maxFee: 31, maxPriorityFee: 31 },
-	knownOpenTrades = new Map(), spreadsP = [], openInterests = [], collaterals = [], nfts = [], nftsBeingUsed = new Set(), triggeredOrders = new Map(),
+	knownOpenTrades = new Map(), spreadsP = [], openInterests = [], collaterals = [], triggeredOrders = new Map(),
 	storageContract, tradingContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract,
-	nftTimelock = 0, maxTradesPerPair = 0,
-	nftContract1, nftContract2, nftContract3, nftContract4, nftContract5, linkContract;
+	maxTradesPerPair = 0, linkContract;
 
 // --------------------------------------------
 // 3. INIT: CHECK ENV VARS & LINK ALLOWANCE
@@ -46,13 +47,14 @@ if(!process.env.WSS_URLS || !process.env.PRICES_URL || !process.env.STORAGE_ADDR
 || !process.env.PRIVATE_KEY || !process.env.PUBLIC_KEY || !process.env.EVENT_CONFIRMATIONS_SEC 
 || !process.env.MAX_GAS_PRICE_GWEI || !process.env.CHECK_REFILL_SEC
 || !process.env.VAULT_REFILL_ENABLED || !process.env.AUTO_HARVEST_SEC || !process.env.MIN_PRIORITY_GWEI
-|| !process.env.PRIORITY_GWEI_MULTIPLIER || !process.env.PAIR_INFOS_ADDRESS){
+|| !process.env.PRIORITY_GWEI_MULTIPLIER || !process.env.MAX_GAS_PER_TRANSACTION){
 	console.log("Please fill all parameters in the .env file.");
 	process.exit();
 }
 
 // Parse non-string configuration constants from environment variables up front
 const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
+	  MAX_GAS_PER_TRANSACTION = parseInt(process.env.MAX_GAS_PER_TRANSACTION, 10),
 	  CHECK_REFILL_SEC = parseInt(process.env.CHECK_REFILL_SEC, 10),
 	  EVENT_CONFIRMATIONS_SEC = parseInt(process.env.EVENT_CONFIRMATIONS_SEC, 10),
 	  AUTO_HARVEST_SEC = parseInt(process.env.AUTO_HARVEST_SEC, 10),
@@ -125,22 +127,12 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 		callbacksAddress,
 		tradingAddress,
 		vaultAddress,
-		nftAddress1,
-		nftAddress2,
-		nftAddress3,
-		nftAddress4,
-		nftAddress5,
 		linkAddress
 	] = await Promise.all([
 		storageContract.methods.priceAggregator().call(),
 		storageContract.methods.callbacks().call(),
 		storageContract.methods.trading().call(),
 		storageContract.methods.vault().call(),
-		storageContract.methods.nfts(0).call(),
-		storageContract.methods.nfts(1).call(),
-		storageContract.methods.nfts(2).call(),
-		storageContract.methods.nfts(3).call(),
-		storageContract.methods.nfts(4).call(),
 		storageContract.methods.linkErc677().call()
 	]);
 
@@ -162,11 +154,6 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	tradingContract = new newWeb3Client.eth.Contract(abis.TRADING, tradingAddress);
 	vaultContract = new newWeb3Client.eth.Contract(abis.VAULT, vaultAddress);
 
-	nftContract1 = new newWeb3Client.eth.Contract(abis.NFT, nftAddress1);
-	nftContract2 = new newWeb3Client.eth.Contract(abis.NFT, nftAddress2);
-	nftContract3 = new newWeb3Client.eth.Contract(abis.NFT, nftAddress3);
-	nftContract4 = new newWeb3Client.eth.Contract(abis.NFT, nftAddress4);
-	nftContract5 = new newWeb3Client.eth.Contract(abis.NFT, nftAddress5);
 
 	linkContract = new newWeb3Client.eth.Contract(abis.LINK, linkAddress);
 
@@ -217,27 +204,6 @@ function createWeb3Provider(providerUrl) {
 	return provider;
 };
 
-class NonceManager {
-	constructor(accountAddress) {
-		this.accountAddress = accountAddress;
-		this.lastNonce = null;
-	}
-
-	get isInitialized() {
-		return this.lastNonce !== null;
-	}
-
-	async initializeFromClient(web3Client) {
-		this.lastNonce = (await web3Client.eth.getTransactionCount(this.accountAddress)) - 1;
-	}
-
-	getNextNonce() {
-		this.lastNonce = this.lastNonce + 1;
-
-		return this.lastNonce;
-	}
-}
-
 function createWeb3Client(providerUrl, nonceManager ) {
 	const provider = createWeb3Provider(providerUrl);
 	const web3Client = new Web3(provider);
@@ -256,11 +222,11 @@ function createWeb3Client(providerUrl, nonceManager ) {
 }
 
 const nonceManager = new NonceManager(process.env.PUBLIC_KEY);
+const nftManager = new NFTManager(process.env.STORAGE_ADDRESS);
 
 for(var web3ProviderUrlIndex = 0; web3ProviderUrlIndex < WEB3_PROVIDER_URLS.length; web3ProviderUrlIndex++){
 	web3Clients.push(createWeb3Client(WEB3_PROVIDER_URLS[web3ProviderUrlIndex], nonceManager));
 }
-
 
 const MAX_PROVIDER_BLOCK_DRIFT = 2;
 
@@ -377,7 +343,7 @@ async function fetchTradingVariables(){
 	{
 		await Promise.all(
 			[
-				fetchNfts(),
+				nftManager.loadNfts(currentlySelectedWeb3Client),
 				fetchPairs()
 			]);
 
@@ -389,52 +355,6 @@ async function fetchTradingVariables(){
 
 		setTimeout(() => { fetchTradingVariables(); }, 2*1000);
 	};
-
-	async function fetchNfts() {
-		console.log("Fetching available NFTs...");
-		
-		const [
-			nftSuccessTimelock, 
-			nftsCount1,
-			nftsCount2,
-			nftsCount3,
-			nftsCount4,
-			nftsCount5
-		] = await Promise.all(
-			[
-				storageContract.methods.nftSuccessTimelock().call(),
-				nftContract1.methods.balanceOf(process.env.PUBLIC_KEY).call(),
-				nftContract2.methods.balanceOf(process.env.PUBLIC_KEY).call(),
-				nftContract3.methods.balanceOf(process.env.PUBLIC_KEY).call(),
-				nftContract4.methods.balanceOf(process.env.PUBLIC_KEY).call(),
-				nftContract4.methods.balanceOf(process.env.PUBLIC_KEY).call(),
-			]);
-	
-		nfts = (await Promise.all(
-			[
-				{ nftContract: nftContract1, nftType: 1, count: nftsCount1 }, 
-				{ nftContract: nftContract2, nftType: 2, count: nftsCount2 },
-				{ nftContract: nftContract3, nftType: 3, count: nftsCount3 },
-				{ nftContract: nftContract4, nftType: 4, count: nftsCount4 },
-				{ nftContract: nftContract5, nftType: 5, count: nftsCount5 }
-			].map(async nft => {
-				const allNftIdsOfTypeCalls = new Array(nft.count);
-				
-				for(let i = 0; i < nft.count; i++) {
-					allNftIdsOfTypeCalls[i] = nft.nftContract.methods.tokenOfOwnerByIndex(process.env.PUBLIC_KEY, i).call()
-				}
-	
-				const allNftIdsOfType = await Promise.all(allNftIdsOfTypeCalls);
-	
-				return allNftIdsOfType
-					.filter(nftId => nftId !== "0")
-					.map(nftId => ({ id: nftId, type: nft.nftType }));
-			}))).flat();
-	
-		nftTimelock = parseInt(nftSuccessTimelock, 10);
-		
-		console.log("NFTs fetched: available=" + nfts.length + ";timelock=" + nftTimelock);
-	}
 
 	async function fetchPairs() {
 		const [
@@ -492,103 +412,6 @@ setInterval(() => {
 	fetchOpenTrades();
 }, 60*1000);
 
-// -----------------------------------------
-// 7. SELECT NFT TO EXECUTE ORDERS
-// -----------------------------------------
-
-let selectNft = () => {
-	if(nfts.length === 0) { 
-		console.log("No NFTs loaded yet.");
-
-		return null; 
-	}
-
-	// Self patch to the optimal implementation on first call
-	if(nfts.length === 1) {
-		selectNft = selectOnlyNft;
-	} else {
-		selectNft = selectNftFromMultiple;
-	}
-
-	return selectNft();
-}
-
-async function selectOnlyNft() {
-	const onlyNft = nfts[0];
-
-	// If there's no timelock then just return immediately
-	if(nftTimelock === 0) {
-		return onlyNft;
-	}
-
-	const [ 
-		currentBlock,
-		nftLastSuccess
-	 ] = await Promise.all(
-		 [ 
-			currentlySelectedWeb3Client.eth.getBlockNumber(),
-			storageContract.methods.nftLastSuccess(onlyNft.id).call()
-		 ]);
-
-	// If the NFT is still time locked we return null because we still can't use it
-	if(currentBlock - nftLastSuccess <= nftTimelock) {
-		return null;
-	}
-	
-	return onlyNft;	
-}
-
-async function selectNftFromMultiple() {
-	console.log("NFTs: total loaded=" + nfts.length);
-	
-	if(nftTimelock === 0) {
-		return selectNftRoundRobin();
-	}
-	
-	return await selectNftUsingTimelock();
-}
-
-function selectNftRoundRobin() {
-	let nextNftIndex = nfts.nextIndex ?? 0;
-
-	const nextNft = nfts[nextNftIndex];
-	
-	// If we're about to go past the end of the array, just go back to beginning
-	nfts.nextIndex = nextNftIndex === nfts.length - 1 ? 0 : nextNftIndex + 1;
-
-	return nextNft;
-}
-
-async function selectNftUsingTimelock() {
-	try
-	{
-		const currentBlock = await currentlySelectedWeb3Client.eth.getBlockNumber();
-
-		// Load the last successful block for each NFT that we know is not actively being used
-		const nftsWithLastSuccesses = await Promise.all(
-				nfts
-					.filter(nft => !nftsBeingUsed.has(nft.id))
-					.map(async nft => ({ 
-						nft,
-						lastSuccess: parseFloat(await storageContract.methods.nftLastSuccess(nft.id).call())
-					})));
-
-		// Try to find the first NFT whose last successful block is older than the current block by the required timelock amount
-		const firstEligibleNft = nftsWithLastSuccesses.find(nftwls => currentBlock - nftwls.lastSuccess >= nftTimelock);
-
-		if(firstEligibleNft !== undefined) {
-			return firstEligibleNft.nft;
-		}
-
-		console.log("No suitable NFT to select.");
-			
-		return null;
-	} catch(error) { 
-		console.log("Error occurred while trying to select NFT: " + error.message, error);
-
-		return null;
-	}
-}
 
 // -----------------------------------------
 // 8. LOAD OPEN TRADES
@@ -599,7 +422,7 @@ function buildOpenTradeKey({ trader, pairIndex, index }) {
 }
 
 function buildTriggeredOrderTrackingInfoIdentifier({ trader, pairIndex, index, orderType }) {
-	return trader + "-" + pairIndex + "-" + index + "-" + orderType;
+	return `t=${trader};pi=${pairIndex};i=${index};ot=${orderType};`;
 }
 
 async function fetchOpenTrades(){
@@ -923,7 +746,7 @@ function alreadyTriggered(trade, orderType){
 }
 
 // Start monitoring forex
-forex.startForexMonitoring();
+startForexMonitoring();
 
 function wss() {
 	let socket = new WebSocket(process.env.PRICES_URL);
@@ -950,7 +773,7 @@ function wss() {
 			return;
 		}
 
-		const forexMarketClosed = !forex.isForexCurrentlyOpen();
+		const forexMarketClosed = !isForexCurrentlyOpen();
 		let skippedForexTradeCount = 0;
 
 		for(const openTrade of knownOpenTrades.values()) {
@@ -963,7 +786,7 @@ function wss() {
 			}
 
 			const price = messageData.closes[pairIndex];
-			const buy = openTrade.buy.toString() === "true";
+			const buy = openTrade.buy;
 			let orderType = -1;
 
 			if(openTrade.openPrice !== undefined) {
@@ -973,11 +796,11 @@ function wss() {
 				const lev = parseFloat(openTrade.leverage);
 				const liqPrice = buy ? open - 0.9/lev*open : open + 0.9/lev*open;
 
-				if(tp.toString() !== "0" && ((buy && price >= tp) || (!buy && price <= tp))) {
+				if(tp !== 0 && ((buy && price >= tp) || (!buy && price <= tp))) {
 					orderType = 0;
-				} else if(sl.toString() !== "0" && ((buy && price <= sl) || (!buy && price >= sl))) {
+				} else if(sl !== 0 && ((buy && price <= sl) || (!buy && price >= sl))) {
 					orderType = 1;
-				} else if(sl.toString() === "0" && ((buy && price <= liqPrice) || (!buy && price >= liqPrice))) {
+				} else if(sl === 0 && ((buy && price <= liqPrice) || (!buy && price >= liqPrice))) {
 					orderType = 2;
 				}
 			} else {
@@ -992,17 +815,20 @@ function wss() {
 				const minPrice = parseFloat(openTrade.minPrice)/1e10;
 				const maxPrice = parseFloat(openTrade.maxPrice)/1e10;
 
-				if(newInterestDai <= maxInterestDai && newCollateralDai <= maxCollateralDai){
-					if(openTrade.type.toString() === "0" && priceIncludingSpread >= minPrice && priceIncludingSpread <= maxPrice
-					|| openTrade.type.toString() === "1" && (buy ? priceIncludingSpread <= maxPrice : priceIncludingSpread >= minPrice)
-					|| openTrade.type.toString() === "2" && (buy ? priceIncludingSpread >= minPrice : priceIncludingSpread <= maxPrice)){
+				if(newInterestDai <= maxInterestDai && newCollateralDai <= maxCollateralDai) {
+					const tradeType = openTrade.type;
+
+					if(tradeType === "0" && priceIncludingSpread >= minPrice && priceIncludingSpread <= maxPrice
+					|| tradeType === "1" && (buy ? priceIncludingSpread <= maxPrice : priceIncludingSpread >= minPrice)
+					|| tradeType === "2" && (buy ? priceIncludingSpread >= minPrice : priceIncludingSpread <= maxPrice)){
 						orderType = 3;
 					}
 				}
 			}
 
 			if(orderType > -1) {
-				const availableNft = await selectNft();
+				// Attempt to lease an available NFT to process this order
+				const availableNft = await nftManager.leaseAvailableNft(currentlySelectedWeb3Client);
 
 				// If there are no more NFTs available, we can stop trying to trigger any other trades
 				if(availableNft === null) { 
@@ -1011,42 +837,39 @@ function wss() {
 					return; 
 				}
 
-				// Track that these are being actively used in processing of this order
-				nftsBeingUsed.add(availableNft.id);
+				const { trader, index } = openTrade;
+					const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
+						trader,
+						pairIndex,
+						index,
+						orderType
+					});
 
 				const triggeredOrderDetails = { 
 					cleanupTimerId: null,
 				};
 
-				const { trader, index } = openTrade;
-				const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
-					trader,
-					pairIndex,
-					index,
-					orderType
-				});
+				// Make sure this order hasn't already been triggered
+				if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
+					console.log("Order has already been triggered; skipping.");
+
+					continue;
+				}
+
+				// Track that we're triggering this order
+				triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderDetails);
+
+				console.log("Trying to trigger " + triggeredOrderTrackingInfoIdentifier + " order with nft: " + availableNft.id + ")");
 
 				try {
-					// Make sure this order hasn't already been triggered
-					if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
-						console.log("Order has already been triggered; skipping.");
-
-						continue;
-					}
-
-					// Track that we're triggering this order
-					triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderDetails);
-
-					console.log("Trying to trigger " + triggeredOrderTrackingInfoIdentifier + " order with nft: " + availableNft.id + ")");
-
 					const tx = {
 						from: process.env.PUBLIC_KEY,
 						to: tradingContract.options.address,
 						data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
 						maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(priorityTransactionMaxPriorityFeePerGas*1e9),
 						maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-						gas: currentlySelectedWeb3Client.utils.toHex("2000000"),
-						nonce: nonceManager.getNextNonce()
+						gas: MAX_GAS_PER_TRANSACTION,
+						nonce: nonceManager.getNextNonce(),
 					};
 
 					const signedTransaction = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
@@ -1056,22 +879,32 @@ function wss() {
 							console.log(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
 						}
 					}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
-										
+
 					await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction)
 					
-					console.log("Triggered (order type: " + orderType + ", nft id: " + availableNft.id + ")");
+					console.log(`Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
 				} catch(error) {
-					console.log(`An unexpected error occurred trying to trigger an order for ${triggeredOrderTrackingInfoIdentifier} with nft id: ${availableNft.id}.`, error);
+					console.log(`An unexpected error occurred trying to trigger an order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`, error);
 
-					triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
-						if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-							console.log(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
-						}
+					// TODO: add checking of reverted reason and handle each case more specifically
+					//const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 
-					}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
+					//if(error.message.includes("NO_TRADE")) {
+						// The trade is gone, just remove it from known trades
+					//	knownOpenTrades.delete(tradeKey);
+					//	triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
+					//} else {
+						// Wait a bit and then clean from triggered orders list so it might get tried again
+						triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
+							if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
+								console.log(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
+							}
+
+						}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
+					//}
 				} finally {
-					// Always clean up tracking state around active processing of this order
-					nftsBeingUsed.delete(availableNft.id);
+					// Always release the NFT back to the NFT manager
+					nftManager.releaseNft(availableNft);
 				}
 			}
 		}
@@ -1096,7 +929,7 @@ if(process.env.VAULT_REFILL_ENABLED === "true") {
 			data : vaultContract.methods.refill().encodeABI(),
 			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
 			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
-			gas: currentlySelectedWeb3Client.utils.toHex("1000000"),
+			gas: MAX_GAS_PER_TRANSACTION,
 			nonce: nonceManager.getNextNonce()
 		};
 
@@ -1118,7 +951,7 @@ if(process.env.VAULT_REFILL_ENABLED === "true") {
 			data : vaultContract.methods.deplete().encodeABI(),
 			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
 			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
-			gas: currentlySelectedWeb3Client.utils.toHex("1000000"),
+			gas: MAX_GAS_PER_TRANSACTION,
 			nonce: nonceManager.getNextNonce()
 		};
 
@@ -1151,7 +984,7 @@ if(AUTO_HARVEST_SEC > 0){
 			data : nftRewardsContract.methods.claimTokens().encodeABI(),
 			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
 			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
-			gas: currentlySelectedWeb3Client.utils.toHex("1000000"),
+			gas: MAX_GAS_PER_TRANSACTION,
 			nonce: nonceManager.getNextNonce()
 		};
 
@@ -1186,7 +1019,7 @@ if(AUTO_HARVEST_SEC > 0){
 			data : nftRewardsContract.methods.claimPoolTokens(fromRound, toRound).encodeABI(),
 			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
 			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
-			gas: currentlySelectedWeb3Client.utils.toHex("3000000"),
+			gas: MAX_GAS_PER_TRANSACTION,
 			nonce: nonceManager.getNextNonce()
 		};
 

@@ -58,9 +58,7 @@ function stopForexMonitoring() {
 
 const isForexCurrentlyOpen = () => forexCurrentlyOpen;
 
-module.exports = {
-	isForexOpen,
-	startForexMonitoring,
-	stopForexMonitoring,
-	isForexCurrentlyOpen
-};
+exports.isForexOpen = isForexOpen;
+exports.startForexMonitoring = startForexMonitoring;
+exports.stopForexMonitoring = stopForexMonitoring;
+exports.isForexCurrentlyOpen = isForexCurrentlyOpen;
