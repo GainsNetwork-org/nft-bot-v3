@@ -837,16 +837,21 @@ function wss() {
 			}
 
 			const { trader, index } = openTrade;
-				const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
+			const openTradeKey = buildOpenTradeKey({ trader, pairIndex, index });
+
+			// Make sure the order is known to us
+			if(!knownOpenTrades.has(openTradeKey)) {
+				appLogger.warn(`Trade ${openTradeKey} does not exist in our known open trades list; skipping.`);
+
+				continue;
+			}
+
+			const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
 					trader,
 					pairIndex,
 					index,
 					orderType
 				});
-
-			const triggeredOrderDetails = {
-				cleanupTimerId: null,
-			};
 
 			// Make sure this order hasn't already been triggered
 			if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
@@ -854,6 +859,10 @@ function wss() {
 
 				continue;
 			}
+
+			const triggeredOrderDetails = {
+				cleanupTimerId: null,
+			};
 
 			// Track that we're triggering this order
 			triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderDetails);
@@ -873,6 +882,13 @@ function wss() {
 
 				const signedTransaction = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
 
+				// Make sure the order is still known to us (might have been removed async since we first checked!!!)
+				if(!knownOpenTrades.has(openTradeKey)) {
+					appLogger.warn(`Trade ${openTradeKey} disappeared; skipping because it was likely already processed!`);
+
+					continue;
+				}
+
 				triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 					if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
 						appLogger.debug(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
@@ -885,12 +901,10 @@ function wss() {
 			} catch(error) {
 				appLogger.error(`An unexpected error occurred trying to trigger an order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`, error);
 
-				const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
-
 				switch(error.reason) {
 					case 'NO_TRADE':
 						// The trade is gone, just remove it from known trades
-						knownOpenTrades.delete(tradeKey);
+						knownOpenTrades.delete(openTradeKey);
 						triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 
 						break;
