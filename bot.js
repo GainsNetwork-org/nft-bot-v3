@@ -16,7 +16,7 @@ if(process.env.NODE_ENV) {
 		dotenv.config({
 			path: environmentSpecificFile,
 			override: true
-		});	
+		});
 	}
 }
 
@@ -44,7 +44,7 @@ let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, currentlySelecte
 
 console.log("Welcome to the gTrade NFT bot!");
 if(!process.env.WSS_URLS || !process.env.PRICES_URL || !process.env.STORAGE_ADDRESS
-|| !process.env.PRIVATE_KEY || !process.env.PUBLIC_KEY || !process.env.EVENT_CONFIRMATIONS_SEC 
+|| !process.env.PRIVATE_KEY || !process.env.PUBLIC_KEY || !process.env.EVENT_CONFIRMATIONS_SEC
 || !process.env.MAX_GAS_PRICE_GWEI || !process.env.CHECK_REFILL_SEC
 || !process.env.VAULT_REFILL_ENABLED || !process.env.AUTO_HARVEST_SEC || !process.env.MIN_PRIORITY_GWEI
 || !process.env.PRIORITY_GWEI_MULTIPLIER || !process.env.MAX_GAS_PER_TRANSACTION){
@@ -61,6 +61,9 @@ const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
 	  FAILED_ORDER_TRIGGER_TIMEOUT_MS = (process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC ?? '').length > 0 ? parseFloat(process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC) * 1000 : 60 * 1000;
 
 const DRY_RUN_MODE = process.env.DRY_RUN_MODE === "true";
+
+// Start monitoring forex
+startForexMonitoring();
 
 async function checkLinkAllowance() {
 	try {
@@ -84,14 +87,14 @@ async function checkLinkAllowance() {
 
 			try {
 				const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY)
-				
+
 				await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction)
-				
+
 				console.log("LINK successfully approved.");
 				allowedLink = true;
 			} catch(error) {
 				console.log("LINK approve tx fail (" + error + ")");
-				
+
 				throw error;
 			}
 		}
@@ -109,16 +112,16 @@ let currentWeb3ClientBlocks = new Array(WEB3_PROVIDER_URLS.length).fill(0);
 
 async function setCurrentWeb3Client(newWeb3ClientIndex){
 	console.log("Switching web3 client to " + WEB3_PROVIDER_URLS[newWeb3ClientIndex] + " (#" + newWeb3ClientIndex + ")...");
-	
+
 	const executionStartTime = Date.now();
 	const newWeb3Client = web3Clients[newWeb3ClientIndex];
-	
+
 	// Unsubscribe from existing events first
 	if(eventSubTrading !== null && eventSubTrading.id !== null){ eventSubTrading.unsubscribe(); }
 	if(eventSubCallbacks !== null && eventSubCallbacks.id !== null){ eventSubCallbacks.unsubscribe(); }
 	eventSubTrading = null;
 	eventSubCallbacks = null;
-	
+
 	storageContract = new newWeb3Client.eth.Contract(abis.STORAGE, process.env.STORAGE_ADDRESS);
 
 	// Retrieve all necessary details from the storage contract
@@ -137,7 +140,7 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	]);
 
 	const aggregatorContract = new newWeb3Client.eth.Contract(abis.AGGREGATOR, aggregatorAddress);
-	
+
 	// Retrieve all necessary details from the aggregator contract
 	const [
 		pairsStorageAddress,
@@ -146,7 +149,7 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 		aggregatorContract.methods.pairsStorage().call(),
 		aggregatorContract.methods.nftRewards().call()
 	 ]);
-	
+
 	pairsStorageContract = new newWeb3Client.eth.Contract(abis.PAIRS_STORAGE, pairsStorageAddress);
 	nftRewardsContract = new newWeb3Client.eth.Contract(abis.NFT_REWARDS, nftRewardsAddress);
 
@@ -160,15 +163,15 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	// Update the globally selected provider with this new provider
 	currentlySelectedWeb3ClientIndex = newWeb3ClientIndex;
 	currentlySelectedWeb3Client = newWeb3Client;
-	
+
 	// Subscribe to events using the new provider
 	watchLiveTradingEvents();
-	
+
 	// Fire and forget refreshing of data using new provider
 	fetchTradingVariables();
 	fetchOpenTrades();
 	checkLinkAllowance();
-	
+
 	console.log("New web3 client selection completed. Took: " + (Date.now() - executionStartTime) + "ms");
 }
 
@@ -197,10 +200,10 @@ function createWeb3Provider(providerUrl) {
 		console.log(`Reconnecting to provider ${providerUrl}...`);
 	})
 
-	provider.on('error', (error) => { 
+	provider.on('error', (error) => {
 		console.log(`Provider error: ${providerUrl}`, error);
 	});
-	
+
 	return provider;
 };
 
@@ -235,65 +238,74 @@ async function checkWeb3ClientLiveness() {
 
 	const executionStartTime = Date.now();
 
-	const latestWeb3ProviderBlocks = await Promise.all(WEB3_PROVIDER_URLS.map(async (providerUrl, providerIndex) => {
-		// If not currently connected, then skip call
-		if(web3Clients[providerIndex].connected === false) {
-			return Number.MAX_SAFE_INTEGER;
+	try {
+		const latestWeb3ProviderBlocks = await Promise.all(WEB3_PROVIDER_URLS.map(async (providerUrl, providerIndex) => {
+			// If not currently connected, then skip call
+			if(web3Clients[providerIndex].connected === false) {
+				return Number.MAX_SAFE_INTEGER;
+			}
+
+			try
+			{
+				return await web3Clients[providerIndex].eth.getBlockNumber();
+			} catch (error) {
+				console.log("Error retrieving current block number from web3 client " + providerUrl + ": " + error.message, error);
+
+				return Number.MIN_SAFE_INTEGER;
+			}
+		}));
+
+		console.log("Current vs. latest provider blocks: ", WEB3_PROVIDER_URLS, currentWeb3ClientBlocks, latestWeb3ProviderBlocks);
+
+		// Update global to latest blocks
+		currentWeb3ClientBlocks = latestWeb3ProviderBlocks;
+
+		const originalWeb3ClientIndex = currentlySelectedWeb3ClientIndex;
+
+		// Check if no client has been selected yet (i.e. this is initialization phase of app)
+		if(originalWeb3ClientIndex === -1){
+			await selectInitialProvider();
+		} else {
+			await ensureCurrentlySelectedProviderHasLatestBlock(originalWeb3ClientIndex);
 		}
-		
-		try
-		{
-			return await web3Clients[providerIndex].eth.getBlockNumber();
-		} catch (error) {
-			console.log("Error retrieving current block number from web3 client " + providerUrl + ": " + error.message, error);
 
-			return Number.MIN_SAFE_INTEGER;
-		}
-	}));
-	
-	console.log("Current vs. latest provider blocks: ", WEB3_PROVIDER_URLS, currentWeb3ClientBlocks, latestWeb3ProviderBlocks);
-
-	// Update global to latest blocks
-	currentWeb3ClientBlocks = latestWeb3ProviderBlocks;
-
-	const originalWeb3ClientIndex = currentlySelectedWeb3ClientIndex;
-
-	// Check if no client has been selected yet (i.e. this is initialization phase of app)
-	if(originalWeb3ClientIndex === -1){
-		await selectInitialProvider();
-	} else {
-		await ensureCurrentlySelectedProviderHasLatestBlock();
+		console.log("Web3 client liveness check completed. Took: " + (Date.now() - executionStartTime) + "ms");
+	} catch (error) {
+		console.log("An unexpected error occurred while checking web3 client liveness!!!", error);
+	} finally {
+		// Schedule the next check
+		setTimeout(async () => {
+			checkWeb3ClientLiveness();
+		}, 10*1000);
 	}
-
-	console.log("Web3 client liveness check completed. Took: " + (Date.now() - executionStartTime) + "ms");
 
 	async function selectInitialProvider() {
 		// Find the most recent block
 		const maxBlock = Math.max(...currentWeb3ClientBlocks);
-		
+
 		const clientWithMaxBlockIndex = currentWeb3ClientBlocks.findIndex(v => v === maxBlock);
-		
+
 		// Start with the provider with the most recent block
 		await setCurrentWeb3Client(clientWithMaxBlockIndex);
 
 		console.log("Initial Web3 client selected: " + WEB3_PROVIDER_URLS[clientWithMaxBlockIndex]);
 	}
 
-	async function ensureCurrentlySelectedProviderHasLatestBlock() {
+	async function ensureCurrentlySelectedProviderHasLatestBlock(originalWeb3ClientIndex) {
 		const currentlySelectedWeb3ClientIndexMaxDriftBlock = currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex] + MAX_PROVIDER_BLOCK_DRIFT;
-		
+
 		for(let i = 0; i < currentWeb3ClientBlocks.length; i++){
 			// Don't check the currently selected client against itself
 			if(i === currentlySelectedWeb3ClientIndex) {
 				continue;
 			}
-			
+
 			// If the current provider is ahead of the selected provider by more N blocks then switch to this provider instead
 			if(currentWeb3ClientBlocks[i] >= currentlySelectedWeb3ClientIndexMaxDriftBlock){
 				console.log("Switching to provider " + WEB3_PROVIDER_URLS[i] + " #" + i + " (" + currentWeb3ClientBlocks[i] + " vs " + currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex] + ")");
-				
+
 				await setCurrentWeb3Client(i);
-				
+
 				break;
 			}
 		}
@@ -307,9 +319,6 @@ async function checkWeb3ClientLiveness() {
 }
 
 checkWeb3ClientLiveness();
-setInterval(async () => {
-	checkWeb3ClientLiveness();
-}, 10*1000);
 
 setInterval(() => {
 	console.log("Current Web3 client: " + currentlySelectedWeb3Client.currentProvider.url + " (#"+currentlySelectedWeb3ClientIndex+")");
@@ -325,7 +334,7 @@ setInterval(() => {
 
 		priorityTransactionMaxPriorityFeePerGas = Math.round(
 			Math.max(
-				Math.round(r.fast.maxPriorityFee) * process.env.PRIORITY_GWEI_MULTIPLIER, 
+				Math.round(r.fast.maxPriorityFee) * process.env.PRIORITY_GWEI_MULTIPLIER,
 				process.env.MIN_PRIORITY_GWEI
 			)
 		);
@@ -358,14 +367,14 @@ async function fetchTradingVariables(){
 
 	async function fetchPairs() {
 		const [
-			maxPerPair, 
+			maxPerPair,
 			pairsCount
 		] = await Promise.all(
 			[
 				storageContract.methods.maxTradesPerPair().call(),
 				pairsStorageContract.methods.pairsCount().call()
 			]);
-			
+
 		let pairsPromises = [];
 		for(var i = 0; i < pairsCount; i++){
 			pairsPromises.push(pairsStorageContract.methods.pairsBackend(i).call());
@@ -375,7 +384,7 @@ async function fetchTradingVariables(){
 		const newSpreadsP = new Array(pairs.length);
 		const newOpenInterests = new Array(pairs.length);
 		const newCollaterals = new Array(pairs.length);
-		
+
 		await Promise.all(pairs.map(async (pair, pairIndex) => {
 			const [
 				openInterestLong,
@@ -425,42 +434,53 @@ function buildTriggeredOrderTrackingInfoIdentifier({ trader, pairIndex, index, o
 	return `t=${trader};pi=${pairIndex};i=${index};ot=${orderType};`;
 }
 
+let fetchOpenTradesRetryTimerId = null;
+
 async function fetchOpenTrades(){
 	console.log("Fetching open trades...");
-	
+
 	try {
 		if(spreadsP.length === 0){
-			console.log("Spreads are not yet loaded; will retry fetching open trades shortly!");
-			
-			setTimeout(() => { fetchOpenTrades(); }, 2*1000);
+			console.log("WARNING: Spreads are not yet loaded; will retry fetching open trades shortly!");
+
+			scheduleRetryFetchOpenTrades();
 
 			return;
 		}
 
 		const [
-			openLimitOrders, 
+			openLimitOrders,
 			pairTraders
 		] = await Promise.all(
 			[
 				fetchOpenLimitOrders(),
 				fetchOpenPairTrades()
 			]);
-		
+
 		knownOpenTrades = new Map(openLimitOrders.concat(pairTraders).map(trade => [buildOpenTradeKey({ trader: trade.trader, pairIndex: trade.pairIndex, index: trade.index }), trade]));
 
 		console.log("Fetched " + knownOpenTrades.size + " total open trade(s).");
-
 	} catch(error) {
 		console.log("Error fetching open trades: " + error.message, error);
-		
-		setTimeout(() => { fetchOpenTrades(); }, 2*1000);
+
+		scheduleRetryFetchOpenTrades();
 	}
-	
-	async function fetchOpenLimitOrders() {		
+
+	function scheduleRetryFetchOpenTrades() {
+		if(fetchOpenTradesRetryTimerId !== null) {
+			console.log("Already scheduled retry fetching open trades; will retry shortly!");
+
+			return;
+		}
+
+		fetchOpenTradesRetryTimerId = setTimeout(() => { fetchOpenTrades(); fetchOpenTradesRetryTimerId = null; }, 2*1000);
+	}
+
+	async function fetchOpenLimitOrders() {
 		console.log("Fetching open limit orders...");
-		
+
 		const openLimitOrders = await storageContract.methods.getOpenLimitOrders().call();
-		
+
 		const openLimitOrdersWithTypes = await Promise.all(openLimitOrders.map(async olo => {
 			const type = await nftRewardsContract.methods.openLimitOrderTypes(olo.trader, olo.pairIndex, olo.index).call();
 
@@ -484,9 +504,9 @@ async function fetchOpenTrades(){
 				for(let pairTradeIndex = 0; pairTradeIndex < maxTradesPerPair; pairTradeIndex++){
 					openTradesCalls[pairTradeIndex] = storageContract.methods.openTrades(pairTraderAddress, spreadPIndex, pairTradeIndex).call();
 				}
-				
+
 				const openTradesForTraderAddress = await Promise.all(openTradesCalls);
-				
+
 				// Filter out any of the trades that aren't *really* open (NOTE: these will have an empty trader address, so just test against that)
 				return openTradesForTraderAddress.filter(openTrade => openTrade.trader === pairTraderAddress);
 			}));
@@ -528,7 +548,7 @@ function watchLiveTradingEvents(){
 				const eventName = event.event;
 
 				if(eventName !== "MarketExecuted" && eventName !== "LimitExecuted"
-				&& eventName !== "MarketCloseCanceled" && eventName !== "SlUpdated" 
+				&& eventName !== "MarketCloseCanceled" && eventName !== "SlUpdated"
 				&& eventName !== "SlCanceled"){
 					return;
 				}
@@ -558,8 +578,8 @@ async function refreshOpenTrades(event){
 
 		// UNREGISTER OPEN LIMIT ORDER
 		// => IF OPEN LIMIT CANCELED OR OPEN LIMIT EXECUTED
-		if(eventName === "OpenLimitCanceled" 
-				|| 
+		if(eventName === "OpenLimitCanceled"
+				||
 			(eventName === "LimitExecuted" && eventValues.orderType.toString() === "3")) {
 			const trader = eventName === "OpenLimitCanceled" ? eventValues.trader : eventValues.t[0];
 			const pairIndex = eventName === "OpenLimitCanceled" ? eventValues.pairIndex : eventValues.t[1];
@@ -573,7 +593,7 @@ async function refreshOpenTrades(event){
 
 				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')) {
 					knownOpenTrades.delete(tradeKey);
-					
+
 					console.log("Watch events ("+eventName+"): Removed limit");
 				}
 			}else{
@@ -583,18 +603,18 @@ async function refreshOpenTrades(event){
 
 		// STORE/UPDATE OPEN LIMIT ORDER
 		// => IF OPEN LIMIT ORDER PLACED OR OPEN LIMIT ORDER UPDATED
-		if(eventName === "OpenLimitPlaced" 
-				|| 
+		if(eventName === "OpenLimitPlaced"
+				||
 			eventName === "OpenLimitUpdated"){
 			const { trader, pairIndex, index } = eventValues;
 			const hasLimitOrder = await storageContract.methods.hasOpenLimitOrder(trader, pairIndex, index).call();
 
 			if(hasLimitOrder.toString() === "true") {
 				const id = await storageContract.methods.openLimitOrderIds(trader, pairIndex, index).call();
-				
+
 				const [
 					limitOrder,
-					type 
+					type
 				] = await Promise.all(
 					[
 						storageContract.methods.openLimitOrders(id).call(),
@@ -611,7 +631,7 @@ async function refreshOpenTrades(event){
 
 					console.log("Watch events ("+eventName+"): Updated limit");
 				} else {
-					knownOpenTrades.set(tradeKey, limitOrder); 
+					knownOpenTrades.set(tradeKey, limitOrder);
 
 					console.log("Watch events ("+eventName+"): Stored limit");
 				}
@@ -622,33 +642,30 @@ async function refreshOpenTrades(event){
 
 		// STORE/UPDATE TRADE
 		// => IF MARKET OPEN EXECUTED OR OPEN TRADE LIMIT EXECUTED OR TP/SL UPDATED OR TRADE UPDATED (MARKET CLOSED)
-		if((eventName === "MarketExecuted" && eventValues.open === true) 
-				|| 
+		if((eventName === "MarketExecuted" && eventValues.open === true)
+				||
 			(eventName === "LimitExecuted" && eventValues.orderType.toString() === "3")
-				|| 
+				||
 			eventName === "TpUpdated" || eventName === "SlUpdated" || eventName === "SlCanceled"
-				|| 
+				||
 			eventName === "MarketCloseCanceled"){
 			const trader = eventName !== "MarketExecuted" && eventName !== "LimitExecuted" ? eventValues.trader : eventValues.t[0];
 			const pairIndex = eventName !== "MarketExecuted" && eventName !== "LimitExecuted" ? eventValues.pairIndex : eventValues.t[1];
 			const index = eventName !== "MarketExecuted" && eventName !== "LimitExecuted" ? eventValues.index : eventValues.t[2];
 
-			const [trade, tradeInfo, initialAccFees] = await Promise.all([
-				storageContract.methods.openTrades(trader, pairIndex, index).call(),
-				storageContract.methods.openTradesInfo(trader, pairIndex, index).call(),
-				pairInfosContract.methods.tradeInitialAccFees(trader, pairIndex, index).call()
-			]);
-			
+			const trade = await storageContract.methods.openTrades(trader, pairIndex, index).call();
+
+			// Make sure the trade is still open
 			if(parseFloat(trade.leverage) > 0) {
 				const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 				const existingKnownOpenTrade = knownOpenTrades.get(tradeKey);
 
 				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
-					knownOpenTrades.set(tradeKey, trade); 
+					knownOpenTrades.set(tradeKey, trade);
 
 					console.log("Watch events ("+eventName+"): Updated trade");
 				} else {
-					knownOpenTrades.set(tradeKey, trade); 
+					knownOpenTrades.set(tradeKey, trade);
 
 					console.log("Watch events ("+eventName+"): Stored trade");
 				}
@@ -659,8 +676,8 @@ async function refreshOpenTrades(event){
 
 		// UNREGISTER TRADE
 		// => IF MARKET CLOSE EXECUTED OR CLOSE LIMIT EXECUTED
-		if((eventName === "MarketExecuted" && eventValues.open.toString() === "false") 
-				|| 
+		if((eventName === "MarketExecuted" && eventValues.open.toString() === "false")
+				||
 			(eventName === "LimitExecuted" && eventValues.orderType !== "3")){
 			const [ trader, pairIndex, index ] = eventValues.t;
 			const trade = await storageContract.methods.openTrades(trader, pairIndex, index).call();
@@ -674,18 +691,18 @@ async function refreshOpenTrades(event){
 				});
 
 				const triggeredOrderDetails = triggeredOrders.get(triggeredOrderTrackingInfoIdentifier);
-				
+
 				// If we were tracking this triggered order, stop tracking it now and clear the timeout so it doesn't
 				// interrupt the event loop for no reason later
 				if(triggeredOrderDetails !== undefined) {
 					clearTimeout(triggeredOrderDetails.cleanupTimerId);
-					
+
 					triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 				}
 
 				const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 				const existingKnownOpenTrade = knownOpenTrades.get(tradeKey);
-				
+
 				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
 					knownOpenTrades.delete(tradeKey);
 
@@ -697,10 +714,10 @@ async function refreshOpenTrades(event){
 		}
 
 		if(failed) {
-			if(event.triedTimes == MAX_EVENT_RETRY_TIMES) { 
+			if(event.triedTimes == MAX_EVENT_RETRY_TIMES) {
 				console.log("WARNING: Failed to process event '" + eventName + "' (from block #" + event.blockNumber + ") the max number of times (" + MAX_EVENT_RETRY_TIMES + "). This event will be dropped and not tried again.", event);
-				
-				return; 
+
+				return;
 			}
 
 			event.triedTimes++;
@@ -712,41 +729,15 @@ async function refreshOpenTrades(event){
 			console.log("Watch events ("+eventName+"): Trade not found on the blockchain, trying again in " + (EVENT_CONFIRMATIONS_SEC/2) + " seconds.");
 		}
 	} catch(error) {
-		console.log("Problem when refreshing trades: " + error.message, error); 
+		console.log("Problem when refreshing trades: " + error.message, error);
 	}
 }
 
-async function refreshPairFundingFees(event){
-	web3[selectedProvider].eth.net.isListening().then(async () => {
-		const pairIndex = parseInt(event.returnValues.pairIndex);
-		const pairFundingFees = await pairInfosContract.methods.pairFundingFees(pairIndex).call();
-
-		pairFundingFees[pairIndex] = {
-			accPerOiLong: pairFundingFees.accPerOiLong / 1e18, 
-			accPerOiShort: pairFundingFees.accPerOiShort / 1e18, 
-			lastUpdateBlock: parseInt(pairFundingFees.lastUpdateBlock)
-		};
-	});
-}
 
 // ---------------------------------------------
 // 11. FETCH CURRENT PRICES & TRIGGER ORDERS
 // ---------------------------------------------
 
-function alreadyTriggered(trade, orderType){
-	for(var i = 0; i < ordersTriggered.size; i++){
-		if(ordersTriggered[i].orderType === orderType){
-			const t = ordersTriggered[i].trade;
-			if(trade.trader === t.trader && trade.pairIndex === t.pairIndex && trade.index === t.index){
-				return true;
-			}
-		}
-	}
-	return false;
-}
-
-// Start monitoring forex
-startForexMonitoring();
 
 function wss() {
 	let socket = new WebSocket(process.env.PRICES_URL);
@@ -766,7 +757,7 @@ function wss() {
 		}
 
 		const messageData = JSON.parse(msg.data);
-		
+
 		if(messageData.closes === undefined) {
 			console.log('No closes in this message; ignoring.')
 
@@ -778,7 +769,7 @@ function wss() {
 
 		for(const openTrade of knownOpenTrades.values()) {
 			const { pairIndex } = openTrade;
-			
+
 			if(forexMarketClosed && pairIndex >= 21 && pairIndex <= 30) {
 				skippedForexTradeCount++;
 
@@ -831,10 +822,10 @@ function wss() {
 				const availableNft = await nftManager.leaseAvailableNft(currentlySelectedWeb3Client);
 
 				// If there are no more NFTs available, we can stop trying to trigger any other trades
-				if(availableNft === null) { 
+				if(availableNft === null) {
 					console.log("No NFTS available; unable to trigger any other trades at this time!");
 
-					return; 
+					return;
 				}
 
 				const { trader, index } = openTrade;
@@ -845,7 +836,7 @@ function wss() {
 						orderType
 					});
 
-				const triggeredOrderDetails = { 
+				const triggeredOrderDetails = {
 					cleanupTimerId: null,
 				};
 
@@ -881,7 +872,7 @@ function wss() {
 					}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
 
 					await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction)
-					
+
 					console.log(`Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
 				} catch(error) {
 					console.log(`An unexpected error occurred trying to trigger an order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`, error);
@@ -910,7 +901,7 @@ function wss() {
 		}
 
 		if(skippedForexTradeCount > 0) {
-			console.log(`${skippedForexTradeCount} trades were forex trades, but the forex market is currently closed so they were skipped.`);
+			// console.log(`${skippedForexTradeCount} trades were forex trades, but the forex market is currently closed so they were skipped.`);
 		}
 	}
 }
@@ -935,7 +926,7 @@ if(process.env.VAULT_REFILL_ENABLED === "true") {
 
 		try{
 			const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY)
-			
+
 			await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
 
 			console.log("Vault successfully refilled.");
@@ -988,12 +979,12 @@ if(AUTO_HARVEST_SEC > 0){
 			nonce: nonceManager.getNextNonce()
 		};
 
-		
+
 		try {
 			const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
 
 			await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
-			
+
 			console.log("Tokens claimed.");
 		} catch (error) {
 			console.log("claimTokens tx fail: " + error.message, error);
@@ -1023,12 +1014,12 @@ if(AUTO_HARVEST_SEC > 0){
 			nonce: nonceManager.getNextNonce()
 		};
 
-		
-		try {	
+
+		try {
 			const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
 
 			await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction)
-			
+
 			console.log("Pool Tokens claimed.");
 		} catch (error) {
 			console.log("claimPoolTokens tx fail: " + error.message, error);
@@ -1037,7 +1028,7 @@ if(AUTO_HARVEST_SEC > 0){
 
 	setInterval(async () => {
 		console.log("Harvesting rewards...");
-		
+
 		try
 		{
 			await Promise.all(
