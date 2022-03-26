@@ -236,7 +236,7 @@ const MAX_PROVIDER_BLOCK_DRIFT = 2;
 async function checkWeb3ClientLiveness() {
 	console.log("Checking liveness of all " + WEB3_PROVIDER_URLS.length + " web3 client(s)...");
 
-	const executionStartTime = Date.now();
+	const executionStartTime = performance.now();
 
 	try {
 		const latestWeb3ProviderBlocks = await Promise.all(WEB3_PROVIDER_URLS.map(async (providerUrl, providerIndex) => {
@@ -269,7 +269,7 @@ async function checkWeb3ClientLiveness() {
 			await ensureCurrentlySelectedProviderHasLatestBlock(originalWeb3ClientIndex);
 		}
 
-		console.log("Web3 client liveness check completed. Took: " + (Date.now() - executionStartTime) + "ms");
+		console.log("Web3 client liveness check completed. Took: " + (performance.now() - executionStartTime) + "ms");
 	} catch (error) {
 		console.log("An unexpected error occurred while checking web3 client liveness!!!", error);
 	} finally {
@@ -669,8 +669,6 @@ async function refreshOpenTrades(event){
 
 					console.log("Watch events ("+eventName+"): Stored trade");
 				}
-			} else {
-				failed = true;
 			}
 		}
 
@@ -680,36 +678,38 @@ async function refreshOpenTrades(event){
 				||
 			(eventName === "LimitExecuted" && eventValues.orderType !== "3")){
 			const [ trader, pairIndex, index ] = eventValues.t;
-			const trade = await storageContract.methods.openTrades(trader, pairIndex, index).call();
+			const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
+				trader,
+				pairIndex,
+				index,
+				orderType: eventValues.orderType ?? 'N/A'
+			});
 
-			if(parseFloat(trade.leverage) === 0){
-				const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
-					trader,
-					pairIndex,
-					index,
-					orderType: eventValues.orderType
-				});
+			console.log(`${eventName} for order ${triggeredOrderTrackingInfoIdentifier} received...`);
 
-				const triggeredOrderDetails = triggeredOrders.get(triggeredOrderTrackingInfoIdentifier);
+			const triggeredOrderDetails = triggeredOrders.get(triggeredOrderTrackingInfoIdentifier);
 
-				// If we were tracking this triggered order, stop tracking it now and clear the timeout so it doesn't
-				// interrupt the event loop for no reason later
-				if(triggeredOrderDetails !== undefined) {
-					clearTimeout(triggeredOrderDetails.cleanupTimerId);
+			// If we were tracking this triggered order, stop tracking it now and clear the timeout so it doesn't
+			// interrupt the event loop for no reason later
+			if(triggeredOrderDetails !== undefined) {
+				console.log(`We triggered order ${triggeredOrderTrackingInfoIdentifier}; clearing tracking timer.`);
 
-					triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
-				}
+				clearTimeout(triggeredOrderDetails.cleanupTimerId);
 
-				const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
-				const existingKnownOpenTrade = knownOpenTrades.get(tradeKey);
-
-				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
-					knownOpenTrades.delete(tradeKey);
-
-					console.log("Watch events (" + eventName + "): Removed trade");
-				}
+				triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 			} else {
-				failed = true;
+				console.log(`Order ${triggeredOrderTrackingInfoIdentifier} was not being tracked as triggered by us.`);
+			}
+
+			const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
+			const existingKnownOpenTrade = knownOpenTrades.get(tradeKey);
+
+			if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
+				knownOpenTrades.delete(tradeKey);
+
+				console.log(`Removed ${tradeKey} from known open trades.`);
+			} else {
+				console.log(`Trade ${tradeKey} was not found in known open trades; just ignoring.`);
 			}
 		}
 
