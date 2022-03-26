@@ -32,6 +32,10 @@ export function isForexOpen(dateToCheck) {
 
 let refreshIntervalId = null;
 
+export function isForexPair(pairIndex) {
+	return pairIndex >= 21 && pairIndex <= 30;
+}
+
 export function startForexMonitoring(forcedDate = null) {
 	if(refreshIntervalId !== null) {
 		throw new Error("Forex monitoring is already started.");
