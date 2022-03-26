@@ -354,6 +354,8 @@ setInterval(async () => {
 // -----------------------------------------
 
 async function fetchTradingVariables(){
+	appLogger.info("Fetching trading variables...");
+
 	const executionStart = performance.now();
 
 	try
@@ -474,7 +476,7 @@ async function fetchOpenTrades(){
 
 	function scheduleRetryFetchOpenTrades() {
 		if(fetchOpenTradesRetryTimerId !== null) {
-			appLogger.warn("Already scheduled retry fetching open trades; will retry shortly!");
+			appLogger.debug("Already scheduled retry fetching open trades; will retry shortly!");
 
 			return;
 		}
@@ -600,7 +602,7 @@ async function refreshOpenTrades(event){
 				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')) {
 					knownOpenTrades.delete(tradeKey);
 
-					appLogger.info(`Watch events ${eventName}: Removed limit`);
+					appLogger.debug(`Watch events ${eventName}: Removed limit`);
 				}
 			}else{
 				failed = true;
@@ -635,11 +637,11 @@ async function refreshOpenTrades(event){
 				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')){
 					knownOpenTrades.set(tradeKey, limitOrder);
 
-					appLogger.info(`Watch events ${eventName}: Updated limit`);
+					appLogger.debug(`Watch events ${eventName}: Updated limit`);
 				} else {
 					knownOpenTrades.set(tradeKey, limitOrder);
 
-					appLogger.info(`Watch events ${eventName}: Stored limit`);
+					appLogger.debug(`Watch events ${eventName}: Stored limit`);
 				}
 			} else {
 				failed = true;
@@ -669,11 +671,11 @@ async function refreshOpenTrades(event){
 				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
 					knownOpenTrades.set(tradeKey, trade);
 
-					appLogger.info(`Watch events ${eventName}: Updated trade`);
+					appLogger.debug(`Watch events ${eventName}: Updated trade`);
 				} else {
 					knownOpenTrades.set(tradeKey, trade);
 
-					appLogger.info(`Watch events ${eventName}: Stored trade`);
+					appLogger.debug(`Watch events ${eventName}: Stored trade`);
 				}
 			}
 		}
@@ -698,13 +700,13 @@ async function refreshOpenTrades(event){
 			// If we were tracking this triggered order, stop tracking it now and clear the timeout so it doesn't
 			// interrupt the event loop for no reason later
 			if(triggeredOrderDetails !== undefined) {
-				appLogger.info(`We triggered order ${triggeredOrderTrackingInfoIdentifier}; clearing tracking timer.`);
+				appLogger.debug(`We triggered order ${triggeredOrderTrackingInfoIdentifier}; clearing tracking timer.`);
 
 				clearTimeout(triggeredOrderDetails.cleanupTimerId);
 
 				triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 			} else {
-				appLogger.info(`Order ${triggeredOrderTrackingInfoIdentifier} was not being tracked as triggered by us.`);
+				appLogger.debug(`Order ${triggeredOrderTrackingInfoIdentifier} was not being tracked as triggered by us.`);
 			}
 
 			const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
@@ -713,9 +715,9 @@ async function refreshOpenTrades(event){
 			if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
 				knownOpenTrades.delete(tradeKey);
 
-				appLogger.info(`Removed ${tradeKey} from known open trades.`);
+				appLogger.debug(`Removed ${tradeKey} from known open trades.`);
 			} else {
-				appLogger.info(`Trade ${tradeKey} was not found in known open trades; just ignoring.`);
+				appLogger.debug(`Trade ${tradeKey} was not found in known open trades; just ignoring.`);
 			}
 		}
 
@@ -732,7 +734,7 @@ async function refreshOpenTrades(event){
 				refreshOpenTrades(event);
 			}, EVENT_CONFIRMATIONS_SEC/2*1000);
 
-			appLogger.info(`Watch events ${eventName}: Trade not found on the blockchain, trying again in ${EVENT_CONFIRMATIONS_SEC / 2} seconds.`);
+			appLogger.debug(`Watch events ${eventName}: Trade not found on the blockchain, trying again in ${EVENT_CONFIRMATIONS_SEC / 2} seconds.`);
 		}
 	} catch(error) {
 		appLogger.error("Error occurred when refreshing trades.", error);
@@ -751,13 +753,13 @@ function wss() {
 	socket.onerror = () => { socket.close(); };
 	socket.onmessage = async (msg) => {
 		if(spreadsP.length === 0) {
-			appLogger.warn("Spreads are not yet loaded; unable to process any trades!");
+			appLogger.debug("Spreads are not yet loaded; unable to process any trades!");
 
 			return;
 		}
 
 		if(!allowedLink) {
-			appLogger.warn("link is not currently allowed; unable to process any trades!");
+			appLogger.warn("LINK is not currently allowed for the configured account; unable to process any trades!");
 
 			return;
 		}
@@ -765,7 +767,7 @@ function wss() {
 		const messageData = JSON.parse(msg.data);
 
 		if(messageData.closes === undefined) {
-			appLogger.info('No closes in this message; nothing to do.')
+			appLogger.debug('No closes in this message; nothing to do.')
 
 			return;
 		}
@@ -851,7 +853,7 @@ function wss() {
 
 			// Make sure this order hasn't already been triggered
 			if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
-				appLogger.info("Order has already been triggered; skipping.");
+				appLogger.debug("Order has already been triggered; skipping.");
 
 				continue;
 			}
@@ -876,7 +878,7 @@ function wss() {
 
 				triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 					if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-						appLogger.info(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
+						appLogger.debug(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
 					}
 				}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
 
@@ -900,7 +902,7 @@ function wss() {
 						// Wait a bit and then clean from triggered orders list so it might get tried again
 						triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 							if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-								appLogger.warn(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
+								appLogger.debug(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
 							}
 
 						}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
@@ -912,7 +914,7 @@ function wss() {
 		}
 
 		if(skippedForexTradeCount > 0) {
-			// appLogger.info(`${skippedForexTradeCount} trades were forex trades, but the forex market is currently closed so they were skipped.`);
+			appLogger.debug(`${skippedForexTradeCount} trades were forex trades, but the forex market is currently closed so they were skipped.`);
 		}
 	}
 }
