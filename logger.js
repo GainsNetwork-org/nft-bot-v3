@@ -6,14 +6,14 @@ const consoleLogFormat = winston.format.printf(({ timestamp, label, level, messa
 	return `(${timestamp}) [${label}] ${level} ${message}${metaFormatted}`;
 });
 
-export function createAppLogger(logLevel = 'warn') {
+export function createLogger(label, logLevel = 'warn') {
 	return winston.createLogger({
 		transports: [
 			new winston.transports.Console({
 				level: logLevel,
 				format: winston.format.combine(
 							winston.format.timestamp(),
-							winston.format.label( { label: 'BOT' } ),
+							winston.format.label( { label } ),
 							winston.format.colorize(),
 							consoleLogFormat)
 			})

@@ -1,8 +1,9 @@
 import abis from "./abis.js";
 
 export class NFTManager {
-    constructor(storageContractAddress) {
-        this.storageContractAddress = storageContractAddress;
+    constructor(storageContractAddress, logger) {
+		this.storageContractAddress = storageContractAddress;
+		this.logger = logger;
         this.availableNfts = [];
         this.nftTimelock = 0;
         this.nftsBeingUsed = new Set();
@@ -35,7 +36,7 @@ export class NFTManager {
     }
 
     async loadNfts(web3Client) {
-		console.log("Loading available NFTs...");
+		this.logger.info("Loading available NFTs...");
 
         const storageContract = new web3Client.eth.Contract(abis.STORAGE, this.storageContractAddress);
 
@@ -99,7 +100,7 @@ export class NFTManager {
 
 		this.nftTimelock = parseInt(nftSuccessTimelock, 10);
 
-		console.log(`NFTs loaded: available=${this.availableNfts.length};timelock=${this.nftTimelock}`);
+		this.logger.info(`NFTs loaded: available=${this.availableNfts.length};timelock=${this.nftTimelock}`);
 	}
 
     async selectOnlyNft(web3Client) {
@@ -130,7 +131,7 @@ export class NFTManager {
     }
 
     async selectNftFromMultiple(web3Client) {
-        console.log(`Selecting from multiple available NFTs: total loaded=${this.availableNfts.length}`);
+        this.logger.info(`Selecting from multiple available NFTs: total loaded=${this.availableNfts.length}`);
 
         if(this.nftTimelock === 0) {
             return this.selectNftRoundRobin();
@@ -175,11 +176,11 @@ export class NFTManager {
                 return firstEligibleNft.nft;
             }
 
-            console.log("No suitable NFT to select.");
+            this.logger.info("No suitable NFT to select.");
 
             return null;
         } catch(error) {
-            console.log("Error occurred while trying to select NFT: " + error.message, error);
+            this.logger.error("Error occurred while trying to select NFT!", error);
 
             return null;
         }

@@ -3,7 +3,7 @@
 // ------------------------------------
 
 import dotenv from "dotenv";
-import { createAppLogger } from "./logger.js";
+import { createLogger } from "./logger.js";
 import Web3 from "web3";
 import { WebSocket } from "ws";
 import fetch from "node-fetch";
@@ -28,7 +28,7 @@ if(process.env.NODE_ENV) {
 	}
 }
 
-const appLogger = createAppLogger(process.env.LOG_LEVEL);
+const appLogger = createLogger('BOT', process.env.LOG_LEVEL);
 
 // -----------------------------------------
 // 2. GLOBAL VARIABLES
@@ -227,8 +227,8 @@ function createWeb3Client(providerUrl, nonceManager ) {
 	return web3Client;
 }
 
-const nonceManager = new NonceManager(process.env.PUBLIC_KEY);
-const nftManager = new NFTManager(process.env.STORAGE_ADDRESS);
+const nonceManager = new NonceManager(process.env.PUBLIC_KEY, createLogger('NONCE_MANAGER', process.env.LOG_LEVEL));
+const nftManager = new NFTManager(process.env.STORAGE_ADDRESS, createLogger('NFT_MANAGER', process.env.LOG_LEVEL));
 
 for(var web3ProviderUrlIndex = 0; web3ProviderUrlIndex < WEB3_PROVIDER_URLS.length; web3ProviderUrlIndex++){
 	web3Clients.push(createWeb3Client(WEB3_PROVIDER_URLS[web3ProviderUrlIndex], nonceManager));
