@@ -3,6 +3,14 @@
 // ------------------------------------
 
 import dotenv from "dotenv";
+import { createAppLogger } from "./logger.js";
+import Web3 from "web3";
+import { WebSocket } from "ws";
+import fetch from "node-fetch";
+import { default as abis } from "./abis.js";
+import { isForexCurrentlyOpen, startForexMonitoring } from "./forex.js";
+import { NonceManager } from "./NonceManager.js";
+import { NFTManager } from "./NftManager.js";
 
 // Load base .env file first
 dotenv.config();
@@ -20,13 +28,7 @@ if(process.env.NODE_ENV) {
 	}
 }
 
-import Web3 from "web3";
-import { WebSocket } from "ws";
-import fetch from "node-fetch";
-import { default as abis } from "./abis.js";
-import { isForexCurrentlyOpen, startForexMonitoring } from "./forex.js";
-import { NonceManager } from "./NonceManager.js";
-import { NFTManager } from "./NftManager.js";
+const appLogger = createAppLogger(process.env.LOG_LEVEL);
 
 // -----------------------------------------
 // 2. GLOBAL VARIABLES
@@ -42,13 +44,14 @@ let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, currentlySelecte
 // 3. INIT: CHECK ENV VARS & LINK ALLOWANCE
 // --------------------------------------------
 
-console.log("Welcome to the gTrade NFT bot!");
+appLogger.info("Welcome to the gTrade NFT bot!");
 if(!process.env.WSS_URLS || !process.env.PRICES_URL || !process.env.STORAGE_ADDRESS
 || !process.env.PRIVATE_KEY || !process.env.PUBLIC_KEY || !process.env.EVENT_CONFIRMATIONS_SEC
 || !process.env.MAX_GAS_PRICE_GWEI || !process.env.CHECK_REFILL_SEC
 || !process.env.VAULT_REFILL_ENABLED || !process.env.AUTO_HARVEST_SEC || !process.env.MIN_PRIORITY_GWEI
 || !process.env.PRIORITY_GWEI_MULTIPLIER || !process.env.MAX_GAS_PER_TRANSACTION){
-	console.log("Please fill all parameters in the .env file.");
+	appLogger.info("Please fill all parameters in the .env file.");
+
 	process.exit();
 }
 
@@ -71,9 +74,9 @@ async function checkLinkAllowance() {
 
 		if(parseFloat(allowance) > 0){
 			allowedLink = true;
-			console.log("LINK allowance OK.");
+			appLogger.info("LINK allowance OK.");
 		}else{
-			console.log("LINK not allowed, approving now.");
+			appLogger.info("LINK not allowed, approving now.");
 
 			const tx = {
 				from: process.env.PUBLIC_KEY,
@@ -90,10 +93,10 @@ async function checkLinkAllowance() {
 
 				await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction)
 
-				console.log("LINK successfully approved.");
+				appLogger.info("LINK successfully approved.");
 				allowedLink = true;
 			} catch(error) {
-				console.log("LINK approve tx fail (" + error + ")");
+				appLogger.error("LINK approve transaction failed!", error);
 
 				throw error;
 			}
@@ -111,7 +114,7 @@ const WEB3_PROVIDER_URLS = process.env.WSS_URLS.split(",");
 let currentWeb3ClientBlocks = new Array(WEB3_PROVIDER_URLS.length).fill(0);
 
 async function setCurrentWeb3Client(newWeb3ClientIndex){
-	console.log("Switching web3 client to " + WEB3_PROVIDER_URLS[newWeb3ClientIndex] + " (#" + newWeb3ClientIndex + ")...");
+	appLogger.info("Switching web3 client to " + WEB3_PROVIDER_URLS[newWeb3ClientIndex] + " (#" + newWeb3ClientIndex + ")...");
 
 	const executionStartTime = performance.now();
 	const newWeb3Client = web3Clients[newWeb3ClientIndex];
@@ -171,7 +174,7 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	fetchOpenTrades();
 	checkLinkAllowance();
 
-	console.log("New web3 client selection completed. Took: " + (performance.now() - executionStartTime) + "ms");
+	appLogger.info("New web3 client selection completed. Took: " + (performance.now() - executionStartTime) + "ms");
 }
 
 function createWeb3Provider(providerUrl) {
@@ -191,16 +194,16 @@ function createWeb3Provider(providerUrl) {
 
 	provider.on('connect', () => {
 		if(provider.connected){
-			console.log(`Connected to provider ${providerUrl}`);
+			appLogger.info(`Connected to provider ${providerUrl}`);
 		}
 	});
 
 	provider.on('reconnect', () => {
-		console.log(`Reconnecting to provider ${providerUrl}...`);
+		appLogger.info(`Reconnecting to provider ${providerUrl}...`);
 	})
 
 	provider.on('error', (error) => {
-		console.log(`Provider error: ${providerUrl}`, error);
+		appLogger.info(`Provider error: ${providerUrl}`, error);
 	});
 
 	return provider;
@@ -234,7 +237,7 @@ for(var web3ProviderUrlIndex = 0; web3ProviderUrlIndex < WEB3_PROVIDER_URLS.leng
 const MAX_PROVIDER_BLOCK_DRIFT = 2;
 
 async function checkWeb3ClientLiveness() {
-	console.log("Checking liveness of all " + WEB3_PROVIDER_URLS.length + " web3 client(s)...");
+	appLogger.info("Checking liveness of all " + WEB3_PROVIDER_URLS.length + " web3 client(s)...");
 
 	const executionStartTime = performance.now();
 
@@ -249,13 +252,13 @@ async function checkWeb3ClientLiveness() {
 			{
 				return await web3Clients[providerIndex].eth.getBlockNumber();
 			} catch (error) {
-				console.log("Error retrieving current block number from web3 client " + providerUrl + ": " + error.message, error);
+				appLogger.error(`Error retrieving current block number from web3 client ${providerUrl}!`, error);
 
 				return Number.MIN_SAFE_INTEGER;
 			}
 		}));
 
-		console.log("Current vs. latest provider blocks: ", WEB3_PROVIDER_URLS, currentWeb3ClientBlocks, latestWeb3ProviderBlocks);
+		appLogger.info("Current vs. latest provider blocks: ", WEB3_PROVIDER_URLS, currentWeb3ClientBlocks, latestWeb3ProviderBlocks);
 
 		// Update global to latest blocks
 		currentWeb3ClientBlocks = latestWeb3ProviderBlocks;
@@ -269,9 +272,9 @@ async function checkWeb3ClientLiveness() {
 			await ensureCurrentlySelectedProviderHasLatestBlock(originalWeb3ClientIndex);
 		}
 
-		console.log("Web3 client liveness check completed. Took: " + (performance.now() - executionStartTime) + "ms");
+		appLogger.info(`Web3 client liveness check completed. Took: ${performance.now() - executionStartTime}ms`);
 	} catch (error) {
-		console.log("An unexpected error occurred while checking web3 client liveness!!!", error);
+		appLogger.error("An unexpected error occurred while checking web3 client liveness!!!", error);
 	} finally {
 		// Schedule the next check
 		setTimeout(async () => {
@@ -288,7 +291,7 @@ async function checkWeb3ClientLiveness() {
 		// Start with the provider with the most recent block
 		await setCurrentWeb3Client(clientWithMaxBlockIndex);
 
-		console.log("Initial Web3 client selected: " + WEB3_PROVIDER_URLS[clientWithMaxBlockIndex]);
+		appLogger.info("Initial Web3 client selected: " + WEB3_PROVIDER_URLS[clientWithMaxBlockIndex]);
 	}
 
 	async function ensureCurrentlySelectedProviderHasLatestBlock(originalWeb3ClientIndex) {
@@ -302,7 +305,7 @@ async function checkWeb3ClientLiveness() {
 
 			// If the current provider is ahead of the selected provider by more N blocks then switch to this provider instead
 			if(currentWeb3ClientBlocks[i] >= currentlySelectedWeb3ClientIndexMaxDriftBlock){
-				console.log("Switching to provider " + WEB3_PROVIDER_URLS[i] + " #" + i + " (" + currentWeb3ClientBlocks[i] + " vs " + currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex] + ")");
+				appLogger.info("Switching to provider " + WEB3_PROVIDER_URLS[i] + " #" + i + " (" + currentWeb3ClientBlocks[i] + " vs " + currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex] + ")");
 
 				await setCurrentWeb3Client(i);
 
@@ -311,9 +314,9 @@ async function checkWeb3ClientLiveness() {
 		}
 
 		if(currentlySelectedWeb3ClientIndex === originalWeb3ClientIndex) {
-			console.log("No need to switch to a different client; sticking with " + WEB3_PROVIDER_URLS[currentlySelectedWeb3ClientIndex] + ".");
+			appLogger.info("No need to switch to a different client; sticking with " + WEB3_PROVIDER_URLS[currentlySelectedWeb3ClientIndex] + ".");
 		} else {
-			console.log("Switched to client " + WEB3_PROVIDER_URLS[currentlySelectedWeb3ClientIndex] + " completed.");
+			appLogger.info("Switched to client " + WEB3_PROVIDER_URLS[currentlySelectedWeb3ClientIndex] + " completed.");
 		}
 	}
 }
@@ -321,7 +324,7 @@ async function checkWeb3ClientLiveness() {
 checkWeb3ClientLiveness();
 
 setInterval(() => {
-	console.log("Current Web3 client: " + currentlySelectedWeb3Client.currentProvider.url + " (#"+currentlySelectedWeb3ClientIndex+")");
+	appLogger.info("Current Web3 client: " + currentlySelectedWeb3Client.currentProvider.url + " (#"+currentlySelectedWeb3ClientIndex+")");
 }, 120*1000);
 
 // -----------------------------------------
@@ -342,7 +345,7 @@ setInterval(async () => {
 			)
 		);
 	} catch(error) {
-		console.log("Error while fetching gas prices from gas station!", error)
+		appLogger.error("Error while fetching gas prices from gas station!", error)
 	};
 }, 3*1000);
 
@@ -361,9 +364,9 @@ async function fetchTradingVariables(){
 				fetchPairs()
 			]);
 
-		console.log(`Done fetching trading variables; took ${performance.now() - executionStart}ms.`);
+		appLogger.info(`Done fetching trading variables; took ${performance.now() - executionStart}ms.`);
 	} catch(error) {
-		console.log("Error while fetching trading variables!", error);
+		appLogger.error("Error while fetching trading variables!", error);
 
 		setTimeout(() => { fetchTradingVariables(); }, 2*1000);
 	};
@@ -440,11 +443,11 @@ function buildTriggeredOrderTrackingInfoIdentifier({ trader, pairIndex, index, o
 let fetchOpenTradesRetryTimerId = null;
 
 async function fetchOpenTrades(){
-	console.log("Fetching open trades...");
+	appLogger.info("Fetching open trades...");
 
 	try {
 		if(spreadsP.length === 0){
-			console.log("WARNING: Spreads are not yet loaded; will retry fetching open trades shortly!");
+			appLogger.warn("Spreads are not yet loaded; will retry fetching open trades shortly!");
 
 			scheduleRetryFetchOpenTrades();
 
@@ -462,16 +465,16 @@ async function fetchOpenTrades(){
 
 		knownOpenTrades = new Map(openLimitOrders.concat(pairTraders).map(trade => [buildOpenTradeKey({ trader: trade.trader, pairIndex: trade.pairIndex, index: trade.index }), trade]));
 
-		console.log("Fetched " + knownOpenTrades.size + " total open trade(s).");
+		appLogger.info(`Fetched ${knownOpenTrades.size} total open trade(s).`);
 	} catch(error) {
-		console.log("Error fetching open trades: " + error.message, error);
+		appLogger.error("Error fetching open trades!", error);
 
 		scheduleRetryFetchOpenTrades();
 	}
 
 	function scheduleRetryFetchOpenTrades() {
 		if(fetchOpenTradesRetryTimerId !== null) {
-			console.log("Already scheduled retry fetching open trades; will retry shortly!");
+			appLogger.warn("Already scheduled retry fetching open trades; will retry shortly!");
 
 			return;
 		}
@@ -480,7 +483,7 @@ async function fetchOpenTrades(){
 	}
 
 	async function fetchOpenLimitOrders() {
-		console.log("Fetching open limit orders...");
+		appLogger.info("Fetching open limit orders...");
 
 		const openLimitOrders = await storageContract.methods.getOpenLimitOrders().call();
 
@@ -490,13 +493,13 @@ async function fetchOpenTrades(){
 			return { ...olo, type };
 		}));
 
-		console.log("Fetched " + openLimitOrdersWithTypes.length + " open limit order(s).");
+		appLogger.info(`Fetched ${openLimitOrdersWithTypes.length} open limit order(s).`);
 
 		return openLimitOrdersWithTypes;
 	}
 
 	async function fetchOpenPairTrades() {
-		console.log("Fetching open pair trades...");
+		appLogger.info("Fetching open pair trades...");
 
 		const allOpenPairTrades = (await Promise.all(spreadsP.map(async (_, spreadPIndex) => {
 			const pairTraderAddresses = await storageContract.methods.pairTradersArray(spreadPIndex).call();
@@ -517,7 +520,7 @@ async function fetchOpenTrades(){
 			return openTradesForPairTraders;
 		}))).flat(2);
 
-		console.log("Fetched " + allOpenPairTrades.length + " open pair trade(s).");
+		appLogger.info(`Fetched ${allOpenPairTrades.length} open pair trade(s).`);
 
 		return allOpenPairTrades;
 	}
@@ -597,7 +600,7 @@ async function refreshOpenTrades(event){
 				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')) {
 					knownOpenTrades.delete(tradeKey);
 
-					console.log("Watch events ("+eventName+"): Removed limit");
+					appLogger.info(`Watch events ${eventName}: Removed limit`);
 				}
 			}else{
 				failed = true;
@@ -632,11 +635,11 @@ async function refreshOpenTrades(event){
 				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')){
 					knownOpenTrades.set(tradeKey, limitOrder);
 
-					console.log("Watch events ("+eventName+"): Updated limit");
+					appLogger.info(`Watch events ${eventName}: Updated limit`);
 				} else {
 					knownOpenTrades.set(tradeKey, limitOrder);
 
-					console.log("Watch events ("+eventName+"): Stored limit");
+					appLogger.info(`Watch events ${eventName}: Stored limit`);
 				}
 			} else {
 				failed = true;
@@ -666,11 +669,11 @@ async function refreshOpenTrades(event){
 				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
 					knownOpenTrades.set(tradeKey, trade);
 
-					console.log("Watch events ("+eventName+"): Updated trade");
+					appLogger.info(`Watch events ${eventName}: Updated trade`);
 				} else {
 					knownOpenTrades.set(tradeKey, trade);
 
-					console.log("Watch events ("+eventName+"): Stored trade");
+					appLogger.info(`Watch events ${eventName}: Stored trade`);
 				}
 			}
 		}
@@ -688,20 +691,20 @@ async function refreshOpenTrades(event){
 				orderType: eventValues.orderType ?? 'N/A'
 			});
 
-			console.log(`${eventName} for order ${triggeredOrderTrackingInfoIdentifier} received...`);
+			appLogger.info(`${eventName} for order ${triggeredOrderTrackingInfoIdentifier} received...`);
 
 			const triggeredOrderDetails = triggeredOrders.get(triggeredOrderTrackingInfoIdentifier);
 
 			// If we were tracking this triggered order, stop tracking it now and clear the timeout so it doesn't
 			// interrupt the event loop for no reason later
 			if(triggeredOrderDetails !== undefined) {
-				console.log(`We triggered order ${triggeredOrderTrackingInfoIdentifier}; clearing tracking timer.`);
+				appLogger.info(`We triggered order ${triggeredOrderTrackingInfoIdentifier}; clearing tracking timer.`);
 
 				clearTimeout(triggeredOrderDetails.cleanupTimerId);
 
 				triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 			} else {
-				console.log(`Order ${triggeredOrderTrackingInfoIdentifier} was not being tracked as triggered by us.`);
+				appLogger.info(`Order ${triggeredOrderTrackingInfoIdentifier} was not being tracked as triggered by us.`);
 			}
 
 			const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
@@ -710,15 +713,15 @@ async function refreshOpenTrades(event){
 			if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
 				knownOpenTrades.delete(tradeKey);
 
-				console.log(`Removed ${tradeKey} from known open trades.`);
+				appLogger.info(`Removed ${tradeKey} from known open trades.`);
 			} else {
-				console.log(`Trade ${tradeKey} was not found in known open trades; just ignoring.`);
+				appLogger.info(`Trade ${tradeKey} was not found in known open trades; just ignoring.`);
 			}
 		}
 
 		if(failed) {
 			if(event.triedTimes == MAX_EVENT_RETRY_TIMES) {
-				console.log("WARNING: Failed to process event '" + eventName + "' (from block #" + event.blockNumber + ") the max number of times (" + MAX_EVENT_RETRY_TIMES + "). This event will be dropped and not tried again.", event);
+				appLogger.warn(`Failed to process event ${eventName} (from block #${event.blockNumber}) the max number of times (${MAX_EVENT_RETRY_TIMES}). This event will be dropped and not tried again.`, event);
 
 				return;
 			}
@@ -729,10 +732,10 @@ async function refreshOpenTrades(event){
 				refreshOpenTrades(event);
 			}, EVENT_CONFIRMATIONS_SEC/2*1000);
 
-			console.log("Watch events ("+eventName+"): Trade not found on the blockchain, trying again in " + (EVENT_CONFIRMATIONS_SEC/2) + " seconds.");
+			appLogger.info(`Watch events ${eventName}: Trade not found on the blockchain, trying again in ${EVENT_CONFIRMATIONS_SEC / 2} seconds.`);
 		}
 	} catch(error) {
-		console.log("Problem when refreshing trades: " + error.message, error);
+		appLogger.error("Error occurred when refreshing trades.", error);
 	}
 }
 
@@ -748,13 +751,13 @@ function wss() {
 	socket.onerror = () => { socket.close(); };
 	socket.onmessage = async (msg) => {
 		if(spreadsP.length === 0) {
-			console.log("WARNING: Spreads are not yet loaded; unable to process any trades!");
+			appLogger.warn("Spreads are not yet loaded; unable to process any trades!");
 
 			return;
 		}
 
 		if(!allowedLink) {
-			console.log("WARNING: link is not currently allowed; unable to process any trades!");
+			appLogger.warn("link is not currently allowed; unable to process any trades!");
 
 			return;
 		}
@@ -762,7 +765,7 @@ function wss() {
 		const messageData = JSON.parse(msg.data);
 
 		if(messageData.closes === undefined) {
-			console.log('No closes in this message; nothing to do.')
+			appLogger.info('No closes in this message; nothing to do.')
 
 			return;
 		}
@@ -829,7 +832,7 @@ function wss() {
 
 			// If there are no more NFTs available, we can stop trying to trigger any other trades
 			if(availableNft === null) {
-				console.log("No NFTS available; unable to trigger any other trades at this time!");
+				appLogger.info("No NFTS available; unable to trigger any other trades at this time!");
 
 				return;
 			}
@@ -848,7 +851,7 @@ function wss() {
 
 			// Make sure this order hasn't already been triggered
 			if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
-				console.log("Order has already been triggered; skipping.");
+				appLogger.info("Order has already been triggered; skipping.");
 
 				continue;
 			}
@@ -856,7 +859,7 @@ function wss() {
 			// Track that we're triggering this order
 			triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderDetails);
 
-			console.log(`Trying to trigger ${triggeredOrderTrackingInfoIdentifier} order with NFT ${availableNft.id}...`);
+			appLogger.info(`Trying to trigger ${triggeredOrderTrackingInfoIdentifier} order with NFT ${availableNft.id}...`);
 
 			try {
 				const tx = {
@@ -873,15 +876,15 @@ function wss() {
 
 				triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 					if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-						console.log(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
+						appLogger.info(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
 					}
 				}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
 
 				await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction)
 
-				console.log(`Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
+				appLogger.info(`Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
 			} catch(error) {
-				console.log(`An unexpected error occurred trying to trigger an order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`, error);
+				appLogger.error(`An unexpected error occurred trying to trigger an order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`, error);
 
 				const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 
@@ -897,7 +900,7 @@ function wss() {
 						// Wait a bit and then clean from triggered orders list so it might get tried again
 						triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 							if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-								console.log(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
+								appLogger.warn(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
 							}
 
 						}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
@@ -909,7 +912,7 @@ function wss() {
 		}
 
 		if(skippedForexTradeCount > 0) {
-			// console.log(`${skippedForexTradeCount} trades were forex trades, but the forex market is currently closed so they were skipped.`);
+			// appLogger.info(`${skippedForexTradeCount} trades were forex trades, but the forex market is currently closed so they were skipped.`);
 		}
 	}
 }
@@ -937,9 +940,9 @@ if(process.env.VAULT_REFILL_ENABLED === "true") {
 
 			await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
 
-			console.log("Vault successfully refilled.");
+			appLogger.info("Vault successfully refilled.");
 		} catch(error) {
-			console.log("Vault refill tx fail", error);
+			appLogger.error("Vault refill transaction failed!", error);
 		};
 	}
 
@@ -959,9 +962,9 @@ if(process.env.VAULT_REFILL_ENABLED === "true") {
 
 			await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
 
-			console.log("Vault successfully depleted.");
+			appLogger.info("Vault successfully depleted.");
 		} catch(error) {
-			console.log("Vault deplete tx fail", error);
+			appLogger.error("Vault deplete transaction failed!", error);
 		}
 	}
 
@@ -993,9 +996,9 @@ if(AUTO_HARVEST_SEC > 0){
 
 			await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
 
-			console.log("Tokens claimed.");
+			appLogger.info("Tokens claimed.");
 		} catch (error) {
-			console.log("claimTokens tx fail: " + error.message, error);
+			appLogger.error("Claim tokens transaction failed!", error);
 		};
 	}
 
@@ -1004,7 +1007,7 @@ if(AUTO_HARVEST_SEC > 0){
 		currentRound = parseFloat(currentRound.toString());
 
 		if(currentRound === 0) {
-			console.log("Current round is 0, skipping claimPoolTokens for now.");
+			appLogger.info("Current round is 0, skipping claimPoolTokens for now.");
 
 			return;
 		}
@@ -1028,14 +1031,14 @@ if(AUTO_HARVEST_SEC > 0){
 
 			await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction)
 
-			console.log("Pool Tokens claimed.");
+			appLogger.info("Pool Tokens claimed.");
 		} catch (error) {
-			console.log("claimPoolTokens tx fail: " + error.message, error);
+			appLogger.error("Claim pool tokens transaction failed!", error);
 		}
 	}
 
 	setInterval(async () => {
-		console.log("Harvesting rewards...");
+		appLogger.info("Harvesting rewards...");
 
 		try
 		{
@@ -1045,7 +1048,7 @@ if(AUTO_HARVEST_SEC > 0){
 					claimPoolTokens()
 				]);
 		} catch (error) {
-			console.log("Harvesting rewards failed unexpectedly: " + error.message, error);
+			appLogger.error("Harvesting rewards failed unexpectedly!", error);
 		}
 	}, AUTO_HARVEST_SEC*1000);
 }

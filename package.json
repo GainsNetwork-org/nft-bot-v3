@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
-	"type": "module",
+  "type": "module",
   "scripts": {
     "start": "node bot.js",
     "start:dev": "NODE_ENV=development node bot.js",
@@ -16,6 +16,7 @@
     "luxon": "^2.3.1",
     "node-fetch": "^3.2.3",
     "web3": "^1.7.0",
+    "winston": "^3.6.0",
     "ws": "^8.4.2"
   }
 }
