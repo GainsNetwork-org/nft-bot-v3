@@ -31,7 +31,7 @@ const abis = require('./abis');
 // -----------------------------------------
 
 let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, currentlySelectedWeb3Client = null, eventSubTrading = null, eventSubCallbacks = null,
-	web3Providers = [], web3Clients = [], maxPriorityFeePerGas = 50,
+	web3Clients = [], priorityTransactionMaxPriorityFeePerGas = 50, standardTransactionGasFees = { maxFee: 31, maxPriorityFee: 31 },
 	knownOpenTrades = new Map(), spreadsP = [], openInterests = [], collaterals = [], nfts = [], nftsBeingUsed = new Set(), triggeredOrders = new Map(),
 	storageContract, tradingContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract,
 	nftTimelock = 0, maxTradesPerPair = 0,
@@ -56,7 +56,7 @@ const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
 	  CHECK_REFILL_SEC = parseInt(process.env.CHECK_REFILL_SEC, 10),
 	  EVENT_CONFIRMATIONS_SEC = parseInt(process.env.EVENT_CONFIRMATIONS_SEC, 10),
 	  AUTO_HARVEST_SEC = parseInt(process.env.AUTO_HARVEST_SEC, 10),
-	  FAILED_ORDER_TRIGGER_TIMEOUT_MS = (process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC ?? '').length > 0 ? parseFloat(process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC, 10) * 1000 : 60 * 1000;
+	  FAILED_ORDER_TRIGGER_TIMEOUT_MS = (process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC ?? '').length > 0 ? parseFloat(process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC) * 1000 : 60 * 1000;
 
 const DRY_RUN_MODE = process.env.DRY_RUN_MODE === "true";
 
@@ -74,9 +74,10 @@ async function checkLinkAllowance() {
 				from: process.env.PUBLIC_KEY,
 				to : linkContract.options.address,
 				data : linkContract.methods.approve(process.env.STORAGE_ADDRESS, "115792089237316195423570985008687907853269984665640564039457584007913129639935").encodeABI(),
-				maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(maxPriorityFeePerGas*1e9),
-				maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-				gas: currentlySelectedWeb3Client.utils.toHex("100000")
+				maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee * 1e9),
+				maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee * 1e9),
+				gas: currentlySelectedWeb3Client.utils.toHex("100000"),
+				nonce: nonceManager.getNextNonce()
 			};
 
 			try {
@@ -108,14 +109,15 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	console.log("Switching web3 client to " + WEB3_PROVIDER_URLS[newWeb3ClientIndex] + " (#" + newWeb3ClientIndex + ")...");
 	
 	const executionStartTime = Date.now();
-
+	const newWeb3Client = web3Clients[newWeb3ClientIndex];
+	
 	// Unsubscribe from existing events first
 	if(eventSubTrading !== null && eventSubTrading.id !== null){ eventSubTrading.unsubscribe(); }
 	if(eventSubCallbacks !== null && eventSubCallbacks.id !== null){ eventSubCallbacks.unsubscribe(); }
 	eventSubTrading = null;
 	eventSubCallbacks = null;
 	
-	storageContract = new web3Clients[newWeb3ClientIndex].eth.Contract(abis.STORAGE, process.env.STORAGE_ADDRESS);
+	storageContract = new newWeb3Client.eth.Contract(abis.STORAGE, process.env.STORAGE_ADDRESS);
 
 	// Retrieve all necessary details from the storage contract
 	const [
@@ -142,7 +144,7 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 		storageContract.methods.linkErc677().call()
 	]);
 
-	const aggregatorContract = new web3Clients[newWeb3ClientIndex].eth.Contract(abis.AGGREGATOR, aggregatorAddress);
+	const aggregatorContract = new newWeb3Client.eth.Contract(abis.AGGREGATOR, aggregatorAddress);
 	
 	// Retrieve all necessary details from the aggregator contract
 	const [
@@ -153,24 +155,24 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 		aggregatorContract.methods.nftRewards().call()
 	 ]);
 	
-	pairsStorageContract = new web3Clients[newWeb3ClientIndex].eth.Contract(abis.PAIRS_STORAGE, pairsStorageAddress);
-	nftRewardsContract = new web3Clients[newWeb3ClientIndex].eth.Contract(abis.NFT_REWARDS, nftRewardsAddress);
+	pairsStorageContract = new newWeb3Client.eth.Contract(abis.PAIRS_STORAGE, pairsStorageAddress);
+	nftRewardsContract = new newWeb3Client.eth.Contract(abis.NFT_REWARDS, nftRewardsAddress);
 
-	callbacksContract = new web3Clients[newWeb3ClientIndex].eth.Contract(abis.CALLBACKS, callbacksAddress);
-	tradingContract = new web3Clients[newWeb3ClientIndex].eth.Contract(abis.TRADING, tradingAddress);
-	vaultContract = new web3Clients[newWeb3ClientIndex].eth.Contract(abis.VAULT, vaultAddress);
+	callbacksContract = new newWeb3Client.eth.Contract(abis.CALLBACKS, callbacksAddress);
+	tradingContract = new newWeb3Client.eth.Contract(abis.TRADING, tradingAddress);
+	vaultContract = new newWeb3Client.eth.Contract(abis.VAULT, vaultAddress);
 
-	nftContract1 = new web3Clients[newWeb3ClientIndex].eth.Contract(abis.NFT, nftAddress1);
-	nftContract2 = new web3Clients[newWeb3ClientIndex].eth.Contract(abis.NFT, nftAddress2);
-	nftContract3 = new web3Clients[newWeb3ClientIndex].eth.Contract(abis.NFT, nftAddress3);
-	nftContract4 = new web3Clients[newWeb3ClientIndex].eth.Contract(abis.NFT, nftAddress4);
-	nftContract5 = new web3Clients[newWeb3ClientIndex].eth.Contract(abis.NFT, nftAddress5);
+	nftContract1 = new newWeb3Client.eth.Contract(abis.NFT, nftAddress1);
+	nftContract2 = new newWeb3Client.eth.Contract(abis.NFT, nftAddress2);
+	nftContract3 = new newWeb3Client.eth.Contract(abis.NFT, nftAddress3);
+	nftContract4 = new newWeb3Client.eth.Contract(abis.NFT, nftAddress4);
+	nftContract5 = new newWeb3Client.eth.Contract(abis.NFT, nftAddress5);
 
-	linkContract = new web3Clients[newWeb3ClientIndex].eth.Contract(abis.LINK, linkAddress);
+	linkContract = new newWeb3Client.eth.Contract(abis.LINK, linkAddress);
 
 	// Update the globally selected provider with this new provider
 	currentlySelectedWeb3ClientIndex = newWeb3ClientIndex;
-	currentlySelectedWeb3Client = web3Clients[newWeb3ClientIndex];
+	currentlySelectedWeb3Client = newWeb3Client;
 	
 	// Subscribe to events using the new provider
 	watchLiveTradingEvents();
@@ -183,63 +185,101 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	console.log("New web3 client selection completed. Took: " + (Date.now() - executionStartTime) + "ms");
 }
 
-const getWeb3Provider = (web3ProviderUrlIndex) => {
-	const provider = new Web3.providers.WebsocketProvider(WEB3_PROVIDER_URLS[web3ProviderUrlIndex], {clientConfig:{keepalive:true,keepaliveInterval:30*1000}});
-
-	provider.on('close', () => {
-		setTimeout(() => {
-			if(!provider.connected){
-				console.log(WEB3_PROVIDER_URLS[web3ProviderUrlIndex]+' closed: trying to reconnect...');
-
-				let connectedProvider = -1;
-				for(let i = 0; i < WEB3_PROVIDER_URLS.length; i++){
-					if(web3Providers[i].connected){
-						connectedProvider = i;
-						break;
-					}
-				}
-				if(connectedProvider > -1 && currentlySelectedWeb3ClientIndex === web3ProviderUrlIndex){
-					setCurrentWeb3Client(connectedProvider);
-					console.log("Switched to WSS " + WEB3_PROVIDER_URLS[currentlySelectedWeb3ClientIndex]);
-				}else if(connectedProvider === -1 && currentlySelectedWeb3ClientIndex === web3ProviderUrlIndex){
-					console.log("No WSS to switch to...");
-				}
-
-				web3Providers[web3ProviderUrlIndex] = getWeb3Provider(web3ProviderUrlIndex);
-				web3Clients[web3ProviderUrlIndex] = new Web3(web3Providers[web3ProviderUrlIndex]);
+function createWeb3Provider(providerUrl) {
+	const provider = new Web3.providers.WebsocketProvider(
+		providerUrl,
+		{
+			clientConfig: {
+				keepalive:true,
+				keepaliveInterval:30*1000,
+			 },
+			 reconnect: {
+				auto: true,
+				delay: 1000,
+				onTimeout: true
 			}
-		}, 1*1000);
-	});
+		});
 
 	provider.on('connect', () => {
 		if(provider.connected){
-			console.log('Connected to WSS '+WEB3_PROVIDER_URLS[web3ProviderUrlIndex]+'.');
+			console.log(`Connected to provider ${providerUrl}`);
 		}
 	});
-	provider.on('error', () => { console.log("WSS "+WEB3_PROVIDER_URLS[web3ProviderUrlIndex]+" error"); provider.disconnect(); });
+
+	provider.on('reconnect', () => {
+		console.log(`Reconnecting to provider ${providerUrl}...`);
+	})
+
+	provider.on('error', (error) => { 
+		console.log(`Provider error: ${providerUrl}`, error);
+	});
+	
 	return provider;
 };
 
-for(var i = 0; i < WEB3_PROVIDER_URLS.length; i++){
-	const provider = getWeb3Provider(i);
-	web3Providers.push(provider);
-	web3Clients.push(new Web3(provider));
+class NonceManager {
+	constructor(accountAddress) {
+		this.accountAddress = accountAddress;
+		this.lastNonce = null;
+	}
+
+	get isInitialized() {
+		return this.lastNonce !== null;
+	}
+
+	async initializeFromClient(web3Client) {
+		this.lastNonce = (await web3Client.eth.getTransactionCount(this.accountAddress)) - 1;
+	}
+
+	getNextNonce() {
+		this.lastNonce = this.lastNonce + 1;
+
+		return this.lastNonce;
+	}
 }
 
-// TODO: consider making this a config value
-const MAX_PROVIDER_BLOCK_DRIFT = 5;
+function createWeb3Client(providerUrl, nonceManager ) {
+	const provider = createWeb3Provider(providerUrl);
+	const web3Client = new Web3(provider);
+
+	const connectHandler = async() => {
+		if(!nonceManager.isInitialized) {
+			nonceManager.initializeFromClient(web3Client);
+		}
+
+		provider.off("connect", connectHandler)
+	}
+
+	provider.on("connect", connectHandler);
+
+	return web3Client;
+}
+
+const nonceManager = new NonceManager(process.env.PUBLIC_KEY);
+
+for(var web3ProviderUrlIndex = 0; web3ProviderUrlIndex < WEB3_PROVIDER_URLS.length; web3ProviderUrlIndex++){
+	web3Clients.push(createWeb3Client(WEB3_PROVIDER_URLS[web3ProviderUrlIndex], nonceManager));
+}
+
+
+const MAX_PROVIDER_BLOCK_DRIFT = 2;
 
 async function checkWeb3ClientLiveness() {
 	console.log("Checking liveness of all " + WEB3_PROVIDER_URLS.length + " web3 client(s)...");
 
 	const executionStartTime = Date.now();
 
-	const latestWeb3ProviderBlocks = await Promise.all(WEB3_PROVIDER_URLS.map(async (wssUrl, wssIndex) => {
+	const latestWeb3ProviderBlocks = await Promise.all(WEB3_PROVIDER_URLS.map(async (providerUrl, providerIndex) => {
+		// If not currently connected, then skip call
+		if(web3Clients[providerIndex].connected === false) {
+			return Number.MAX_SAFE_INTEGER;
+		}
+		
 		try
 		{
-			return await web3Clients[wssIndex].eth.getBlockNumber();
+			return await web3Clients[providerIndex].eth.getBlockNumber();
 		} catch (error) {
-			console.log("Error retrieving current block number from web3 client " + wssUrl + ": " + error.message, error);
+			console.log("Error retrieving current block number from web3 client " + providerUrl + ": " + error.message, error);
 
 			return Number.MIN_SAFE_INTEGER;
 		}
@@ -315,7 +355,9 @@ setInterval(() => {
 
 setInterval(() => {
 	fetch("https://gasstation-mainnet.matic.network/v2/").then(r => r.json()).then((r) => {
-		maxPriorityFeePerGas = Math.round(
+		standardTransactionGasFees = { maxFee: Math.round(r.standard.maxFee), maxPriorityFee: Math.round(r.standard.maxPriorityFee) };
+
+		priorityTransactionMaxPriorityFeePerGas = Math.round(
 			Math.max(
 				Math.round(r.fast.maxPriorityFee) * process.env.PRIORITY_GWEI_MULTIPLIER, 
 				process.env.MIN_PRIORITY_GWEI
@@ -410,7 +452,9 @@ async function fetchTradingVariables(){
 		}
 
 		const pairs = await Promise.all(pairsPromises);
-		spreadsP = new Array(pairs.length);
+		const newSpreadsP = new Array(pairs.length);
+		const newOpenInterests = new Array(pairs.length);
+		const newCollaterals = new Array(pairs.length);
 		
 		await Promise.all(pairs.map(async (pair, pairIndex) => {
 			const [
@@ -430,12 +474,15 @@ async function fetchTradingVariables(){
 					pairsStorageContract.methods.groupMaxCollateral(pairIndex).call()
 				]);
 
-			openInterests[pairIndex] = {long: openInterestLong, short: openInterestShort, max: openInterestMax};
-			collaterals[pairIndex] = {long: collateralLong, short: collateralShort, max: collateralMax};
-			spreadsP[pairIndex] = pair["0"].spreadP;
+			newOpenInterests[pairIndex] = {long: openInterestLong, short: openInterestShort, max: openInterestMax};
+			newCollaterals[pairIndex] = {long: collateralLong, short: collateralShort, max: collateralMax};
+			newSpreadsP[pairIndex] = pair["0"].spreadP;
 		}));
 
 		maxTradesPerPair = maxPerPair;
+		spreadsP = newSpreadsP;
+		openInterests = newOpenInterests;
+		collaterals = newCollaterals;
 	}
 }
 
@@ -637,7 +684,7 @@ function watchLiveTradingEvents(){
 	try {
 		if(eventSubTrading === null){
 			eventSubTrading = tradingContract.events.allEvents({ fromBlock: 'latest' }).on('data', function (event){
-				const eventName = event.event.toString();
+				const eventName = event.event;
 
 				if(eventName !== "OpenLimitPlaced" && eventName !== "OpenLimitUpdated"
 				&& eventName !== "OpenLimitCanceled" && eventName !== "TpUpdated"
@@ -655,7 +702,7 @@ function watchLiveTradingEvents(){
 
 		if(eventSubCallbacks === null){
 			eventSubCallbacks = callbacksContract.events.allEvents({ fromBlock: 'latest' }).on('data', function (event){
-				const eventName = event.event.toString();
+				const eventName = event.event;
 
 				if(eventName !== "MarketExecuted" && eventName !== "LimitExecuted"
 				&& eventName !== "MarketCloseCanceled" && eventName !== "SlUpdated" 
@@ -890,7 +937,7 @@ function wss() {
 		}
 
 		if(!allowedLink) {
-			//console.log("WARNING: link is not currently allowed; unable to process any trades!");
+			console.log("WARNING: link is not currently allowed; unable to process any trades!");
 
 			return;
 		}
@@ -904,12 +951,13 @@ function wss() {
 		}
 
 		const forexMarketClosed = !forex.isForexCurrentlyOpen();
+		let skippedForexTradeCount = 0;
 
 		for(const openTrade of knownOpenTrades.values()) {
 			const { pairIndex } = openTrade;
 			
 			if(forexMarketClosed && pairIndex >= 21 && pairIndex <= 30) {
-				console.log("The trade is a forex trade, but the forex market is currently closed; skipping.");
+				skippedForexTradeCount++;
 
 				continue;
 			}
@@ -995,9 +1043,10 @@ function wss() {
 						from: process.env.PUBLIC_KEY,
 						to: tradingContract.options.address,
 						data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
-						maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(maxPriorityFeePerGas*1e9),
+						maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(priorityTransactionMaxPriorityFeePerGas*1e9),
 						maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-						gas: currentlySelectedWeb3Client.utils.toHex("2000000")
+						gas: currentlySelectedWeb3Client.utils.toHex("2000000"),
+						nonce: nonceManager.getNextNonce()
 					};
 
 					const signedTransaction = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
@@ -1016,7 +1065,7 @@ function wss() {
 
 					triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 						if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-							console.log(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previous failed, but it was already removed?`);
+							console.log(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
 						}
 
 					}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
@@ -1025,6 +1074,10 @@ function wss() {
 					nftsBeingUsed.delete(availableNft.id);
 				}
 			}
+		}
+
+		if(skippedForexTradeCount > 0) {
+			console.log(`${skippedForexTradeCount} trades were forex trades, but the forex market is currently closed so they were skipped.`);
 		}
 	}
 }
@@ -1035,22 +1088,23 @@ wss();
 // 12. REFILL VAULT IF CAN BE REFILLED
 // ------------------------------------------
 
-if(process.env.VAULT_REFILL_ENABLED){
+if(process.env.VAULT_REFILL_ENABLED === "true") {
 	async function refill(){
 		const tx = {
 			from: process.env.PUBLIC_KEY,
 			to : vaultContract.options.address,
 			data : vaultContract.methods.refill().encodeABI(),
-			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(maxPriorityFeePerGas*1e9),
-			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-			gas: currentlySelectedWeb3Client.utils.toHex("1000000")
+			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
+			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
+			gas: currentlySelectedWeb3Client.utils.toHex("1000000"),
+			nonce: nonceManager.getNextNonce()
 		};
 
 		try{
 			const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY)
 			
-			await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction)
-			
+			await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
+
 			console.log("Vault successfully refilled.");
 		} catch(error) {
 			console.log("Vault refill tx fail", error);
@@ -1062,15 +1116,16 @@ if(process.env.VAULT_REFILL_ENABLED){
 			from: process.env.PUBLIC_KEY,
 			to : vaultContract.options.address,
 			data : vaultContract.methods.deplete().encodeABI(),
-			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(maxPriorityFeePerGas*1e9),
-			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-			gas: currentlySelectedWeb3Client.utils.toHex("1000000")
+			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
+			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
+			gas: currentlySelectedWeb3Client.utils.toHex("1000000"),
+			nonce: nonceManager.getNextNonce()
 		};
 
 		try {
 			const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
 
-			currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
+			await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
 
 			console.log("Vault successfully depleted.");
 		} catch(error) {
@@ -1094,14 +1149,16 @@ if(AUTO_HARVEST_SEC > 0){
 			from: process.env.PUBLIC_KEY,
 			to : nftRewardsContract.options.address,
 			data : nftRewardsContract.methods.claimTokens().encodeABI(),
-			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(maxPriorityFeePerGas*1e9),
-			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-			gas: currentlySelectedWeb3Client.utils.toHex("1000000")
+			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
+			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
+			gas: currentlySelectedWeb3Client.utils.toHex("1000000"),
+			nonce: nonceManager.getNextNonce()
 		};
 
-		const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
-
+		
 		try {
+			const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
+
 			await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
 			
 			console.log("Tokens claimed.");
@@ -1127,14 +1184,16 @@ if(AUTO_HARVEST_SEC > 0){
 			from: process.env.PUBLIC_KEY,
 			to : nftRewardsContract.options.address,
 			data : nftRewardsContract.methods.claimPoolTokens(fromRound, toRound).encodeABI(),
-			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(maxPriorityFeePerGas*1e9),
-			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-			gas: currentlySelectedWeb3Client.utils.toHex("3000000")
+			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
+			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
+			gas: currentlySelectedWeb3Client.utils.toHex("3000000"),
+			nonce: nonceManager.getNextNonce()
 		};
 
-		const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
-			
+		
 		try {	
+			const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
+
 			await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction)
 			
 			console.log("Pool Tokens claimed.");
