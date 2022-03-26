@@ -1,6 +1,6 @@
-const abis = require("./abis.js");
+import abis from "./abis.js";
 
-class NFTManager {
+export class NFTManager {
     constructor(storageContractAddress) {
         this.storageContractAddress = storageContractAddress;
         this.availableNfts = [];
@@ -185,5 +185,3 @@ class NFTManager {
         }
     }
 }
-
-exports.NFTManager = NFTManager;

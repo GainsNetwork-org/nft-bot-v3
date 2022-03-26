@@ -1,10 +1,10 @@
-const luxon = require("luxon");
+import luxon from "luxon";
 
 const FOREX_MARKETS_TIME_ZONE_IANA = luxon.IANAZone.create("America/New_York");
 
 let forexCurrentlyOpen = false;
 
-function isForexOpen(dateToCheck) {
+export function isForexOpen(dateToCheck) {
 	const now = luxon.DateTime.fromJSDate(dateToCheck).setZone(FOREX_MARKETS_TIME_ZONE_IANA);
 	const weekday = now.weekday;
 	const hour = now.hour;
@@ -32,7 +32,7 @@ function isForexOpen(dateToCheck) {
 
 let refreshIntervalId = null;
 
-function startForexMonitoring(forcedDate = null) {
+export function startForexMonitoring(forcedDate = null) {
 	if(refreshIntervalId !== null) {
 		throw new Error("Forex monitoring is already started.");
 	}
@@ -46,7 +46,7 @@ function startForexMonitoring(forcedDate = null) {
 	}, 10 * 1000);
 };
 
-function stopForexMonitoring() {
+export function stopForexMonitoring() {
 	if(refreshIntervalId === null) {
 		throw new Error("Forex monitoring was not started.");
 	}
@@ -56,9 +56,5 @@ function stopForexMonitoring() {
 	refreshIntervalId = null;
 }
 
-const isForexCurrentlyOpen = () => forexCurrentlyOpen;
+export const isForexCurrentlyOpen = () => forexCurrentlyOpen;
 
-exports.isForexOpen = isForexOpen;
-exports.startForexMonitoring = startForexMonitoring;
-exports.stopForexMonitoring = stopForexMonitoring;
-exports.isForexCurrentlyOpen = isForexCurrentlyOpen;

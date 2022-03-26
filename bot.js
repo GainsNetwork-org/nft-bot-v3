@@ -2,7 +2,7 @@
 // 1. DEPENDENCIES
 // ------------------------------------
 
-const dotenv = require("dotenv");
+import dotenv from "dotenv";
 
 // Load base .env file first
 dotenv.config();
@@ -10,7 +10,7 @@ dotenv.config();
 // If there's a specific NODE_ENV set, attempt to load that environment specific .env file
 if(process.env.NODE_ENV) {
 	const environmentSpecificFile = `.env.${process.env.NODE_ENV}`;
-	const fs = require("fs");
+	const fs = await import("fs");
 
 	if(fs.existsSync(environmentSpecificFile)) {
 		dotenv.config({
@@ -20,13 +20,13 @@ if(process.env.NODE_ENV) {
 	}
 }
 
-const Web3 = require("web3");
-const WebSocket = require('ws');
-const fetch = require('node-fetch');
-const abis = require('./abis.js');
-const { isForexCurrentlyOpen, startForexMonitoring } = require('./forex.js');
-const { NonceManager } = require("./NonceManager.js");
-const { NFTManager } = require("./NftManager.js");
+import Web3 from "web3";
+import { WebSocket } from "ws";
+import fetch from "node-fetch";
+import { default as abis } from "./abis.js";
+import { isForexCurrentlyOpen, startForexMonitoring } from "./forex.js";
+import { NonceManager } from "./NonceManager.js";
+import { NFTManager } from "./NftManager.js";
 
 // -----------------------------------------
 // 2. GLOBAL VARIABLES
@@ -58,9 +58,9 @@ const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
 	  CHECK_REFILL_SEC = parseInt(process.env.CHECK_REFILL_SEC, 10),
 	  EVENT_CONFIRMATIONS_SEC = parseInt(process.env.EVENT_CONFIRMATIONS_SEC, 10),
 	  AUTO_HARVEST_SEC = parseInt(process.env.AUTO_HARVEST_SEC, 10),
-	  FAILED_ORDER_TRIGGER_TIMEOUT_MS = (process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC ?? '').length > 0 ? parseFloat(process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC) * 1000 : 60 * 1000;
-
-const DRY_RUN_MODE = process.env.DRY_RUN_MODE === "true";
+	  FAILED_ORDER_TRIGGER_TIMEOUT_MS = (process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC ?? '').length > 0 ? parseFloat(process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC) * 1000 : 60 * 1000,
+	  PRIORITY_GWEI_MULTIPLIER = parseFloat(process.env.PRIORITY_GWEI_MULTIPLIER),
+	  MIN_PRIORITY_GWEI = parseFloat(process.env.MIN_PRIORITY_GWEI);
 
 // Start monitoring forex
 startForexMonitoring();
@@ -113,7 +113,7 @@ let currentWeb3ClientBlocks = new Array(WEB3_PROVIDER_URLS.length).fill(0);
 async function setCurrentWeb3Client(newWeb3ClientIndex){
 	console.log("Switching web3 client to " + WEB3_PROVIDER_URLS[newWeb3ClientIndex] + " (#" + newWeb3ClientIndex + ")...");
 
-	const executionStartTime = Date.now();
+	const executionStartTime = performance.now();
 	const newWeb3Client = web3Clients[newWeb3ClientIndex];
 
 	// Unsubscribe from existing events first
@@ -122,7 +122,7 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	eventSubTrading = null;
 	eventSubCallbacks = null;
 
-	storageContract = new newWeb3Client.eth.Contract(abis.STORAGE, process.env.STORAGE_ADDRESS);
+	storageContract = new newWeb3Client.eth.Contract(abis.STORAGE, process.env.STORAGE_ADDRESS, { handleRevert: true });
 
 	// Retrieve all necessary details from the storage contract
 	const [
@@ -154,7 +154,7 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	nftRewardsContract = new newWeb3Client.eth.Contract(abis.NFT_REWARDS, nftRewardsAddress);
 
 	callbacksContract = new newWeb3Client.eth.Contract(abis.CALLBACKS, callbacksAddress);
-	tradingContract = new newWeb3Client.eth.Contract(abis.TRADING, tradingAddress);
+	tradingContract = new newWeb3Client.eth.Contract(abis.TRADING, tradingAddress, { handleRevert: true });
 	vaultContract = new newWeb3Client.eth.Contract(abis.VAULT, vaultAddress);
 
 	linkContract = new newWeb3Client.eth.Contract(abis.LINK, linkAddress);
@@ -171,7 +171,7 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	fetchOpenTrades();
 	checkLinkAllowance();
 
-	console.log("New web3 client selection completed. Took: " + (Date.now() - executionStartTime) + "ms");
+	console.log("New web3 client selection completed. Took: " + (performance.now() - executionStartTime) + "ms");
 }
 
 function createWeb3Provider(providerUrl) {
@@ -328,17 +328,22 @@ setInterval(() => {
 // 5. FETCH DYNAMIC GAS PRICE
 // -----------------------------------------
 
-setInterval(() => {
-	fetch("https://gasstation-mainnet.matic.network/v2/").then(r => r.json()).then((r) => {
-		standardTransactionGasFees = { maxFee: Math.round(r.standard.maxFee), maxPriorityFee: Math.round(r.standard.maxPriorityFee) };
+setInterval(async () => {
+	try {
+		const response = await fetch("https://gasstation-mainnet.matic.network/v2/");
+		const gasPriceData = await response.json();
+
+		standardTransactionGasFees = { maxFee: Math.round(gasPriceData.standard.maxFee), maxPriorityFee: Math.round(gasPriceData.standard.maxPriorityFee) };
 
 		priorityTransactionMaxPriorityFeePerGas = Math.round(
 			Math.max(
-				Math.round(r.fast.maxPriorityFee) * process.env.PRIORITY_GWEI_MULTIPLIER,
-				process.env.MIN_PRIORITY_GWEI
+				Math.round(gasPriceData.fast.maxPriorityFee) * PRIORITY_GWEI_MULTIPLIER,
+				MIN_PRIORITY_GWEI
 			)
 		);
-	}).catch(() => { console.log("Error while fetching fastest gwei from gas station.") });
+	} catch(error) {
+		console.log("Error while fetching gas prices from gas station!", error)
+	};
 }, 3*1000);
 
 // -----------------------------------------
@@ -346,7 +351,7 @@ setInterval(() => {
 // -----------------------------------------
 
 async function fetchTradingVariables(){
-	const executionStartTime = new Date().getTime();
+	const executionStart = performance.now();
 
 	try
 	{
@@ -356,11 +361,9 @@ async function fetchTradingVariables(){
 				fetchPairs()
 			]);
 
-		const executionEndTime = new Date().getTime();
-
-		console.log("Done fetching trading variables. Took: " + (executionEndTime - executionStartTime) + "ms");
+		console.log(`Done fetching trading variables; took ${performance.now() - executionStart}ms.`);
 	} catch(error) {
-		console.log("Error while fetching trading variables: " + error.message, error);
+		console.log("Error while fetching trading variables!", error);
 
 		setTimeout(() => { fetchTradingVariables(); }, 2*1000);
 	};
@@ -853,7 +856,7 @@ function wss() {
 			// Track that we're triggering this order
 			triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderDetails);
 
-			console.log("Trying to trigger " + triggeredOrderTrackingInfoIdentifier + " order with nft: " + availableNft.id + ")");
+			console.log(`Trying to trigger ${triggeredOrderTrackingInfoIdentifier} order with NFT ${availableNft.id}...`);
 
 			try {
 				const tx = {
@@ -880,22 +883,25 @@ function wss() {
 			} catch(error) {
 				console.log(`An unexpected error occurred trying to trigger an order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`, error);
 
-				// TODO: add checking of reverted reason and handle each case more specifically
-				//const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
+				const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 
-				//if(error.message.includes("NO_TRADE")) {
-					// The trade is gone, just remove it from known trades
-				//	knownOpenTrades.delete(tradeKey);
-				//	triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
-				//} else {
-					// Wait a bit and then clean from triggered orders list so it might get tried again
-					triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
-						if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-							console.log(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
-						}
+				switch(error.reason) {
+					case 'NO_TRADE':
+						// The trade is gone, just remove it from known trades
+						knownOpenTrades.delete(tradeKey);
+						triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 
-					}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
-				//}
+						break;
+
+					default:
+						// Wait a bit and then clean from triggered orders list so it might get tried again
+						triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
+							if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
+								console.log(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
+							}
+
+						}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
+				}
 			} finally {
 				// Always release the NFT back to the NFT manager
 				nftManager.releaseNft(availableNft);

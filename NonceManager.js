@@ -1,4 +1,4 @@
-class NonceManager {
+export class NonceManager {
 	constructor(accountAddress) {
 		this.accountAddress = accountAddress;
 		this.lastNonce = null;
@@ -18,5 +18,3 @@ class NonceManager {
 		return this.lastNonce;
 	}
 }
-
-exports.NonceManager = NonceManager;
