@@ -258,7 +258,7 @@ async function checkWeb3ClientLiveness() {
 			}
 		}));
 
-		appLogger.info("Current vs. latest provider blocks: ", WEB3_PROVIDER_URLS, currentWeb3ClientBlocks, latestWeb3ProviderBlocks);
+		appLogger.info("Current vs. latest provider blocks.", { WEB3_PROVIDER_URLS, currentWeb3ClientBlocks, latestWeb3ProviderBlocks });
 
 		// Update global to latest blocks
 		currentWeb3ClientBlocks = latestWeb3ProviderBlocks;
@@ -291,7 +291,7 @@ async function checkWeb3ClientLiveness() {
 		// Start with the provider with the most recent block
 		await setCurrentWeb3Client(clientWithMaxBlockIndex);
 
-		appLogger.info("Initial Web3 client selected: " + WEB3_PROVIDER_URLS[clientWithMaxBlockIndex]);
+		appLogger.info(`Initial Web3 client selected: ${WEB3_PROVIDER_URLS[clientWithMaxBlockIndex]}`);
 	}
 
 	async function ensureCurrentlySelectedProviderHasLatestBlock(originalWeb3ClientIndex) {
@@ -305,7 +305,7 @@ async function checkWeb3ClientLiveness() {
 
 			// If the current provider is ahead of the selected provider by more N blocks then switch to this provider instead
 			if(currentWeb3ClientBlocks[i] >= currentlySelectedWeb3ClientIndexMaxDriftBlock){
-				appLogger.info("Switching to provider " + WEB3_PROVIDER_URLS[i] + " #" + i + " (" + currentWeb3ClientBlocks[i] + " vs " + currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex] + ")");
+				appLogger.info(`Switching to provider ${WEB3_PROVIDER_URLS[i]} #${i} (${currentWeb3ClientBlocks[i]} vs ${currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex]})`);
 
 				await setCurrentWeb3Client(i);
 
@@ -314,9 +314,9 @@ async function checkWeb3ClientLiveness() {
 		}
 
 		if(currentlySelectedWeb3ClientIndex === originalWeb3ClientIndex) {
-			appLogger.info("No need to switch to a different client; sticking with " + WEB3_PROVIDER_URLS[currentlySelectedWeb3ClientIndex] + ".");
+			appLogger.info(`No need to switch to a different client; sticking with ${WEB3_PROVIDER_URLS[currentlySelectedWeb3ClientIndex]}.`);
 		} else {
-			appLogger.info("Switched to client " + WEB3_PROVIDER_URLS[currentlySelectedWeb3ClientIndex] + " completed.");
+			appLogger.info(`Switched to client ${WEB3_PROVIDER_URLS[currentlySelectedWeb3ClientIndex]} completed.`);
 		}
 	}
 }
@@ -324,7 +324,7 @@ async function checkWeb3ClientLiveness() {
 checkWeb3ClientLiveness();
 
 setInterval(() => {
-	appLogger.info("Current Web3 client: " + currentlySelectedWeb3Client.currentProvider.url + " (#"+currentlySelectedWeb3ClientIndex+")");
+	appLogger.info(`Current Web3 client: ${currentlySelectedWeb3Client.currentProvider.url} (#${currentlySelectedWeb3ClientIndex})`);
 }, 120*1000);
 
 // -----------------------------------------
@@ -720,7 +720,7 @@ async function refreshOpenTrades(event){
 
 		if(failed) {
 			if(event.triedTimes == MAX_EVENT_RETRY_TIMES) {
-				appLogger.warn(`Failed to process event ${eventName} (from block #${event.blockNumber}) the max number of times (${MAX_EVENT_RETRY_TIMES}). This event will be dropped and not tried again.`, event);
+				appLogger.warn(`Failed to process event ${eventName} (from block #${event.blockNumber}) the max number of times (${MAX_EVENT_RETRY_TIMES}). This event will be dropped and not tried again.`, { event });
 
 				return;
 			}
@@ -779,8 +779,6 @@ function wss() {
 
 			// If it's a forex pair, we need to do some additional checks before processing
 			if(isForexPair(pairIndex)) {
-				appLogger.debug(`Checking if forex trade for pair ${pairIndex} can/should be processed...`);
-
 				if(forexMarketClosed) {
 					closeForexMarketTradeCount++;
 
