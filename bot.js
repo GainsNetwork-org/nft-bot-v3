@@ -59,11 +59,15 @@ if(!process.env.WSS_URLS || !process.env.PRICES_URL || !process.env.STORAGE_ADDR
 const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
 	  MAX_GAS_PER_TRANSACTION = parseInt(process.env.MAX_GAS_PER_TRANSACTION, 10),
 	  CHECK_REFILL_SEC = parseInt(process.env.CHECK_REFILL_SEC, 10),
-	  EVENT_CONFIRMATIONS_SEC = parseInt(process.env.EVENT_CONFIRMATIONS_SEC, 10),
+	  EVENT_CONFIRMATIONS_MS = parseInt(process.env.EVENT_CONFIRMATIONS_SEC, 10) * 1000,
 	  AUTO_HARVEST_SEC = parseInt(process.env.AUTO_HARVEST_SEC, 10),
 	  FAILED_ORDER_TRIGGER_TIMEOUT_MS = (process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC ?? '').length > 0 ? parseFloat(process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC) * 1000 : 60 * 1000,
 	  PRIORITY_GWEI_MULTIPLIER = parseFloat(process.env.PRIORITY_GWEI_MULTIPLIER),
-	  MIN_PRIORITY_GWEI = parseFloat(process.env.MIN_PRIORITY_GWEI);
+	  MIN_PRIORITY_GWEI = parseFloat(process.env.MIN_PRIORITY_GWEI),
+	  OPEN_TRADES_REFRESH_MS = (process.env.OPEN_TRADES_REFRESH_SEC ?? '').length > 0 ? parseFloat(process.env.OPEN_TRADES_REFRESH_SEC) * 1000 : 120,
+	  GAS_REFRESH_INTERVAL_MS = (process.env.GAS_REFRESH_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.GAS_REFRESH_INTERVAL_SEC) * 1000 : 3;
+
+const CHAIN_ID = 137; // Polygon chain id
 
 // Start monitoring forex
 startForexMonitoring();
@@ -347,7 +351,7 @@ setInterval(async () => {
 	} catch(error) {
 		appLogger.error("Error while fetching gas prices from gas station!", error)
 	};
-}, 3*1000);
+}, GAS_REFRESH_INTERVAL_MS);
 
 // -----------------------------------------
 // 6. FETCH PAIRS, NFTS, AND NFT TIMELOCK
@@ -464,9 +468,16 @@ async function fetchOpenTrades(){
 
 		knownOpenTrades = new Map(openLimitOrders.concat(pairTraders).map(trade => [buildOpenTradeKey({ trader: trade.trader, pairIndex: trade.pairIndex, index: trade.index }), trade]));
 
-		setTimeout(() => { fetchOpenTrades(); }, 60*1000);
-
 		appLogger.info(`Fetched ${knownOpenTrades.size} total open trade(s) in ${performance.now() - start}ms.`);
+
+		// Check if we're supposed to auto-refresh open trades and if so, schedule the next refresh
+		if(OPEN_TRADES_REFRESH_MS !== 0) {
+			appLogger.debug(`Scheduling auto-refresh of open trades in for ${OPEN_TRADES_REFRESH_MS}ms from now.`);
+
+			setTimeout(() => fetchOpenTrades(), OPEN_TRADES_REFRESH_MS);
+		} else {
+			appLogger.info(`Auto-refresh of open trades is disabled (OPEN_TRADES_REFRESH=0); will only update based on blockchain events from here out!`);
+		}
 	} catch(error) {
 		appLogger.error("Error fetching open trades!", error);
 
@@ -542,11 +553,12 @@ function watchLiveTradingEvents(){
 					return;
 				}
 
-				event.triedTimes = 1;
-
-				setTimeout(() => {
+				// If no confirmation delay, then execute immediately without timer
+				if(EVENT_CONFIRMATIONS_MS === 0) {
 					refreshOpenTrades(event);
-				}, EVENT_CONFIRMATIONS_SEC*1000);
+				} else {
+					setTimeout(() => refreshOpenTrades(event), EVENT_CONFIRMATIONS_MS);
+				}
 			});
 		}
 
@@ -560,11 +572,12 @@ function watchLiveTradingEvents(){
 					return;
 				}
 
-				event.triedTimes = 1;
-
-				setTimeout(() => {
+				// If no confirmation delay, then execute immediately without timer
+				if(EVENT_CONFIRMATIONS_MS === 0) {
 					refreshOpenTrades(event);
-				}, EVENT_CONFIRMATIONS_SEC*1000);
+				} else {
+					setTimeout(() => refreshOpenTrades(event), EVENT_CONFIRMATIONS_MS);
+				}
 			});
 		}
 	} catch {
@@ -581,31 +594,24 @@ async function refreshOpenTrades(event){
 	try {
 		const currentKnownOpenTrades = knownOpenTrades;
 		const eventName = event.event;
-		const eventValues = event.returnValues;
-		let failed = false;
+		const eventReturnValues = event.returnValues;
 
 		// UNREGISTER OPEN LIMIT ORDER
 		// => IF OPEN LIMIT CANCELED OR OPEN LIMIT EXECUTED
 		if(eventName === "OpenLimitCanceled"
 				||
-			(eventName === "LimitExecuted" && eventValues.orderType.toString() === "3")) {
-			const trader = eventName === "OpenLimitCanceled" ? eventValues.trader : eventValues.t[0];
-			const pairIndex = eventName === "OpenLimitCanceled" ? eventValues.pairIndex : eventValues.t[1];
-			const index = eventName === "OpenLimitCanceled" ? eventValues.index : eventValues.limitIndex;
+			(eventName === "LimitExecuted" && eventReturnValues.orderType.toString() === "3")) {
+			const trader = eventName === "OpenLimitCanceled" ? eventReturnValues.trader : eventReturnValues.t[0];
+			const pairIndex = eventName === "OpenLimitCanceled" ? eventReturnValues.pairIndex : eventReturnValues.t[1];
+			const index = eventName === "OpenLimitCanceled" ? eventReturnValues.index : eventReturnValues.limitIndex;
 
-			const hasLimitOrder = await storageContract.methods.hasOpenLimitOrder(trader, pairIndex, index).call();
+			const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
+			const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
 
-			if(hasLimitOrder.toString() === "false") {
-				const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
-				const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
+			if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')) {
+				currentKnownOpenTrades.delete(tradeKey);
 
-				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')) {
-					currentKnownOpenTrades.delete(tradeKey);
-
-					appLogger.debug(`Watch events ${eventName}: Removed limit`);
-				}
-			}else{
-				failed = true;
+				appLogger.debug(`Watch events ${eventName}: Removed limit`);
 			}
 		}
 
@@ -614,58 +620,54 @@ async function refreshOpenTrades(event){
 		if(eventName === "OpenLimitPlaced"
 				||
 			eventName === "OpenLimitUpdated"){
-			const { trader, pairIndex, index } = eventValues;
-			const hasLimitOrder = await storageContract.methods.hasOpenLimitOrder(trader, pairIndex, index).call();
+			const { trader, pairIndex, index } = eventReturnValues;
+			await storageContract.methods.hasOpenLimitOrder(trader, pairIndex, index).call();
 
-			if(hasLimitOrder.toString() === "true") {
-				const id = await storageContract.methods.openLimitOrderIds(trader, pairIndex, index).call();
+			const id = await storageContract.methods.openLimitOrderIds(trader, pairIndex, index).call();
 
-				const [
-					limitOrder,
-					type
-				] = await Promise.all(
-					[
-						storageContract.methods.openLimitOrders(id).call(),
-						nftRewardsContract.methods.openLimitOrderTypes(trader, pairIndex, index).call()
-					]);
+			const [
+				limitOrder,
+				type
+			] = await Promise.all(
+				[
+					storageContract.methods.openLimitOrders(id).call(),
+					nftRewardsContract.methods.openLimitOrderTypes(trader, pairIndex, index).call()
+				]);
 
-				limitOrder.type = type;
+			limitOrder.type = type;
 
-				const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
-				const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
+			const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
+			const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
 
-				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')){
-					currentKnownOpenTrades.set(tradeKey, limitOrder);
+			if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')){
+				currentKnownOpenTrades.set(tradeKey, limitOrder);
 
-					appLogger.debug(`Watch events ${eventName}: Updated limit`);
-				} else {
-					currentKnownOpenTrades.set(tradeKey, limitOrder);
-
-					appLogger.debug(`Watch events ${eventName}: Stored limit`);
-				}
+				appLogger.debug(`Watch events ${eventName}: Updated limit`);
 			} else {
-				failed = true;
+				currentKnownOpenTrades.set(tradeKey, limitOrder);
+
+				appLogger.debug(`Watch events ${eventName}: Stored limit`);
 			}
 		}
 
 		// STORE/UPDATE TRADE
 		// => IF MARKET OPEN EXECUTED OR OPEN TRADE LIMIT EXECUTED OR TP/SL UPDATED OR TRADE UPDATED (MARKET CLOSED)
-		if((eventName === "MarketExecuted" && eventValues.open === true)
+		if((eventName === "MarketExecuted" && eventReturnValues.open === true)
 				||
-			(eventName === "LimitExecuted" && eventValues.orderType.toString() === "3")
+			(eventName === "LimitExecuted" && eventReturnValues.orderType === "3")
 				||
 			eventName === "TpUpdated" || eventName === "SlUpdated" || eventName === "SlCanceled"
 				||
 			eventName === "MarketCloseCanceled"){
-			const trader = eventName !== "MarketExecuted" && eventName !== "LimitExecuted" ? eventValues.trader : eventValues.t[0];
-			const pairIndex = eventName !== "MarketExecuted" && eventName !== "LimitExecuted" ? eventValues.pairIndex : eventValues.t[1];
-			const index = eventName !== "MarketExecuted" && eventName !== "LimitExecuted" ? eventValues.index : eventValues.t[2];
+			const trader = eventName !== "MarketExecuted" && eventName !== "LimitExecuted" ? eventReturnValues.trader : eventReturnValues.t[0];
+			const pairIndex = eventName !== "MarketExecuted" && eventName !== "LimitExecuted" ? eventReturnValues.pairIndex : eventReturnValues.t[1];
+			const index = eventName !== "MarketExecuted" && eventName !== "LimitExecuted" ? eventReturnValues.index : eventReturnValues.t[2];
 
 			const trade = await storageContract.methods.openTrades(trader, pairIndex, index).call();
+			const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 
 			// Make sure the trade is still open
 			if(parseFloat(trade.leverage) > 0) {
-				const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 				const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
 
 				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
@@ -677,20 +679,22 @@ async function refreshOpenTrades(event){
 
 					appLogger.debug(`Watch events ${eventName}: Stored trade`);
 				}
+			} else {
+				appLogger.debug(`Watch events ${eventName}: Trade ${tradeKey} no longer open!`);
 			}
 		}
 
 		// UNREGISTER TRADE
 		// => IF MARKET CLOSE EXECUTED OR CLOSE LIMIT EXECUTED
-		if((eventName === "MarketExecuted" && eventValues.open.toString() === "false")
+		if((eventName === "MarketExecuted" && eventReturnValues.open === false)
 				||
-			(eventName === "LimitExecuted" && eventValues.orderType !== "3")){
-			const [ trader, pairIndex, index ] = eventValues.t;
+			(eventName === "LimitExecuted" && eventReturnValues.orderType !== "3")){
+			const [ trader, pairIndex, index ] = eventReturnValues.t;
 			const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
 				trader,
 				pairIndex,
 				index,
-				orderType: eventValues.orderType ?? 'N/A'
+				orderType: eventReturnValues.orderType ?? 'N/A'
 			});
 
 			appLogger.info(`${eventName} for order ${triggeredOrderTrackingInfoIdentifier} received...`);
@@ -719,22 +723,6 @@ async function refreshOpenTrades(event){
 			} else {
 				appLogger.debug(`Trade ${tradeKey} was not found in known open trades; just ignoring.`);
 			}
-		}
-
-		if(failed) {
-			if(event.triedTimes == MAX_EVENT_RETRY_TIMES) {
-				appLogger.warn(`Failed to process event ${eventName} (from block #${event.blockNumber}) the max number of times (${MAX_EVENT_RETRY_TIMES}). This event will be dropped and not tried again.`, { event });
-
-				return;
-			}
-
-			event.triedTimes++;
-
-			setTimeout(() => {
-				refreshOpenTrades(event);
-			}, EVENT_CONFIRMATIONS_SEC/2*1000);
-
-			appLogger.debug(`Watch events ${eventName}: Trade not found on the blockchain, trying again in ${EVENT_CONFIRMATIONS_SEC / 2} seconds.`);
 		}
 	} catch(error) {
 		appLogger.error("Error occurred when refreshing trades.", error);
@@ -870,7 +858,7 @@ function wss() {
 
 			// Make sure this order hasn't already been triggered
 			if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
-				appLogger.debug("Order has already been triggered; skipping.");
+				appLogger.debug(`Order ${triggeredOrderTrackingInfoIdentifier} has already been triggered; skipping.`);
 
 				continue;
 			}
@@ -885,24 +873,20 @@ function wss() {
 			appLogger.info(`Trying to trigger ${triggeredOrderTrackingInfoIdentifier} order with NFT ${availableNft.id}...`);
 
 			try {
-				const tx = {
+				const orderTransaction = {
 					from: process.env.PUBLIC_KEY,
 					to: tradingContract.options.address,
 					data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
 					maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(priorityTransactionMaxPriorityFeePerGas*1e9),
 					maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-					gas: MAX_GAS_PER_TRANSACTION,
+					gas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PER_TRANSACTION),
 					nonce: nonceManager.getNextNonce(),
+					chainId: CHAIN_ID
 				};
 
-				const signedTransaction = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
-
-				// Make sure the order is still known to us (might have been removed async since we first checked!!!)
-				if(!currentKnownOpenTrades.has(openTradeKey)) {
-					appLogger.warn(`Trade ${openTradeKey} disappeared; skipping because it was likely already processed!`);
-
-					continue;
-				}
+				// NOTE: technically this should execute synchronously because we're supplying all necessary details on
+				// the transaction object
+				const signedTransaction = await currentlySelectedWeb3Client.eth.accounts.signTransaction(orderTransaction, process.env.PRIVATE_KEY);
 
 				triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 					if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
@@ -910,7 +894,7 @@ function wss() {
 					}
 				}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
 
-				await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction)
+				await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction);
 
 				appLogger.info(`Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
 			} catch(error) {
@@ -940,7 +924,7 @@ function wss() {
 		}
 
 		if(closeForexMarketTradeCount > 0) {
-			appLogger.debug(`${closeForexMarketTradeCount} trades were forex trades, but the forex market is currently closed so they were skipped.`);
+			//appLogger.debug(`${closeForexMarketTradeCount} trades were forex trades, but the forex market is currently closed so they were skipped.`);
 		}
 	}
 }
