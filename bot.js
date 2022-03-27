@@ -451,6 +451,8 @@ async function fetchOpenTrades(){
 			return;
 		}
 
+		const start = performance.now();
+
 		const [
 			openLimitOrders,
 			pairTraders
@@ -464,7 +466,7 @@ async function fetchOpenTrades(){
 
 		setTimeout(() => { fetchOpenTrades(); }, 60*1000);
 
-		appLogger.info(`Fetched ${knownOpenTrades.size} total open trade(s).`);
+		appLogger.info(`Fetched ${knownOpenTrades.size} total open trade(s) in ${performance.now() - start}ms.`);
 	} catch(error) {
 		appLogger.error("Error fetching open trades!", error);
 
@@ -478,7 +480,7 @@ async function fetchOpenTrades(){
 			return;
 		}
 
-		fetchOpenTradesRetryTimerId = setTimeout(() => { fetchOpenTrades(); fetchOpenTradesRetryTimerId = null; }, 2*1000);
+		fetchOpenTradesRetryTimerId = setTimeout(() => { fetchOpenTradesRetryTimerId = null; fetchOpenTrades(); }, 2*1000);
 	}
 
 	async function fetchOpenLimitOrders() {
