@@ -577,6 +577,7 @@ const MAX_EVENT_RETRY_TIMES = 10;
 
 async function refreshOpenTrades(event){
 	try {
+		const currentKnownOpenTrades = knownOpenTrades;
 		const eventName = event.event;
 		const eventValues = event.returnValues;
 		let failed = false;
@@ -594,10 +595,10 @@ async function refreshOpenTrades(event){
 
 			if(hasLimitOrder.toString() === "false") {
 				const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
-				const existingKnownOpenTrade = knownOpenTrades.get(tradeKey);
+				const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
 
 				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')) {
-					knownOpenTrades.delete(tradeKey);
+					currentKnownOpenTrades.delete(tradeKey);
 
 					appLogger.debug(`Watch events ${eventName}: Removed limit`);
 				}
@@ -629,14 +630,14 @@ async function refreshOpenTrades(event){
 				limitOrder.type = type;
 
 				const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
-				const existingKnownOpenTrade = knownOpenTrades.get(tradeKey);
+				const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
 
 				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')){
-					knownOpenTrades.set(tradeKey, limitOrder);
+					currentKnownOpenTrades.set(tradeKey, limitOrder);
 
 					appLogger.debug(`Watch events ${eventName}: Updated limit`);
 				} else {
-					knownOpenTrades.set(tradeKey, limitOrder);
+					currentKnownOpenTrades.set(tradeKey, limitOrder);
 
 					appLogger.debug(`Watch events ${eventName}: Stored limit`);
 				}
@@ -663,14 +664,14 @@ async function refreshOpenTrades(event){
 			// Make sure the trade is still open
 			if(parseFloat(trade.leverage) > 0) {
 				const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
-				const existingKnownOpenTrade = knownOpenTrades.get(tradeKey);
+				const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
 
 				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
-					knownOpenTrades.set(tradeKey, trade);
+					currentKnownOpenTrades.set(tradeKey, trade);
 
 					appLogger.debug(`Watch events ${eventName}: Updated trade`);
 				} else {
-					knownOpenTrades.set(tradeKey, trade);
+					currentKnownOpenTrades.set(tradeKey, trade);
 
 					appLogger.debug(`Watch events ${eventName}: Stored trade`);
 				}
@@ -707,10 +708,10 @@ async function refreshOpenTrades(event){
 			}
 
 			const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
-			const existingKnownOpenTrade = knownOpenTrades.get(tradeKey);
+			const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
 
 			if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
-				knownOpenTrades.delete(tradeKey);
+				currentKnownOpenTrades.delete(tradeKey);
 
 				appLogger.debug(`Removed ${tradeKey} from known open trades.`);
 			} else {
@@ -772,7 +773,9 @@ function wss() {
 		const forexMarketClosed = !isForexCurrentlyOpen();
 		let closeForexMarketTradeCount = 0;
 
-		for(const openTrade of knownOpenTrades.values()) {
+		const currentKnownOpenTrades = knownOpenTrades;
+
+		for(const openTrade of currentKnownOpenTrades.values()) {
 			const { pairIndex, buy } = openTrade;
 
 			const price = messageData.closes[pairIndex];
@@ -850,7 +853,7 @@ function wss() {
 			const openTradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 
 			// Make sure the order is known to us
-			if(!knownOpenTrades.has(openTradeKey)) {
+			if(!currentKnownOpenTrades.has(openTradeKey)) {
 				appLogger.warn(`Trade ${openTradeKey} does not exist in our known open trades list; skipping.`);
 
 				continue;
@@ -893,7 +896,7 @@ function wss() {
 				const signedTransaction = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
 
 				// Make sure the order is still known to us (might have been removed async since we first checked!!!)
-				if(!knownOpenTrades.has(openTradeKey)) {
+				if(!currentKnownOpenTrades.has(openTradeKey)) {
 					appLogger.warn(`Trade ${openTradeKey} disappeared; skipping because it was likely already processed!`);
 
 					continue;
@@ -914,7 +917,7 @@ function wss() {
 				switch(error.reason) {
 					case 'NO_TRADE':
 						// The trade is gone, just remove it from known trades
-						knownOpenTrades.delete(openTradeKey);
+						currentKnownOpenTrades.delete(openTradeKey);
 						triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 
 						break;
