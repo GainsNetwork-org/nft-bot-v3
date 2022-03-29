@@ -244,7 +244,13 @@ for(var web3ProviderUrlIndex = 0; web3ProviderUrlIndex < WEB3_PROVIDER_URLS.leng
 	web3Clients.push(createWeb3Client(WEB3_PROVIDER_URLS[web3ProviderUrlIndex], nonceManager));
 }
 
-const MAX_PROVIDER_BLOCK_DRIFT = 2;
+let MAX_PROVIDER_BLOCK_DRIFT = (process.env.MAX_PROVIDER_BLOCK_DRIFT ?? '').length > 0 ? parseInt(process.env.MAX_PROVIDER_BLOCK_DRIFT, 10) : 2;
+
+if(MAX_PROVIDER_BLOCK_DRIFT < 1) {
+	appLogger.warn(`MAX_PROVIDER_BLOCK_DRIFT is set to ${MAX_PROVIDER_BLOCK_DRIFT}; setting to minimum of 1.`);
+
+	MAX_PROVIDER_BLOCK_DRIFT = 1;
+}
 
 async function checkWeb3ClientLiveness() {
 	appLogger.info("Checking liveness of all " + WEB3_PROVIDER_URLS.length + " web3 client(s)...");
@@ -289,7 +295,7 @@ async function checkWeb3ClientLiveness() {
 		// Schedule the next check
 		setTimeout(async () => {
 			checkWeb3ClientLiveness();
-		}, 10*1000);
+		}, WEB3_LIVENESS_CHECK_INTERVAL_MS);
 	}
 
 	async function selectInitialProvider() {
