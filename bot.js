@@ -222,6 +222,7 @@ function createWeb3Provider(providerUrl) {
 function createWeb3Client(providerUrl, nonceManager ) {
 	const provider = createWeb3Provider(providerUrl);
 	const web3Client = new Web3(provider);
+	web3Client.eth.handleRevert = true;
 
 	const connectHandler = async() => {
 		if(!nonceManager.isInitialized) {
@@ -912,7 +913,11 @@ function wss() {
 				appLogger.error(`An unexpected error occurred trying to trigger an order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`, error);
 
 				switch(error.reason) {
-					case 'NO_TRADE':
+					case "TOO_LATE":
+					case "NO_TRADE":
+					case "SAME_BLOCK_LIMIT":
+						appLogger.info(`Order missed due to "${error.reason}" error; removing order from tracking and known open trades.`);
+
 						// The trade is gone, just remove it from known trades
 						currentKnownOpenTrades.delete(openTradeKey);
 						triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
@@ -920,6 +925,8 @@ function wss() {
 						break;
 
 					default:
+						appLogger.error(`Order trigger transaction failed for unexpected reason "${error.reason}"; removing order from tracking and known open trades.`);
+
 						// Wait a bit and then clean from triggered orders list so it might get tried again
 						triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 							if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
