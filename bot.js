@@ -600,8 +600,6 @@ function watchLiveTradingEvents(){
 // -----------------------------------------
 // 10. REFRESH INTERNAL OPEN TRADES LIST
 // -----------------------------------------
-const MAX_EVENT_RETRY_TIMES = 10;
-
 async function refreshOpenTrades(event){
 	try {
 		const currentKnownOpenTrades = knownOpenTrades;
@@ -764,7 +762,7 @@ function wss() {
 			return;
 		}
 
-		if(!allowedLink) {
+		if(allowedLink === false) {
 			appLogger.warn("LINK is not currently allowed for the configured account; unable to process any trades!");
 
 			return;
@@ -772,8 +770,8 @@ function wss() {
 
 		const messageData = JSON.parse(msg.data);
 
-		if(messageData.closes === undefined) {
-			appLogger.debug('No closes in this message; nothing to do.')
+		if(messageData.name !== "charts") {
+			appLogger.debug(`Message was not a "charts" message, was "${messageData.name}"; ignoring.`)
 
 			return;
 		}
@@ -910,9 +908,11 @@ function wss() {
 
 				await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction);
 
+				// If we successfully send the transaction, we set up a timer to make sure we've heard about its
+				// eventual completion and, if not, we clean up tracking and log that we didn't hear back
 				triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 					if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-						appLogger.debug(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
+						appLogger.warn(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
 					}
 				}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
 
