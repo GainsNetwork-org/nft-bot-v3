@@ -25,8 +25,10 @@ export class NFTManager {
             availableNft = await this.selectNftFromMultiple(web3Client);
         }
 
-        // Track that this NFT is being actively used
-        this.nftsBeingUsed.add(availableNft.id);
+		// If we actually found an NFT, track that this NFT is being actively used
+		if(availableNft !== null) {
+			this.nftsBeingUsed.add(availableNft.id);
+		}
 
         return availableNft;
     }
