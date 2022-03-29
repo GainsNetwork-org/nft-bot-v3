@@ -608,6 +608,8 @@ async function refreshOpenTrades(event){
 		const eventName = event.event;
 		const eventReturnValues = event.returnValues;
 
+		appLogger.debug(`Refreshing open trades for event ${eventName} from block ${event.blockNumber}...`);
+
 		// UNREGISTER OPEN LIMIT ORDER
 		// => IF OPEN LIMIT CANCELED OR OPEN LIMIT EXECUTED
 		if(eventName === "OpenLimitCanceled"
@@ -623,9 +625,9 @@ async function refreshOpenTrades(event){
 			if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')) {
 				currentKnownOpenTrades.delete(tradeKey);
 
-				appLogger.debug(`Watch events ${eventName}: Removed limit for ${tradeKey}`);
+				appLogger.debug(`Refresh open trades from event ${eventName}: Removed limit for ${tradeKey}`);
 			} else {
-				appLogger.debug(`Watch events ${eventName}: Limit not found for ${tradeKey}`);
+				appLogger.debug(`Refresh open trades from event ${eventName}: Limit not found for ${tradeKey}`);
 			}
 		}
 
@@ -656,11 +658,11 @@ async function refreshOpenTrades(event){
 			if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')){
 				currentKnownOpenTrades.set(tradeKey, limitOrder);
 
-				appLogger.debug(`Watch events ${eventName}: Updated limit for ${tradeKey}`);
+				appLogger.debug(`Refresh open trades from event ${eventName}: Updated limit for ${tradeKey}`);
 			} else {
 				currentKnownOpenTrades.set(tradeKey, limitOrder);
 
-				appLogger.debug(`Watch events ${eventName}: Stored limit for ${tradeKey}`);
+				appLogger.debug(`Refresh open trades from event ${eventName}: Stored limit for ${tradeKey}`);
 			}
 		}
 
@@ -687,16 +689,16 @@ async function refreshOpenTrades(event){
 				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
 					currentKnownOpenTrades.set(tradeKey, trade);
 
-					appLogger.debug(`Watch events ${eventName}: Updated trade ${tradeKey}`);
+					appLogger.debug(`Refresh open trades from event ${eventName}: Updated trade ${tradeKey}`);
 				} else {
 					currentKnownOpenTrades.set(tradeKey, trade);
 
-					appLogger.debug(`Watch events ${eventName}: Stored trade ${tradeKey}`);
+					appLogger.debug(`Refresh open trades from event ${eventName}: Stored trade ${tradeKey}`);
 				}
 			} else {
 				currentKnownOpenTrades.delete(tradeKey);
 
-				appLogger.debug(`Watch events ${eventName}: Trade ${tradeKey} no longer open!`);
+				appLogger.debug(`Refresh open trades from event ${eventName}: Trade ${tradeKey} no longer open!`);
 			}
 		}
 
@@ -713,20 +715,20 @@ async function refreshOpenTrades(event){
 				orderType: eventReturnValues.orderType ?? 'N/A'
 			});
 
-			appLogger.info(`Watch events ${eventName}: event received for ${triggeredOrderTrackingInfoIdentifier}...`);
+			appLogger.info(`Refresh open trades from event ${eventName}: event received for ${triggeredOrderTrackingInfoIdentifier}...`);
 
 			const triggeredOrderDetails = triggeredOrders.get(triggeredOrderTrackingInfoIdentifier);
 
 			// If we were tracking this triggered order, stop tracking it now and clear the timeout so it doesn't
 			// interrupt the event loop for no reason later
 			if(triggeredOrderDetails !== undefined) {
-				appLogger.debug(`Watch events ${eventName}: We triggered order ${triggeredOrderTrackingInfoIdentifier}; clearing tracking timer.`);
+				appLogger.debug(`Refresh open trades from event ${eventName}: We triggered order ${triggeredOrderTrackingInfoIdentifier}; clearing tracking timer.`);
 
 				clearTimeout(triggeredOrderDetails.cleanupTimerId);
 
 				triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 			} else {
-				appLogger.debug(`Watch events ${eventName}: Order ${triggeredOrderTrackingInfoIdentifier} was not being tracked as triggered by us.`);
+				appLogger.debug(`Refresh open trades from event ${eventName}: Order ${triggeredOrderTrackingInfoIdentifier} was not being tracked as triggered by us.`);
 			}
 
 			const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
@@ -735,9 +737,9 @@ async function refreshOpenTrades(event){
 			if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
 				currentKnownOpenTrades.delete(tradeKey);
 
-				appLogger.debug(`Watch events ${eventName}: Removed ${tradeKey} from known open trades.`);
+				appLogger.debug(`Refresh open trades from event ${eventName}: Removed ${tradeKey} from known open trades.`);
 			} else {
-				appLogger.debug(`Watch events ${eventName}: Trade ${tradeKey} was not found in known open trades; just ignoring.`);
+				appLogger.debug(`Refresh open trades from event ${eventName}: Trade ${tradeKey} was not found in known open trades; just ignoring.`);
 			}
 		}
 	} catch(error) {
