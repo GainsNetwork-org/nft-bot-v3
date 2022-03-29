@@ -892,13 +892,13 @@ function wss() {
 				// the transaction object
 				const signedTransaction = await currentlySelectedWeb3Client.eth.accounts.signTransaction(orderTransaction, process.env.PRIVATE_KEY);
 
+				await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction);
+
 				triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 					if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
 						appLogger.debug(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
 					}
 				}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
-
-				await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction);
 
 				appLogger.info(`Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
 			} catch(error) {
