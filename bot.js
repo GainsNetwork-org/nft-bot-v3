@@ -68,6 +68,8 @@ const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
 	  GAS_REFRESH_INTERVAL_MS = (process.env.GAS_REFRESH_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.GAS_REFRESH_INTERVAL_SEC) * 1000 : 3;
 
 const CHAIN_ID = 137; // Polygon chain id
+const CHAIN = "mainnet";
+const HARDFORK = "london";
 
 // Start monitoring forex
 startForexMonitoring();
@@ -89,7 +91,10 @@ async function checkLinkAllowance() {
 				maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee * 1e9),
 				maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee * 1e9),
 				gas: currentlySelectedWeb3Client.utils.toHex("100000"),
-				nonce: nonceManager.getNextNonce()
+				nonce: nonceManager.getNextNonce(),
+				chainId: CHAIN_ID,
+				chain: CHAIN,
+				hardfork: HARDFORK
 			};
 
 			try {
@@ -129,7 +134,7 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	eventSubTrading = null;
 	eventSubCallbacks = null;
 
-	storageContract = new newWeb3Client.eth.Contract(abis.STORAGE, process.env.STORAGE_ADDRESS, { handleRevert: true });
+	storageContract = new newWeb3Client.eth.Contract(abis.STORAGE, process.env.STORAGE_ADDRESS);
 
 	// Retrieve all necessary details from the storage contract
 	const [
@@ -161,7 +166,7 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	nftRewardsContract = new newWeb3Client.eth.Contract(abis.NFT_REWARDS, nftRewardsAddress);
 
 	callbacksContract = new newWeb3Client.eth.Contract(abis.CALLBACKS, callbacksAddress);
-	tradingContract = new newWeb3Client.eth.Contract(abis.TRADING, tradingAddress, { handleRevert: true });
+	tradingContract = new newWeb3Client.eth.Contract(abis.TRADING, tradingAddress);
 	vaultContract = new newWeb3Client.eth.Contract(abis.VAULT, vaultAddress);
 
 	linkContract = new newWeb3Client.eth.Contract(abis.LINK, linkAddress);
@@ -216,7 +221,6 @@ function createWeb3Provider(providerUrl) {
 function createWeb3Client(providerUrl, nonceManager ) {
 	const provider = createWeb3Provider(providerUrl);
 	const web3Client = new Web3(provider);
-	web3Client.eth.handleRevert = true;
 
 	const connectHandler = async() => {
 		if(!nonceManager.isInitialized) {
@@ -885,11 +889,13 @@ function wss() {
 					maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
 					gas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PER_TRANSACTION),
 					nonce: nonceManager.getNextNonce(),
-					chainId: CHAIN_ID
+					chainId: CHAIN_ID,
+					chain: CHAIN,
+					hardfork: HARDFORK,
 				};
 
 				// NOTE: technically this should execute synchronously because we're supplying all necessary details on
-				// the transaction object
+				// the transaction object up front
 				const signedTransaction = await currentlySelectedWeb3Client.eth.accounts.signTransaction(orderTransaction, process.env.PRIVATE_KEY);
 
 				await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction);
@@ -948,7 +954,10 @@ if(process.env.VAULT_REFILL_ENABLED === "true") {
 			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
 			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
 			gas: MAX_GAS_PER_TRANSACTION,
-			nonce: nonceManager.getNextNonce()
+			nonce: nonceManager.getNextNonce(),
+			chainId: CHAIN_ID,
+			chain: CHAIN,
+			hardfork: HARDFORK
 		};
 
 		try{
@@ -970,7 +979,10 @@ if(process.env.VAULT_REFILL_ENABLED === "true") {
 			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
 			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
 			gas: MAX_GAS_PER_TRANSACTION,
-			nonce: nonceManager.getNextNonce()
+			nonce: nonceManager.getNextNonce(),
+			chainId: CHAIN_ID,
+			chain: CHAIN,
+			hardfork: HARDFORK
 		};
 
 		try {
@@ -1003,7 +1015,10 @@ if(AUTO_HARVEST_SEC > 0){
 			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
 			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
 			gas: MAX_GAS_PER_TRANSACTION,
-			nonce: nonceManager.getNextNonce()
+			nonce: nonceManager.getNextNonce(),
+			chainId: CHAIN_ID,
+			chain: CHAIN,
+			hardfork: HARDFORK
 		};
 
 
@@ -1038,7 +1053,10 @@ if(AUTO_HARVEST_SEC > 0){
 			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
 			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
 			gas: MAX_GAS_PER_TRANSACTION,
-			nonce: nonceManager.getNextNonce()
+			nonce: nonceManager.getNextNonce(),
+			chainId: CHAIN_ID,
+			chain: CHAIN,
+			hardfork: HARDFORK
 		};
 
 
