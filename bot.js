@@ -58,9 +58,9 @@ if(!process.env.WSS_URLS || !process.env.PRICES_URL || !process.env.STORAGE_ADDR
 // Parse non-string configuration constants from environment variables up front
 const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
 	  MAX_GAS_PER_TRANSACTION = parseInt(process.env.MAX_GAS_PER_TRANSACTION, 10),
-	  CHECK_REFILL_SEC = parseInt(process.env.CHECK_REFILL_SEC, 10),
-	  EVENT_CONFIRMATIONS_MS = parseInt(process.env.EVENT_CONFIRMATIONS_SEC, 10) * 1000,
-	  AUTO_HARVEST_SEC = parseInt(process.env.AUTO_HARVEST_SEC, 10),
+	  CHECK_REFILL_MS = parseFloat(process.env.CHECK_REFILL_SEC) * 1000,
+	  EVENT_CONFIRMATIONS_MS = parseFloat(process.env.EVENT_CONFIRMATIONS_SEC) * 1000,
+	  AUTO_HARVEST_MS = parseFloat(process.env.AUTO_HARVEST_SEC) * 1000,
 	  FAILED_ORDER_TRIGGER_TIMEOUT_MS = (process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC ?? '').length > 0 ? parseFloat(process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC) * 1000 : 60 * 1000,
 	  PRIORITY_GWEI_MULTIPLIER = parseFloat(process.env.PRIORITY_GWEI_MULTIPLIER),
 	  MIN_PRIORITY_GWEI = parseFloat(process.env.MIN_PRIORITY_GWEI),
@@ -1013,14 +1013,14 @@ if(process.env.VAULT_REFILL_ENABLED === "true") {
 	setInterval(() => {
 		refill();
 		deplete();
-	}, CHECK_REFILL_SEC*1000);
+	}, CHECK_REFILL_MS);
 }
 
 // ------------------------------------------
 // 13. AUTO HARVEST REWARDS
 // ------------------------------------------
 
-if(AUTO_HARVEST_SEC > 0){
+if(AUTO_HARVEST_MS > 0){
 	async function claimTokens(){
 		const tx = {
 			from: process.env.PUBLIC_KEY,
@@ -1098,5 +1098,5 @@ if(AUTO_HARVEST_SEC > 0){
 		} catch (error) {
 			appLogger.error("Harvesting rewards failed unexpectedly!", error);
 		}
-	}, AUTO_HARVEST_SEC*1000);
+	}, AUTO_HARVEST_MS);
 }
