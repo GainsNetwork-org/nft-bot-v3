@@ -918,8 +918,6 @@ function wss() {
 
 				appLogger.info(`Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
 			} catch(error) {
-				appLogger.error(`An unexpected error occurred trying to trigger an order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`, error);
-
 				switch(error.reason) {
 					case "TOO_LATE":
 					case "NO_TRADE":
