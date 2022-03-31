@@ -847,6 +847,7 @@ function wss() {
 				}
 			}
 
+			// If it's not an order type we want to act on yet, just skip it
 			if(orderType === -1) {
 				continue;
 			}
@@ -856,17 +857,14 @@ function wss() {
 
 			// If there are no more NFTs available, we can stop trying to trigger any other trades
 			if(availableNft === null) {
-				appLogger.info("No NFTS available; unable to trigger any other trades at this time!");
+				appLogger.warn("No NFTS available; unable to trigger any other trades at this time!");
 
 				return;
 			}
 
-			const { trader, index } = openTrade;
-			const openTradeKey = buildOpenTradeKey({ trader, pairIndex, index });
-
 			// Make sure the order is known to us
 			if(!currentKnownOpenTrades.has(openTradeKey)) {
-				appLogger.warn(`Trade ${openTradeKey} does not exist in our known open trades list; skipping.`);
+				appLogger.warn(`Trade ${openTradeKey} does not exist in our known open trades list!`);
 
 				continue;
 			}
@@ -880,7 +878,7 @@ function wss() {
 
 			// Make sure this order hasn't already been triggered
 			if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
-				appLogger.debug(`Order ${triggeredOrderTrackingInfoIdentifier} has already been triggered; skipping.`);
+				appLogger.debug(`Order ${triggeredOrderTrackingInfoIdentifier} has already been triggered by us and is pending!`);
 
 				continue;
 			}
@@ -928,7 +926,7 @@ function wss() {
 					case "TOO_LATE":
 					case "NO_TRADE":
 					case "SAME_BLOCK_LIMIT":
-						appLogger.info(`Order missed due to "${error.reason}" error; removing order from tracking and known open trades.`);
+						appLogger.warn(`⚠️ Order missed due to "${error.reason}" error; removing order from tracking and known open trades.`);
 
 						// The trade is gone, just remove it from known trades
 						currentKnownOpenTrades.delete(openTradeKey);
@@ -937,7 +935,7 @@ function wss() {
 						break;
 
 					default:
-						appLogger.error(`Order trigger transaction failed for unexpected reason "${error.reason}"; removing order from tracking and known open trades.`);
+						appLogger.error(`❌ Order trigger transaction failed for unexpected reason "${error.reason}"; removing order from tracking and known open trades.`, error);
 
 						// Wait a bit and then clean from triggered orders list so it might get tried again
 						triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
