@@ -379,6 +379,7 @@ async function fetchTradingVariables(){
 		await Promise.all(
 			[
 				nftManager.loadNfts(currentlySelectedWeb3Client),
+				nonceManager.initializeFromClient(currentlySelectedWeb3Client),
 				fetchPairs()
 			]);
 
