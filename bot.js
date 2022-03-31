@@ -129,12 +129,6 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	const executionStartTime = performance.now();
 	const newWeb3Client = web3Clients[newWeb3ClientIndex];
 
-	// Unsubscribe from existing events first
-	if(eventSubTrading !== null && eventSubTrading.id !== null){ eventSubTrading.unsubscribe(); }
-	if(eventSubCallbacks !== null && eventSubCallbacks.id !== null){ eventSubCallbacks.unsubscribe(); }
-	eventSubTrading = null;
-	eventSubCallbacks = null;
-
 	storageContract = new newWeb3Client.eth.Contract(abis.STORAGE, process.env.STORAGE_ADDRESS);
 
 	// Retrieve all necessary details from the storage contract
@@ -556,43 +550,47 @@ async function fetchOpenTrades(){
 
 function watchLiveTradingEvents(){
 	try {
-		if(eventSubTrading === null){
-			eventSubTrading = tradingContract.events.allEvents({ fromBlock: 'latest' }).on('data', function (event){
-				const eventName = event.event;
-
-				if(eventName !== "OpenLimitPlaced" && eventName !== "OpenLimitUpdated"
-				&& eventName !== "OpenLimitCanceled" && eventName !== "TpUpdated"
-				&& eventName !== "SlUpdated"){
-					return;
-				}
-
-				// If no confirmation delay, then execute immediately without timer
-				if(EVENT_CONFIRMATIONS_MS === 0) {
-					refreshOpenTrades(event);
-				} else {
-					setTimeout(() => refreshOpenTrades(event), EVENT_CONFIRMATIONS_MS);
-				}
-			});
+		if(eventSubTrading !== null && eventSubTrading.id !== null) {
+			eventSubTrading.unsubscribe();
 		}
 
-		if(eventSubCallbacks === null){
-			eventSubCallbacks = callbacksContract.events.allEvents({ fromBlock: 'latest' }).on('data', function (event){
-				const eventName = event.event;
+		eventSubTrading = tradingContract.events.allEvents({ fromBlock: 'latest' }).on('data', function (event){
+			const eventName = event.event;
 
-				if(eventName !== "MarketExecuted" && eventName !== "LimitExecuted"
-				&& eventName !== "MarketCloseCanceled" && eventName !== "SlUpdated"
-				&& eventName !== "SlCanceled"){
-					return;
-				}
+			if(eventName !== "OpenLimitPlaced" && eventName !== "OpenLimitUpdated"
+			&& eventName !== "OpenLimitCanceled" && eventName !== "TpUpdated"
+			&& eventName !== "SlUpdated"){
+				return;
+			}
 
-				// If no confirmation delay, then execute immediately without timer
-				if(EVENT_CONFIRMATIONS_MS === 0) {
-					refreshOpenTrades(event);
-				} else {
-					setTimeout(() => refreshOpenTrades(event), EVENT_CONFIRMATIONS_MS);
-				}
-			});
+			// If no confirmation delay, then execute immediately without timer
+			if(EVENT_CONFIRMATIONS_MS === 0) {
+				refreshOpenTrades(event);
+			} else {
+				setTimeout(() => refreshOpenTrades(event), EVENT_CONFIRMATIONS_MS);
+			}
+		});
+
+		if(eventSubCallbacks !== null && eventSubCallbacks.id !== null) {
+			eventSubCallbacks.unsubscribe();
 		}
+
+		eventSubCallbacks = callbacksContract.events.allEvents({ fromBlock: 'latest' }).on('data', function (event){
+			const eventName = event.event;
+
+			if(eventName !== "MarketExecuted" && eventName !== "LimitExecuted"
+			&& eventName !== "MarketCloseCanceled" && eventName !== "SlUpdated"
+			&& eventName !== "SlCanceled"){
+				return;
+			}
+
+			// If no confirmation delay, then execute immediately without timer
+			if(EVENT_CONFIRMATIONS_MS === 0) {
+				refreshOpenTrades(event);
+			} else {
+				setTimeout(() => refreshOpenTrades(event), EVENT_CONFIRMATIONS_MS);
+			}
+		});
 	} catch {
 		setTimeout(() => { watchLiveTradingEvents(); }, 2*1000);
 	}
