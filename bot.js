@@ -721,6 +721,13 @@ async function refreshOpenTrades(event){
 			if(triggeredOrderDetails !== undefined) {
 				appLogger.debug(`Refresh open trades from event ${eventName}: We triggered order ${triggeredOrderTrackingInfoIdentifier}; clearing tracking timer.`);
 
+				// Report success loudly
+				if(eventReturnValues.nftHolder === process.env.PUBLIC_KEY) {
+					appLogger.info(`💰 SUCCESSFULLY TRIGGERED ORDER ${triggeredOrderTrackingInfoIdentifier} FIRST!!!`);
+				} else {
+					appLogger.info(`💰 SUCCESSFULLY TRIGGERED ORDER ${triggeredOrderTrackingInfoIdentifier} AS SAME BLOCK!!!`);
+				}
+
 				clearTimeout(triggeredOrderDetails.cleanupTimerId);
 
 				triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
