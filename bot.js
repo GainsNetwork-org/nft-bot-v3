@@ -330,7 +330,11 @@ async function checkWeb3ClientLiveness() {
 checkWeb3ClientLiveness();
 
 setInterval(() => {
-	appLogger.info(`Current Web3 client: ${currentlySelectedWeb3Client.currentProvider.url} (#${currentlySelectedWeb3ClientIndex})`);
+	if(currentlySelectedWeb3ClientIndex === -1) {
+		appLogger.warn("No Web3 client has been selected yet!");
+	} else {
+		appLogger.info(`Current Web3 client: ${currentlySelectedWeb3Client.currentProvider.url} (#${currentlySelectedWeb3ClientIndex})`);
+	}
 }, 10*1000);
 
 // -----------------------------------------
