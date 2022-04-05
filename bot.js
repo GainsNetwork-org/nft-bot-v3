@@ -72,6 +72,8 @@ const CHAIN_ID = process.env.CHAIN_ID ?? 137; // Polygon chain id
 const CHAIN = process.env.CHAIN ?? "mainnet";
 const HARDFORK = process.env.HARDFORK ?? "london";
 
+const DRY_RUN_MODE = process.env.DRY_RUN_MODE === 'true';
+
 // Start monitoring forex
 startForexMonitoring();
 
@@ -99,9 +101,9 @@ async function checkLinkAllowance() {
 			};
 
 			try {
-				const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY)
+				const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
 
-				await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction)
+				await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
 
 				appLogger.info("LINK successfully approved.");
 				allowedLink = true;
@@ -714,6 +716,18 @@ async function refreshOpenTrades(event){
 
 			appLogger.info(`Refresh open trades from event ${eventName}: event received for ${triggeredOrderTrackingInfoIdentifier}...`);
 
+			const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
+			const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
+
+			// If this was a known open trade then we need to remove it now
+			if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
+				currentKnownOpenTrades.delete(tradeKey);
+
+				appLogger.debug(`Refresh open trades from event ${eventName}: Removed ${tradeKey} from known open trades.`);
+			} else {
+				appLogger.debug(`Refresh open trades from event ${eventName}: Trade ${tradeKey} was not found in known open trades; just ignoring.`);
+			}
+
 			const triggeredOrderDetails = triggeredOrders.get(triggeredOrderTrackingInfoIdentifier);
 
 			// If we were tracking this triggered order, stop tracking it now and clear the timeout so it doesn't
@@ -736,17 +750,6 @@ async function refreshOpenTrades(event){
 			} else {
 				appLogger.debug(`Refresh open trades from event ${eventName}: Order ${triggeredOrderTrackingInfoIdentifier} was not being tracked as triggered by us.`);
 			}
-
-			const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
-			const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
-
-			if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
-				currentKnownOpenTrades.delete(tradeKey);
-
-				appLogger.debug(`Refresh open trades from event ${eventName}: Removed ${tradeKey} from known open trades.`);
-			} else {
-				appLogger.debug(`Refresh open trades from event ${eventName}: Trade ${tradeKey} was not found in known open trades; just ignoring.`);
-			}
 		}
 	} catch(error) {
 		appLogger.error("Error occurred when refreshing trades.", error);
@@ -758,6 +761,7 @@ async function refreshOpenTrades(event){
 // 11. FETCH CURRENT PRICES & TRIGGER ORDERS
 // ---------------------------------------------
 
+const MAXIMUM_CHART_CANDLE_AGE = 61000;
 
 function wss() {
 	let socket = new WebSocket(process.env.PRICES_URL);
@@ -776,21 +780,32 @@ function wss() {
 			return;
 		}
 
-		const messageData = JSON.parse(msg.data);
+		const messageData = JSON.parse(msg.data.toString());
 
 		if(messageData.name !== "charts") {
-			appLogger.debug(`Message was not a "charts" message, was "${messageData.name}"; ignoring.`)
+			//appLogger.debug(`Message was not a "charts" message, was "${messageData.name}"; ignoring.`)
 
 			return;
 		}
 
-		const forexMarketClosed = !isForexCurrentlyOpen();
-		let closeForexMarketTradeCount = 0;
+		const chartCandleAge = Date.now() - messageData.time;
+
+		if(chartCandleAge > MAXIMUM_CHART_CANDLE_AGE) {
+			appLogger.warn(`Chart candle data is too old to act on (from ${new Date(messageData.time).toISOString()}); skipping!`);
+
+			return;
+		}
 
 		const currentKnownOpenTrades = knownOpenTrades;
 
+		//appLogger.debug(`Received "charts" message, checking if any of the ${currentKnownOpenTrades.size} known open trades should be acted upon...`, { candleTime: messageData.time, chartCandleAge, knownOpenTradesCount: currentKnownOpenTrades.size });
+
+		const forexMarketClosed = !isForexCurrentlyOpen();
+		let closeForexMarketTradeCount = 0;
+
 		for(const openTrade of currentKnownOpenTrades.values()) {
-			const { pairIndex, buy } = openTrade;
+			const { trader, pairIndex, index, buy } = openTrade;
+			const openTradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 
 			const price = messageData.closes[pairIndex];
 
@@ -812,6 +827,7 @@ function wss() {
 
 			let orderType = -1;
 
+			// If it's an open trade, determine what type of order it is
 			if(openTrade.openPrice !== undefined) {
 				const tp = parseFloat(openTrade.tp)/1e10;
 				const sl = parseFloat(openTrade.sl)/1e10;
@@ -825,6 +841,8 @@ function wss() {
 					orderType = 1;
 				} else if(sl === 0 && ((buy && price <= liqPrice) || (!buy && price >= liqPrice))) {
 					orderType = 2;
+				} else {
+					//appLogger.debug(`Open trade ${openTradeKey} is not ready for us to act on yet.`);
 				}
 			} else {
 				const spread = spreadsP[pairIndex]/1e10*(100-openTrade.spreadReductionP)/100;
@@ -845,6 +863,8 @@ function wss() {
 					|| tradeType === "1" && (buy ? priceIncludingSpread <= maxPrice : priceIncludingSpread >= minPrice)
 					|| tradeType === "2" && (buy ? priceIncludingSpread >= minPrice : priceIncludingSpread <= maxPrice)){
 						orderType = 3;
+					} else {
+						//appLogger.debug(`Limit trade ${openTradeKey} is not ready for us to act on yet.`);
 					}
 				}
 			}
@@ -862,13 +882,6 @@ function wss() {
 				appLogger.warn("No NFTS available; unable to trigger any other trades at this time!");
 
 				return;
-			}
-
-			// Make sure the order is known to us
-			if(!currentKnownOpenTrades.has(openTradeKey)) {
-				appLogger.warn(`Trade ${openTradeKey} does not exist in our known open trades list!`);
-
-				continue;
 			}
 
 			const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
@@ -896,6 +909,17 @@ function wss() {
 
 			appLogger.info(`Trying to trigger ${triggeredOrderTrackingInfoIdentifier} order with NFT ${availableNft.id}...`);
 
+			// Make sure the trade is still known to us at this point because it's possible that the trade was
+			// removed from known open trades asynchronously which is why we check again here even though we're
+			// looping through the set of what we thought were the known open trades here
+			if(!currentKnownOpenTrades.has(openTradeKey)) {
+				appLogger.warn(`Trade ${openTradeKey} no longer exists in our known open trades list; skipping order!`);
+
+				triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
+
+				continue;
+			}
+
 			try {
 				const orderTransaction = {
 					from: process.env.PUBLIC_KEY,
@@ -914,7 +938,11 @@ function wss() {
 				// the transaction object up front
 				const signedTransaction = await currentlySelectedWeb3Client.eth.accounts.signTransaction(orderTransaction, process.env.PRIVATE_KEY);
 
-				await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction);
+				if(DRY_RUN_MODE === false) {
+					await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction);
+				} else {
+					appLogger.info("DRY RUN MODE ACTIVE: skipping actually sending order transaction...");
+				}
 
 				triggeredOrderDetails.transactionSent = true;
 
