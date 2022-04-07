@@ -175,6 +175,11 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	// Subscribe to events using the new provider
 	watchLiveTradingEvents();
 
+	await Promise.all([
+		nftManager.loadNfts(currentlySelectedWeb3Client),
+		nonceManager.initializeFromClient(currentlySelectedWeb3Client)
+	]);
+
 	// Fire and forget refreshing of data using new provider
 	fetchTradingVariables();
 	fetchOpenTrades();
@@ -365,6 +370,8 @@ setInterval(async () => {
 // 6. FETCH PAIRS, NFTS, AND NFT TIMELOCK
 // -----------------------------------------
 
+const FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS = (process.env.FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_SEC) * 1000 : 60 * 1000;
+
 async function fetchTradingVariables(){
 	appLogger.info("Fetching trading variables...");
 
@@ -372,16 +379,13 @@ async function fetchTradingVariables(){
 
 	try
 	{
-		await Promise.all(
-			[
-				nftManager.loadNfts(currentlySelectedWeb3Client),
-				nonceManager.initializeFromClient(currentlySelectedWeb3Client),
-				fetchPairs()
-			]);
+		await fetchPairs();
 
 		appLogger.info(`Done fetching trading variables; took ${performance.now() - executionStart}ms.`);
 
-		setTimeout(() => { fetchTradingVariables(); }, 60*1000);
+		if(FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS > 0) {
+			setTimeout(() => { fetchTradingVariables(); }, FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS);
+		}
 	} catch(error) {
 		appLogger.error("Error while fetching trading variables!", error);
 
@@ -761,11 +765,11 @@ async function refreshOpenTrades(event){
 // 11. FETCH CURRENT PRICES & TRIGGER ORDERS
 // ---------------------------------------------
 
-const MAXIMUM_CHART_CANDLE_AGE = 61000;
+const MAXIMUM_CHART_CANDLE_AGE_MS = 61000;
 
-function wss() {
+function watchPricingStream() {
 	let socket = new WebSocket(process.env.PRICES_URL);
-	socket.onclose = () => { setTimeout(() => { wss() }, 2000); };
+	socket.onclose = () => { setTimeout(() => { watchPricingStream() }, 2000); };
 	socket.onerror = () => { socket.close(); };
 	socket.onmessage = async (msg) => {
 		if(spreadsP.length === 0) {
@@ -790,7 +794,7 @@ function wss() {
 
 		const chartCandleAge = Date.now() - messageData.time;
 
-		if(chartCandleAge > MAXIMUM_CHART_CANDLE_AGE) {
+		if(chartCandleAge > MAXIMUM_CHART_CANDLE_AGE_MS) {
 			appLogger.warn(`Chart candle data is too old to act on (from ${new Date(messageData.time).toISOString()}); skipping!`);
 
 			return;
@@ -806,6 +810,15 @@ function wss() {
 		for(const openTrade of currentKnownOpenTrades.values()) {
 			const { trader, pairIndex, index, buy } = openTrade;
 			const openTradeKey = buildOpenTradeKey({ trader, pairIndex, index });
+
+			// Make sure the trade is still known to us at this point because it's possible that the trade was
+			// removed from known open trades asynchronously which is why we check again here even though we're
+			// looping through the set of what we thought were the known open trades here
+			if(!currentKnownOpenTrades.has(openTradeKey)) {
+				appLogger.warn(`Trade ${openTradeKey} no longer exists in our known open trades list; skipping order!¹`);
+
+				continue;
+			}
 
 			const price = messageData.closes[pairIndex];
 
@@ -874,6 +887,13 @@ function wss() {
 				continue;
 			}
 
+			const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
+				trader,
+				pairIndex,
+				index,
+				orderType
+			});
+
 			// Attempt to lease an available NFT to process this order
 			const availableNft = await nftManager.leaseAvailableNft(currentlySelectedWeb3Client);
 
@@ -884,12 +904,14 @@ function wss() {
 				return;
 			}
 
-			const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
-					trader,
-					pairIndex,
-					index,
-					orderType
-				});
+			// Make sure the trade is still known to us at this point because it's possible that the trade was
+			// removed from known open trades asynchronously which is why we check again here even though we're
+			// looping through the set of what we thought were the known open trades here
+			if(!currentKnownOpenTrades.has(openTradeKey)) {
+				appLogger.warn(`Trade ${openTradeKey} no longer exists in our known open trades list; skipping order!²`);
+
+				continue;
+			}
 
 			// Make sure this order hasn't already been triggered
 			if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
@@ -908,17 +930,6 @@ function wss() {
 			triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderDetails);
 
 			appLogger.info(`Trying to trigger ${triggeredOrderTrackingInfoIdentifier} order with NFT ${availableNft.id}...`);
-
-			// Make sure the trade is still known to us at this point because it's possible that the trade was
-			// removed from known open trades asynchronously which is why we check again here even though we're
-			// looping through the set of what we thought were the known open trades here
-			if(!currentKnownOpenTrades.has(openTradeKey)) {
-				appLogger.warn(`Trade ${openTradeKey} no longer exists in our known open trades list; skipping order!`);
-
-				triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
-
-				continue;
-			}
 
 			try {
 				const orderTransaction = {
@@ -941,7 +952,7 @@ function wss() {
 				if(DRY_RUN_MODE === false) {
 					await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction);
 				} else {
-					appLogger.info("DRY RUN MODE ACTIVE: skipping actually sending order transaction...");
+					appLogger.info(`DRY RUN MODE ACTIVE: skipping actually sending transaction for order: ${triggeredOrderTrackingInfoIdentifier}`, orderTransaction);
 				}
 
 				triggeredOrderDetails.transactionSent = true;
@@ -957,23 +968,35 @@ function wss() {
 				appLogger.info(`Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
 			} catch(error) {
 				triggeredOrderDetails.error = error;
-
 				switch(error.reason) {
-					case "TOO_LATE":
 					case "NO_TRADE":
+					case "TOO_LATE":
 					case "SAME_BLOCK_LIMIT":
-					case "NO_SL":
-					case "NO_TP":
-						appLogger.warn(`⚠️ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${error.reason}" error; removing order from tracking and known open trades.`);
+						appLogger.warn(`X Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${error.reason}" error; removing order from known trades and triggered tracking.`);
 
 						// The trade is gone, just remove it from known trades
-						currentKnownOpenTrades.delete(openTradeKey);
 						triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
+						currentKnownOpenTrades.delete(openTradeKey);
+
+						break;
+
+					case "NO_SL":
+					case "NO_TP":
+					case "SUCCESS_TIMELOCK":
+						appLogger.warn(`⚠️ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${error.reason}" error; removing order from triggered tracking.`);
+
+						// Wait a bit and then clean from triggered orders list so it might get tried again
+						triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
+							if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
+								appLogger.debug(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
+							}
+
+						}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
 
 						break;
 
 					default:
-						appLogger.error(`❌ Order ${triggeredOrderTrackingInfoIdentifier} transaction failed for unexpected reason "${error.reason}"; removing order from tracking and known open trades.`, error);
+						appLogger.error(` Order ${triggeredOrderTrackingInfoIdentifier} transaction failed for unexpected reason "${error.reason}"; removing order from tracking and known open trades.`, error);
 
 						const errorMessage = error.message?.toLowerCase();
 
@@ -981,8 +1004,6 @@ function wss() {
 							appLogger.error(`Some how we ended up with a nonce that was too low, forcing a refresh now...`);
 
 							await nonceManager.initializeFromClient(currentlySelectedWeb3Client);
-
-							triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 
 							appLogger.info("Nonce refreshed and tracking of triggered order cleared so it can possibly be retried.");
 						} else {
@@ -1007,7 +1028,7 @@ function wss() {
 	}
 }
 
-wss();
+watchPricingStream();
 
 // ------------------------------------------
 // 12. REFILL VAULT IF CAN BE REFILLED
