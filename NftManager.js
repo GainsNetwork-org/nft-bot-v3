@@ -28,6 +28,8 @@ export class NFTManager {
 		// If we actually found an NFT, track that this NFT is being actively used
 		if(availableNft !== null) {
 			this.nftsBeingUsed.add(availableNft.id);
+
+			this.logger.debug(`NFT ${availableNft.id} being leased out...`);
 		}
 
         return availableNft;
@@ -35,6 +37,8 @@ export class NFTManager {
 
     releaseNft(nft) {
         this.nftsBeingUsed.delete(nft.id);
+
+		this.logger.debug(`NFT ${nft.id} lease released.`);
     }
 
     async loadNfts(web3Client) {
