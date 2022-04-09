@@ -11,7 +11,7 @@ export class NFTManager {
 
     async leaseAvailableNft(web3Client) {
         if(this.availableNfts.length === 0) {
-            console.log("No NFTs loaded yet.");
+            this.logger.warn("No NFTs loaded yet.");
 
             return null;
         }
@@ -167,9 +167,11 @@ export class NFTManager {
                             .filter(nft => !this.nftsBeingUsed.has(nft.id))
                             .map(async nft => ({
                                 nft,
-                                lastSuccess: parseFloat(await storageContract.methods.nftLastSuccess(nft.id).call())
+                                lastSuccess: parseInt(await storageContract.methods.nftLastSuccess(nft.id).call(), 10)
                             })))
                 ]);
+
+			this.logger.debug(`${nftsWithLastSuccesses.length} candidate NFTs to consider.`, { currentBlock, nftsWithLastSuccesses });
 
             // Try to find the first NFT whose last successful block is older than the current block by the required timelock amount
             const firstEligibleNft = nftsWithLastSuccesses.find(nftwls => currentBlock - nftwls.lastSuccess >= this.nftTimelock);
@@ -178,11 +180,11 @@ export class NFTManager {
                 return firstEligibleNft.nft;
             }
 
-            this.logger.info("No suitable NFT to select.");
+            this.logger.warn("No suitable NFT to select.");
 
             return null;
         } catch(error) {
-            this.logger.error("Error occurred while trying to select NFT!", error);
+            this.logger.error("Error occurred while trying to select NFT!", { error });
 
             return null;
         }
