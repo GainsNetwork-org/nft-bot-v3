@@ -470,7 +470,7 @@ async function fetchOpenTrades(){
 
 	try {
 		if(spreadsP.length === 0){
-			appLogger.warn("Spreads are not yet loaded; will retry fetching open trades shortly!");
+			appLogger.warn("Spreads are not yet loaded; will retry ƒs shortly!");
 
 			scheduleRetryFetchOpenTrades();
 
@@ -498,7 +498,7 @@ async function fetchOpenTrades(){
 
 			setTimeout(() => fetchOpenTrades(), OPEN_TRADES_REFRESH_MS);
 		} else {
-			appLogger.info(`Auto-refresh of open trades is disabled (OPEN_TRADES_REFRESH=0); will only update based on blockchain events from here out!`);
+			appLogger.info(`Auto-refresh of open trades is disabled (OPEN_TRADES_REFRESH=0); will only synchronize based on blockchain events from here out!`);
 		}
 	} catch(error) {
 		appLogger.error("Error fetching open trades!", error);
@@ -580,9 +580,9 @@ function watchLiveTradingEvents(){
 
 			// If no confirmation delay, then execute immediately without timer
 			if(EVENT_CONFIRMATIONS_MS === 0) {
-				refreshOpenTrades(event);
+				synchronizeOpenTrades(event);
 			} else {
-				setTimeout(() => refreshOpenTrades(event), EVENT_CONFIRMATIONS_MS);
+				setTimeout(() => synchronizeOpenTrades(event), EVENT_CONFIRMATIONS_MS);
 			}
 		});
 
@@ -601,9 +601,9 @@ function watchLiveTradingEvents(){
 
 			// If no confirmation delay, then execute immediately without timer
 			if(EVENT_CONFIRMATIONS_MS === 0) {
-				refreshOpenTrades(event);
+				synchronizeOpenTrades(event);
 			} else {
-				setTimeout(() => refreshOpenTrades(event), EVENT_CONFIRMATIONS_MS);
+				setTimeout(() => synchronizeOpenTrades(event), EVENT_CONFIRMATIONS_MS);
 			}
 		});
 	} catch {
@@ -611,16 +611,13 @@ function watchLiveTradingEvents(){
 	}
 }
 
-// -----------------------------------------
-// 10. REFRESH INTERNAL OPEN TRADES LIST
-// -----------------------------------------
-async function refreshOpenTrades(event){
+async function synchronizeOpenTrades(event){
 	try {
 		const currentKnownOpenTrades = knownOpenTrades;
 		const eventName = event.event;
 		const eventReturnValues = event.returnValues;
 
-		appLogger.debug(`Refreshing open trades for event ${eventName} from block ${event.blockNumber}...`);
+		appLogger.debug(`Synchronizing open trades based on event ${eventName} from block ${event.blockNumber}...`);
 
 		// UNREGISTER OPEN LIMIT ORDER
 		// => IF OPEN LIMIT CANCELED OR OPEN LIMIT EXECUTED
@@ -637,9 +634,9 @@ async function refreshOpenTrades(event){
 			if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')) {
 				currentKnownOpenTrades.delete(tradeKey);
 
-				appLogger.debug(`Refresh open trades from event ${eventName}: Removed limit for ${tradeKey}`);
+				appLogger.debug(`Synchronize open trades from event ${eventName}: Removed limit for ${tradeKey}`);
 			} else {
-				appLogger.debug(`Refresh open trades from event ${eventName}: Limit not found for ${tradeKey}`);
+				appLogger.debug(`Synchronize open trades from event ${eventName}: Limit not found for ${tradeKey}`);
 			}
 		}
 
@@ -670,11 +667,11 @@ async function refreshOpenTrades(event){
 			if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')){
 				currentKnownOpenTrades.set(tradeKey, limitOrder);
 
-				appLogger.debug(`Refresh open trades from event ${eventName}: Updated limit for ${tradeKey}`);
+				appLogger.debug(`Synchronize open trades from event ${eventName}: Updated limit for ${tradeKey}`);
 			} else {
 				currentKnownOpenTrades.set(tradeKey, limitOrder);
 
-				appLogger.debug(`Refresh open trades from event ${eventName}: Stored limit for ${tradeKey}`);
+				appLogger.debug(`Synchronize open trades from event ${eventName}: Stored limit for ${tradeKey}`);
 			}
 		}
 
@@ -701,16 +698,16 @@ async function refreshOpenTrades(event){
 				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
 					currentKnownOpenTrades.set(tradeKey, trade);
 
-					appLogger.debug(`Refresh open trades from event ${eventName}: Updated trade ${tradeKey}`);
+					appLogger.debug(`Synchronize open trades from event ${eventName}: Updated trade ${tradeKey}`);
 				} else {
 					currentKnownOpenTrades.set(tradeKey, trade);
 
-					appLogger.debug(`Refresh open trades from event ${eventName}: Stored trade ${tradeKey}`);
+					appLogger.debug(`Synchronize open trades from event ${eventName}: Stored trade ${tradeKey}`);
 				}
 			} else {
 				currentKnownOpenTrades.delete(tradeKey);
 
-				appLogger.debug(`Refresh open trades from event ${eventName}: Trade ${tradeKey} no longer open!`);
+				appLogger.debug(`Synchronize open trades from event ${eventName}: Trade ${tradeKey} no longer open!`);
 			}
 		}
 
@@ -727,7 +724,7 @@ async function refreshOpenTrades(event){
 				orderType: eventReturnValues.orderType ?? 'N/A'
 			});
 
-			appLogger.info(`Refresh open trades from event ${eventName}: event received for ${triggeredOrderTrackingInfoIdentifier}...`);
+			appLogger.info(`Synchronize open trades from event ${eventName}: event received for ${triggeredOrderTrackingInfoIdentifier}...`);
 
 			const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 			const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
@@ -736,9 +733,9 @@ async function refreshOpenTrades(event){
 			if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
 				currentKnownOpenTrades.delete(tradeKey);
 
-				appLogger.debug(`Refresh open trades from event ${eventName}: Removed ${tradeKey} from known open trades.`);
+				appLogger.debug(`Synchronize open trades from event ${eventName}: Removed ${tradeKey} from known open trades.`);
 			} else {
-				appLogger.debug(`Refresh open trades from event ${eventName}: Trade ${tradeKey} was not found in known open trades; just ignoring.`);
+				appLogger.debug(`Synchronize open trades from event ${eventName}: Trade ${tradeKey} was not found in known open trades; just ignoring.`);
 			}
 
 			const triggeredOrderDetails = triggeredOrders.get(triggeredOrderTrackingInfoIdentifier);
@@ -746,7 +743,7 @@ async function refreshOpenTrades(event){
 			// If we were tracking this triggered order, stop tracking it now and clear the timeout so it doesn't
 			// interrupt the event loop for no reason later
 			if(triggeredOrderDetails !== undefined) {
-				appLogger.debug(`Refresh open trades from event ${eventName}: We triggered order ${triggeredOrderTrackingInfoIdentifier}; clearing tracking timer.`);
+				appLogger.debug(`Synchronize open trades from event ${eventName}: We triggered order ${triggeredOrderTrackingInfoIdentifier}; clearing tracking timer.`);
 
 				// If we actually managed to send the transaction off without error then we can report success and clean
 				// up tracking state now
@@ -761,7 +758,7 @@ async function refreshOpenTrades(event){
 					triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 				}
 			} else {
-				appLogger.debug(`Refresh open trades from event ${eventName}: Order ${triggeredOrderTrackingInfoIdentifier} was not being tracked as triggered by us.`);
+				appLogger.debug(`Synchronize open trades from event ${eventName}: Order ${triggeredOrderTrackingInfoIdentifier} was not being tracked as triggered by us.`);
 			}
 		}
 	} catch(error) {
@@ -977,6 +974,7 @@ function watchPricingStream() {
 				appLogger.info(`Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
 			} catch(error) {
 				triggeredOrderDetails.error = error;
+
 				switch(error.reason) {
 					case "NO_TRADE":
 					case "TOO_LATE":
@@ -1005,7 +1003,7 @@ function watchPricingStream() {
 						break;
 
 					default:
-						appLogger.error(` Order ${triggeredOrderTrackingInfoIdentifier} transaction failed for unexpected reason "${error.reason}"; removing order from tracking and known open trades.`, error);
+						appLogger.error(`🔥 Order ${triggeredOrderTrackingInfoIdentifier} transaction failed for unexpected reason "${error.reason}"; removing order from tracking and known open trades.`, error);
 
 						const errorMessage = error.message?.toLowerCase();
 
@@ -1013,6 +1011,7 @@ function watchPricingStream() {
 							appLogger.error(`Some how we ended up with a nonce that was too low, forcing a refresh now...`);
 
 							await nonceManager.initializeFromClient(currentlySelectedWeb3Client);
+							triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 
 							appLogger.info("Nonce refreshed and tracking of triggered order cleared so it can possibly be retried.");
 						} else {
