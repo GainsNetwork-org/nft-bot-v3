@@ -372,8 +372,17 @@ setInterval(async () => {
 
 const FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS = (process.env.FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_SEC) * 1000 : 60 * 1000;
 
+let fetchTradingVariablesTimerId = null;
+
 async function fetchTradingVariables(){
 	appLogger.info("Fetching trading variables...");
+
+	if(fetchTradingVariablesTimerId !== null) {
+		appLogger.debug(`Canceling existing fetchTradingVariables timer id.`);
+
+		clearTimeout(fetchTradingVariablesTimerId);
+		fetchTradingVariablesTimerId = null;
+	}
 
 	const executionStart = performance.now();
 
@@ -384,12 +393,12 @@ async function fetchTradingVariables(){
 		appLogger.info(`Done fetching trading variables; took ${performance.now() - executionStart}ms.`);
 
 		if(FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS > 0) {
-			setTimeout(() => { fetchTradingVariables(); }, FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS);
+			fetchTradingVariablesTimerId = setTimeout(() => { fetchTradingVariablesTimerId = null; fetchTradingVariables(); }, FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS);
 		}
 	} catch(error) {
-		appLogger.error("Error while fetching trading variables!", error);
+		appLogger.error("Error while fetching trading variables!", { error });
 
-		setTimeout(() => { fetchTradingVariables(); }, 2*1000);
+		fetchTradingVariablesTimerId = setTimeout(() => { fetchTradingVariablesTimerId = null; fetchTradingVariables(); }, 2*1000);
 	};
 
 	async function fetchPairs() {
