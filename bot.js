@@ -910,111 +910,89 @@ function watchPricingStream() {
 				return;
 			}
 
-			// Make sure the trade is still known to us at this point because it's possible that the trade was
-			// removed from known open trades asynchronously which is why we check again here even though we're
-			// looping through the set of what we thought were the known open trades here
-			if(!currentKnownOpenTrades.has(openTradeKey)) {
-				appLogger.warn(`Trade ${openTradeKey} no longer exists in our known open trades list; skipping order!²`);
-
-				continue;
-			}
-
-			// Make sure this order hasn't already been triggered
-			if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
-				appLogger.debug(`Order ${triggeredOrderTrackingInfoIdentifier} has already been triggered by us and is pending!`);
-
-				continue;
-			}
-
-			const triggeredOrderDetails = {
-				cleanupTimerId: null,
-				transactionSent: false,
-				error: null
-			};
-
-			// Track that we're triggering this order
-			triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderDetails);
-
-			appLogger.info(`Trying to trigger ${triggeredOrderTrackingInfoIdentifier} order with NFT ${availableNft.id}...`);
-
 			try {
-				const orderTransaction = {
-					from: process.env.PUBLIC_KEY,
-					to: tradingContract.options.address,
-					data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
-					maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(priorityTransactionMaxPriorityFeePerGas*1e9),
-					maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-					gas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PER_TRANSACTION),
-					nonce: nonceManager.getNextNonce(),
-					chainId: CHAIN_ID,
-					chain: CHAIN,
-					hardfork: HARDFORK,
-				};
+				// Make sure the trade is still known to us at this point because it's possible that the trade was
+				// removed from known open trades asynchronously which is why we check again here even though we're
+				// looping through the set of what we thought were the known open trades here
+				if(!currentKnownOpenTrades.has(openTradeKey)) {
+					appLogger.warn(`Trade ${openTradeKey} no longer exists in our known open trades list; skipping order!²`);
 
-				// NOTE: technically this should execute synchronously because we're supplying all necessary details on
-				// the transaction object up front
-				const signedTransaction = await currentlySelectedWeb3Client.eth.accounts.signTransaction(orderTransaction, process.env.PRIVATE_KEY);
-
-				if(DRY_RUN_MODE === false) {
-					await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction);
-				} else {
-					appLogger.info(`DRY RUN MODE ACTIVE: skipping actually sending transaction for order: ${triggeredOrderTrackingInfoIdentifier}`, orderTransaction);
+					continue;
 				}
 
-				triggeredOrderDetails.transactionSent = true;
+				// Make sure this order hasn't already been triggered
+				if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
+					appLogger.debug(`Order ${triggeredOrderTrackingInfoIdentifier} has already been triggered by us and is pending!`);
 
-				// If we successfully send the transaction, we set up a timer to make sure we've heard about its
-				// eventual completion and, if not, we clean up tracking and log that we didn't hear back
-				triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
-					if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-						appLogger.warn(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
+					continue;
+				}
+
+				const triggeredOrderDetails = {
+					cleanupTimerId: null,
+					transactionSent: false,
+					error: null
+				};
+
+				// Track that we're triggering this order
+				triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderDetails);
+
+				appLogger.info(`Trying to trigger ${triggeredOrderTrackingInfoIdentifier} order with NFT ${availableNft.id}...`);
+
+				try {
+					const orderTransaction = {
+						from: process.env.PUBLIC_KEY,
+						to: tradingContract.options.address,
+						data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
+						maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(priorityTransactionMaxPriorityFeePerGas*1e9),
+						maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+						gas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PER_TRANSACTION),
+						nonce: nonceManager.getNextNonce(),
+						chainId: CHAIN_ID,
+						chain: CHAIN,
+						hardfork: HARDFORK,
+					};
+
+					// NOTE: technically this should execute synchronously because we're supplying all necessary details on
+					// the transaction object up front
+					const signedTransaction = await currentlySelectedWeb3Client.eth.accounts.signTransaction(orderTransaction, process.env.PRIVATE_KEY);
+
+					if(DRY_RUN_MODE === false) {
+						await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction);
+					} else {
+						appLogger.info(`DRY RUN MODE ACTIVE: skipping actually sending transaction for order: ${triggeredOrderTrackingInfoIdentifier}`, orderTransaction);
 					}
-				}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
 
-				appLogger.info(`Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
-			} catch(error) {
-				triggeredOrderDetails.error = error;
+					triggeredOrderDetails.transactionSent = true;
 
-				switch(error.reason) {
-					case "NO_TRADE":
-					case "TOO_LATE":
-					case "SAME_BLOCK_LIMIT":
-						appLogger.warn(`X Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${error.reason}" error; removing order from known trades and triggered tracking.`);
+					// If we successfully send the transaction, we set up a timer to make sure we've heard about its
+					// eventual completion and, if not, we clean up tracking and log that we didn't hear back
+					triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
+						if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
+							appLogger.warn(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
+						}
+					}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
 
-						// The trade is gone, just remove it from known trades
-						triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
-						currentKnownOpenTrades.delete(openTradeKey);
+					appLogger.info(`Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
+				} catch(error) {
+					triggeredOrderDetails.error = error;
 
-						break;
+					switch(error.reason) {
+						case "NO_TRADE":
+						case "TOO_LATE":
+						case "SAME_BLOCK_LIMIT":
+							appLogger.warn(`X Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${error.reason}" error; removing order from known trades and triggered tracking.`);
 
-					case "NO_SL":
-					case "NO_TP":
-					case "SUCCESS_TIMELOCK":
-						appLogger.warn(`⚠️ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${error.reason}" error; removing order from triggered tracking.`);
-
-						// Wait a bit and then clean from triggered orders list so it might get tried again
-						triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
-							if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-								appLogger.debug(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
-							}
-
-						}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
-
-						break;
-
-					default:
-						appLogger.error(`🔥 Order ${triggeredOrderTrackingInfoIdentifier} transaction failed for unexpected reason "${error.reason}"; removing order from tracking and known open trades.`, error);
-
-						const errorMessage = error.message?.toLowerCase();
-
-						if(errorMessage !== undefined && (errorMessage.includes("nonce too low") || errorMessage.includes("replacement transaction underpriced"))) {
-							appLogger.error(`Some how we ended up with a nonce that was too low, forcing a refresh now...`);
-
-							await nonceManager.initializeFromClient(currentlySelectedWeb3Client);
+							// The trade is gone, just remove it from known trades
 							triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
+							currentKnownOpenTrades.delete(openTradeKey);
 
-							appLogger.info("Nonce refreshed and tracking of triggered order cleared so it can possibly be retried.");
-						} else {
+							break;
+
+						case "NO_SL":
+						case "NO_TP":
+						case "SUCCESS_TIMELOCK":
+							appLogger.warn(`⚠️ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${error.reason}" error; removing order from triggered tracking.`);
+
 							// Wait a bit and then clean from triggered orders list so it might get tried again
 							triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 								if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
@@ -1022,7 +1000,31 @@ function watchPricingStream() {
 								}
 
 							}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
-						}
+
+							break;
+
+						default:
+							appLogger.error(`🔥 Order ${triggeredOrderTrackingInfoIdentifier} transaction failed for unexpected reason "${error.reason}"; removing order from tracking and known open trades.`, error);
+
+							const errorMessage = error.message?.toLowerCase();
+
+							if(errorMessage !== undefined && (errorMessage.includes("nonce too low") || errorMessage.includes("replacement transaction underpriced"))) {
+								appLogger.error(`Some how we ended up with a nonce that was too low, forcing a refresh now...`);
+
+								await nonceManager.initializeFromClient(currentlySelectedWeb3Client);
+								triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
+
+								appLogger.info("Nonce refreshed and tracking of triggered order cleared so it can possibly be retried.");
+							} else {
+								// Wait a bit and then clean from triggered orders list so it might get tried again
+								triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
+									if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
+										appLogger.debug(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
+									}
+
+								}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
+							}
+					}
 				}
 			} finally {
 				// Always release the NFT back to the NFT manager
