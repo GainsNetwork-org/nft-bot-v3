@@ -66,7 +66,7 @@ const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
 	  MIN_PRIORITY_GWEI = parseFloat(process.env.MIN_PRIORITY_GWEI),
 	  OPEN_TRADES_REFRESH_MS = (process.env.OPEN_TRADES_REFRESH_SEC ?? '').length > 0 ? parseFloat(process.env.OPEN_TRADES_REFRESH_SEC) * 1000 : 120,
 	  GAS_REFRESH_INTERVAL_MS = (process.env.GAS_REFRESH_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.GAS_REFRESH_INTERVAL_SEC) * 1000 : 3,
-	  WEB3_LIVENESS_CHECK_INTERVAL_MS = (process.env.WEB3_LIVENESS_CHECK_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.WEB3_LIVENESS_CHECK_INTERVAL_SEC) * 1000 : 10;
+	  WEB3_LIVENESS_CHECK_INTERVAL_MS = (process.env.WEB3_LIVENESS_CHECK_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.WEB3_LIVENESS_CHECK_INTERVAL_SEC) * 1000 : 10 * 1000;
 
 const CHAIN_ID = process.env.CHAIN_ID ?? 137; // Polygon chain id
 const CHAIN = process.env.CHAIN ?? "mainnet";
