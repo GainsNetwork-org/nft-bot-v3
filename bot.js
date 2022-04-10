@@ -470,7 +470,7 @@ async function fetchOpenTrades(){
 
 	try {
 		if(spreadsP.length === 0){
-			appLogger.warn("Spreads are not yet loaded; will retry ƒs shortly!");
+			appLogger.warn("Spreads are not yet loaded; will retry shortly!");
 
 			scheduleRetryFetchOpenTrades();
 
@@ -817,15 +817,6 @@ function watchPricingStream() {
 			const { trader, pairIndex, index, buy } = openTrade;
 			const openTradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 
-			// Make sure the trade is still known to us at this point because it's possible that the trade was
-			// removed from known open trades asynchronously which is why we check again here even though we're
-			// looping through the set of what we thought were the known open trades here
-			if(!currentKnownOpenTrades.has(openTradeKey)) {
-				appLogger.warn(`Trade ${openTradeKey} no longer exists in our known open trades list; skipping order!¹`);
-
-				continue;
-			}
-
 			const price = messageData.closes[pairIndex];
 
 			// If it's a forex pair, we need to do some additional checks before processing
@@ -915,7 +906,7 @@ function watchPricingStream() {
 				// removed from known open trades asynchronously which is why we check again here even though we're
 				// looping through the set of what we thought were the known open trades here
 				if(!currentKnownOpenTrades.has(openTradeKey)) {
-					appLogger.warn(`Trade ${openTradeKey} no longer exists in our known open trades list; skipping order!²`);
+					appLogger.warn(`Trade ${openTradeKey} no longer exists in our known open trades list; skipping order!`);
 
 					continue;
 				}
