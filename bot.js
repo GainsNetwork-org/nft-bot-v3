@@ -749,7 +749,7 @@ async function synchronizeOpenTrades(event){
 				// up tracking state now
 				if(triggeredOrderDetails.transactionSent === true) {
 					if(eventReturnValues.nftHolder === process.env.PUBLIC_KEY) {
-						appLogger.info(`💰 SUCCESSFULLY TRIGGERED ORDER ${triggeredOrderTrackingInfoIdentifier} FIRST!!!`);
+						appLogger.info(`💰💰💰 SUCCESSFULLY TRIGGERED ORDER ${triggeredOrderTrackingInfoIdentifier} FIRST!!!`);
 					} else {
 						appLogger.info(`💰 SUCCESSFULLY TRIGGERED ORDER ${triggeredOrderTrackingInfoIdentifier} AS SAME BLOCK!!!`);
 					}
@@ -811,28 +811,24 @@ function watchPricingStream() {
 		//appLogger.debug(`Received "charts" message, checking if any of the ${currentKnownOpenTrades.size} known open trades should be acted upon...`, { candleTime: messageData.time, chartCandleAge, knownOpenTradesCount: currentKnownOpenTrades.size });
 
 		const forexMarketClosed = !isForexCurrentlyOpen();
-		let closeForexMarketTradeCount = 0;
 
 		for(const openTrade of currentKnownOpenTrades.values()) {
 			const { trader, pairIndex, index, buy } = openTrade;
 			const openTradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 
+			// If it's a forex pair, we want to make sure the forex markets are open, otherwise just skip it for now
+			if(forexMarketClosed && isForexPair(pairIndex)) {
+				continue;
+			}
+
 			const price = messageData.closes[pairIndex];
 
-			// If it's a forex pair, we need to do some additional checks before processing
-			if(isForexPair(pairIndex)) {
-				if(forexMarketClosed) {
-					closeForexMarketTradeCount++;
+			// Under certain conditions (forex just opened, server restart, etc) the price is not available, so we need
+			// to make sure we skip any processing in that case
+			if((price ?? 0) <= 0) {
+				appLogger.warn(`Received ${price} for close price for pair ${pairIndex}; skipping!`);
 
-					continue;
-				}
-
-				// Under certain conditions the price is not available for some forex pairs, so we need to make sure to skip them
-				if((price ?? 0) === 0) {
-					appLogger.warn(`Received undefined or zero close price for forex pair ${pairIndex}; skipping!`);
-
-					continue;
-				}
+				continue;
 			}
 
 			let orderType = -1;
@@ -1021,10 +1017,6 @@ function watchPricingStream() {
 				// Always release the NFT back to the NFT manager
 				nftManager.releaseNft(availableNft);
 			}
-		}
-
-		if(closeForexMarketTradeCount > 0) {
-			//appLogger.debug(`${closeForexMarketTradeCount} trades were forex trades, but the forex market is currently closed so they were skipped.`);
 		}
 	}
 }
