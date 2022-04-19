@@ -235,7 +235,12 @@ function createWeb3Client(providerUrl, nonceManager ) {
 }
 
 const nonceManager = new NonceManager(process.env.PUBLIC_KEY, createLogger('NONCE_MANAGER', process.env.LOG_LEVEL));
-const nftManager = new NFTManager(process.env.STORAGE_ADDRESS, createLogger('NFT_MANAGER', process.env.LOG_LEVEL));
+const nftManager = new NFTManager(
+	process.env.STORAGE_ADDRESS,
+	createLogger('NFT_MANAGER', process.env.LOG_LEVEL),
+	{
+		disableTimelockChecks: process.env.DISABLE_NFT_TIMELOCK_CHECKS === "true"
+	});
 
 for(var web3ProviderUrlIndex = 0; web3ProviderUrlIndex < WEB3_PROVIDER_URLS.length; web3ProviderUrlIndex++){
 	web3Clients.push(createWeb3Client(WEB3_PROVIDER_URLS[web3ProviderUrlIndex], nonceManager));
@@ -978,12 +983,12 @@ function watchPricingStream() {
 						case "NO_SL":
 						case "NO_TP":
 						case "SUCCESS_TIMELOCK":
-							appLogger.warn(`⚠️ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${error.reason}" error; removing order from triggered tracking.`);
+							appLogger.warn(`⚠️ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${error.reason}" error; will remove order from triggered tracking.`);
 
 							// Wait a bit and then clean from triggered orders list so it might get tried again
 							triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 								if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-									appLogger.debug(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
+									appLogger.warn(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed due to "${error.reason}", but it was already removed.`);
 								}
 
 							}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);

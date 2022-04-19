@@ -1,12 +1,16 @@
 import abis from "./abis.js";
 
 export class NFTManager {
-    constructor(storageContractAddress, logger) {
+    constructor(storageContractAddress, logger, options = undefined) {
 		this.storageContractAddress = storageContractAddress;
 		this.logger = logger;
         this.availableNfts = [];
         this.nftTimelock = 0;
         this.nftsBeingUsed = new Set();
+		this.options = {
+			disableTimelockChecks: false,
+			...options
+		}
     }
 
     async leaseAvailableNft(web3Client) {
@@ -112,8 +116,8 @@ export class NFTManager {
     async selectOnlyNft(web3Client) {
         const onlyNft = this.availableNfts[0];
 
-        // If there's no timelock then just return immediately
-        if(this.nftTimelock === 0) {
+        // If timelock checks are disabled or there's no timelock even set then just return immediately
+        if(this.options.disableTimelockChecks === true || this.nftTimelock === 0) {
             return onlyNft;
         }
 
@@ -139,7 +143,8 @@ export class NFTManager {
     async selectNftFromMultiple(web3Client) {
         this.logger.info(`Selecting from multiple available NFTs: total loaded=${this.availableNfts.length}`);
 
-        if(this.nftTimelock === 0) {
+        // If timelock checks are disabled or there's no timelock even set then just use round robin strategy
+		if(this.options.disableTimelockChecks === true || this.nftTimelock === 0) {
             return this.selectNftRoundRobin();
         }
 
