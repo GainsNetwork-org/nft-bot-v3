@@ -8,7 +8,6 @@ import Web3 from "web3";
 import { WebSocket } from "ws";
 import fetch from "node-fetch";
 import { default as abis } from "./abis.js";
-import { isForexCurrentlyOpen, isForexPair, startForexMonitoring } from "./forex.js";
 import { NonceManager } from "./NonceManager.js";
 import { NFTManager } from "./NftManager.js";
 
@@ -73,9 +72,6 @@ const CHAIN = process.env.CHAIN ?? "mainnet";
 const HARDFORK = process.env.HARDFORK ?? "london";
 
 const DRY_RUN_MODE = process.env.DRY_RUN_MODE === 'true';
-
-// Start monitoring forex
-startForexMonitoring();
 
 async function checkLinkAllowance() {
 	try {
@@ -815,21 +811,14 @@ function watchPricingStream() {
 
 		//appLogger.debug(`Received "charts" message, checking if any of the ${currentKnownOpenTrades.size} known open trades should be acted upon...`, { candleTime: messageData.time, chartCandleAge, knownOpenTradesCount: currentKnownOpenTrades.size });
 
-		const forexMarketClosed = !isForexCurrentlyOpen();
-
 		for(const openTrade of currentKnownOpenTrades.values()) {
 			const { trader, pairIndex, index, buy } = openTrade;
 			const openTradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 
-			// If it's a forex pair, we want to make sure the forex markets are open, otherwise just skip it for now
-			if(forexMarketClosed && isForexPair(pairIndex)) {
-				continue;
-			}
-
 			const price = messageData.closes[pairIndex];
 
-			// Under certain conditions (forex just opened, server restart, etc) the price is not available, so we need
-			// to make sure we skip any processing in that case
+			// Under certain conditions (forex/stock market just opened, server restart, etc) the price is not
+			// available, so we need to make sure we skip any processing in that case
 			if((price ?? 0) <= 0) {
 				appLogger.warn(`Received ${price} for close price for pair ${pairIndex}; skipping!`);
 
