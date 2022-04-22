@@ -775,9 +775,21 @@ async function synchronizeOpenTrades(event){
 const MAXIMUM_CHART_CANDLE_AGE_MS = 61000;
 
 function watchPricingStream() {
+	appLogger.info("Connecting to pricing stream...");
+
 	let socket = new WebSocket(process.env.PRICES_URL);
-	socket.onclose = () => { setTimeout(() => { watchPricingStream() }, 2000); };
-	socket.onerror = () => { socket.close(); };
+	socket.onopen = () => {
+		appLogger.info("Pricing stream connected.");
+	};
+	socket.onclose = () => {
+		appLogger.error("Pricing stream websocket closed! Will attempt to reconnect in two seconds...");
+
+		setTimeout(() => { watchPricingStream() }, 2000);
+	};
+	socket.onerror = (error) => {
+		appLogger.error("Pricing stream websocket error occurred!", { error });
+		socket.close();
+	};
 	socket.onmessage = async (msg) => {
 		if(spreadsP.length === 0) {
 			appLogger.debug("Spreads are not yet loaded; unable to process any trades!");
@@ -820,7 +832,7 @@ function watchPricingStream() {
 			// Under certain conditions (forex/stock market just opened, server restart, etc) the price is not
 			// available, so we need to make sure we skip any processing in that case
 			if((price ?? 0) <= 0) {
-				appLogger.debug(`Received ${price} for close price for pair ${pairIndex}; skipping!`);
+				appLogger.debug(`Received ${price} for close price for pair ${pairIndex}; skipping processing of ${openTradeKey}!`);
 
 				continue;
 			}
