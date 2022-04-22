@@ -820,7 +820,7 @@ function watchPricingStream() {
 			// Under certain conditions (forex/stock market just opened, server restart, etc) the price is not
 			// available, so we need to make sure we skip any processing in that case
 			if((price ?? 0) <= 0) {
-				appLogger.warn(`Received ${price} for close price for pair ${pairIndex}; skipping!`);
+				appLogger.debug(`Received ${price} for close price for pair ${pairIndex}; skipping!`);
 
 				continue;
 			}
