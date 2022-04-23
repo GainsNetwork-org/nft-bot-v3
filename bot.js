@@ -35,7 +35,7 @@ const appLogger = createLogger('BOT', process.env.LOG_LEVEL);
 
 let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, currentlySelectedWeb3Client = null, eventSubTrading = null, eventSubCallbacks = null,
 	web3Clients = [], priorityTransactionMaxPriorityFeePerGas = 50, standardTransactionGasFees = { maxFee: 31, maxPriorityFee: 31 },
-	knownOpenTrades = new Map(), spreadsP = [], openInterests = [], collaterals = [], triggeredOrders = new Map(),
+	knownOpenTrades = null, spreadsP = [], openInterests = [], collaterals = [], triggeredOrders = new Map(),
 	storageContract, tradingContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract,
 	maxTradesPerPair = 0, linkContract;
 
@@ -537,19 +537,41 @@ async function fetchOpenTrades(){
 		appLogger.info("Fetching open pair trades...");
 
 		const allOpenPairTrades = (await Promise.all(spreadsP.map(async (_, spreadPIndex) => {
+			appLogger.debug(`Fetching pair traders for pairIndex ${spreadPIndex}...`);
+
+			const pairTradersCallStartTime = performance.now();
+
 			const pairTraderAddresses = await storageContract.methods.pairTradersArray(spreadPIndex).call();
+
+			if(pairTraderAddresses.length === 0) {
+				appLogger.debug(`No pair traders found for pairIndex ${spreadPIndex}; no processing left to do!`);
+
+				return [];
+			}
+
+			appLogger.debug(`Fetched ${pairTraderAddresses.length} pair traders for pairIndex ${spreadPIndex} in ${performance.now() - pairTradersCallStartTime}ms; now fetching all open trades...`);
 
 			const openTradesForPairTraders = await Promise.all(pairTraderAddresses.map(async pairTraderAddress => {
 				const openTradesCalls = new Array(maxTradesPerPair);
+
+				const traderOpenTradesCallsStartTime = performance.now();
 
 				for(let pairTradeIndex = 0; pairTradeIndex < maxTradesPerPair; pairTradeIndex++){
 					openTradesCalls[pairTradeIndex] = storageContract.methods.openTrades(pairTraderAddress, spreadPIndex, pairTradeIndex).call();
 				}
 
+				appLogger.debug(`Waiting on ${openTradesCalls.length} StorageContract::openTrades calls for trader ${pairTraderAddress}...`);
+
 				const openTradesForTraderAddress = await Promise.all(openTradesCalls);
 
+				appLogger.debug(`Received ${openTradesForTraderAddress.length} open trades for trader ${pairTraderAddress} in ${performance.now() - traderOpenTradesCallsStartTime}ms.`);
+
 				// Filter out any of the trades that aren't *really* open (NOTE: these will have an empty trader address, so just test against that)
-				return openTradesForTraderAddress.filter(openTrade => openTrade.trader === pairTraderAddress);
+				const actualOpenTrades = openTradesForTraderAddress.filter(openTrade => openTrade.trader === pairTraderAddress);
+
+				appLogger.debug(`Filtered down to ${actualOpenTrades.length} actual open trades for trader ${pairTraderAddress}.`);
+
+				return actualOpenTrades;
 			}));
 
 			return openTradesForPairTraders;
@@ -778,6 +800,8 @@ function watchPricingStream() {
 	appLogger.info("Connecting to pricing stream...");
 
 	let socket = new WebSocket(process.env.PRICES_URL);
+	let currentlyProcessingChartsMessage = false;
+
 	socket.onopen = () => {
 		appLogger.info("Pricing stream connected.");
 	};
@@ -791,6 +815,14 @@ function watchPricingStream() {
 		socket.close();
 	};
 	socket.onmessage = async (msg) => {
+		const currentKnownOpenTrades = knownOpenTrades;
+
+		if(currentKnownOpenTrades === null) {
+			appLogger.debug("Known open trades not yet loaded; unable to begin any processing yet!");
+
+			return;
+		}
+
 		if(spreadsP.length === 0) {
 			appLogger.debug("Spreads are not yet loaded; unable to process any trades!");
 
@@ -803,226 +835,238 @@ function watchPricingStream() {
 			return;
 		}
 
+		// If we're still in the middle of processing the last charts message then debounce
+		if(currentlyProcessingChartsMessage === true) {
+			appLogger.debug("Still processing last charts msg; debouncing!");
+
+			return;
+		}
+
 		const messageData = JSON.parse(msg.data.toString());
 
+		// Ignore non-"charts" messages from the backend
 		if(messageData.name !== "charts") {
-			//appLogger.debug(`Message was not a "charts" message, was "${messageData.name}"; ignoring.`)
-
 			return;
 		}
 
-		const chartCandleAge = Date.now() - messageData.time;
+		try {
+			currentlyProcessingChartsMessage = true;
 
-		if(chartCandleAge > MAXIMUM_CHART_CANDLE_AGE_MS) {
-			appLogger.warn(`Chart candle data is too old to act on (from ${new Date(messageData.time).toISOString()}); skipping!`);
+			appLogger.debug(`Beginning processing new "charts" message for ${messageData.time}...`);
 
-			return;
-		}
+			const chartCandleAge = Date.now() - messageData.time;
 
-		const currentKnownOpenTrades = knownOpenTrades;
-
-		//appLogger.debug(`Received "charts" message, checking if any of the ${currentKnownOpenTrades.size} known open trades should be acted upon...`, { candleTime: messageData.time, chartCandleAge, knownOpenTradesCount: currentKnownOpenTrades.size });
-
-		for(const openTrade of currentKnownOpenTrades.values()) {
-			const { trader, pairIndex, index, buy } = openTrade;
-			const openTradeKey = buildOpenTradeKey({ trader, pairIndex, index });
-
-			const price = messageData.closes[pairIndex];
-
-			// Under certain conditions (forex/stock market just opened, server restart, etc) the price is not
-			// available, so we need to make sure we skip any processing in that case
-			if((price ?? 0) <= 0) {
-				// appLogger.debug(`Received ${price} for close price for pair ${pairIndex}; skipping processing of ${openTradeKey}!`);
-
-				continue;
-			}
-
-			let orderType = -1;
-
-			// If it's an open trade, determine what type of order it is
-			if(openTrade.openPrice !== undefined) {
-				const tp = parseFloat(openTrade.tp)/1e10;
-				const sl = parseFloat(openTrade.sl)/1e10;
-				const open = parseFloat(openTrade.openPrice)/1e10;
-				const lev = parseFloat(openTrade.leverage);
-				const liqPrice = buy ? open - 0.9/lev*open : open + 0.9/lev*open;
-
-				if(tp !== 0 && ((buy && price >= tp) || (!buy && price <= tp))) {
-					orderType = 0;
-				} else if(sl !== 0 && ((buy && price <= sl) || (!buy && price >= sl))) {
-					orderType = 1;
-				} else if(sl === 0 && ((buy && price <= liqPrice) || (!buy && price >= liqPrice))) {
-					orderType = 2;
-				} else {
-					//appLogger.debug(`Open trade ${openTradeKey} is not ready for us to act on yet.`);
-				}
-			} else {
-				const spread = spreadsP[pairIndex]/1e10*(100-openTrade.spreadReductionP)/100;
-				const priceIncludingSpread = !buy ? price*(1-spread/100) : price*(1+spread/100);
-				const interestDai = buy ? parseFloat(openInterests[pairIndex].long) : parseFloat(openInterests[pairIndex].short);
-				const collateralDai = buy ? parseFloat(collaterals[pairIndex].long) : parseFloat(collaterals[pairIndex].short);
-				const newInterestDai = (interestDai + parseFloat(openTrade.leverage)*parseFloat(openTrade.positionSize));
-				const newCollateralDai = (collateralDai + parseFloat(openTrade.positionSize));
-				const maxInterestDai = parseFloat(openInterests[pairIndex].max);
-				const maxCollateralDai = parseFloat(collaterals[pairIndex].max);
-				const minPrice = parseFloat(openTrade.minPrice)/1e10;
-				const maxPrice = parseFloat(openTrade.maxPrice)/1e10;
-
-				if(newInterestDai <= maxInterestDai && newCollateralDai <= maxCollateralDai) {
-					const tradeType = openTrade.type;
-
-					if(tradeType === "0" && priceIncludingSpread >= minPrice && priceIncludingSpread <= maxPrice
-					|| tradeType === "1" && (buy ? priceIncludingSpread <= maxPrice : priceIncludingSpread >= minPrice)
-					|| tradeType === "2" && (buy ? priceIncludingSpread >= minPrice : priceIncludingSpread <= maxPrice)){
-						orderType = 3;
-					} else {
-						//appLogger.debug(`Limit trade ${openTradeKey} is not ready for us to act on yet.`);
-					}
-				}
-			}
-
-			// If it's not an order type we want to act on yet, just skip it
-			if(orderType === -1) {
-				continue;
-			}
-
-			const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
-				trader,
-				pairIndex,
-				index,
-				orderType
-			});
-
-			// Make sure this order hasn't already been triggered
-			if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
-				appLogger.debug(`Order ${triggeredOrderTrackingInfoIdentifier} has already been triggered by us and is pending!`);
-
-				continue;
-			}
-
-			// Attempt to lease an available NFT to process this order
-			const availableNft = await nftManager.leaseAvailableNft(currentlySelectedWeb3Client);
-
-			// If there are no more NFTs available, we can stop trying to trigger any other trades
-			if(availableNft === null) {
-				appLogger.warn("No NFTS available; unable to trigger any other trades at this time!");
+			if(chartCandleAge > MAXIMUM_CHART_CANDLE_AGE_MS) {
+				appLogger.warn(`Chart candle data is too old to act on (from ${new Date(messageData.time).toISOString()}); skipping!`);
 
 				return;
 			}
 
-			try {
-				// Make sure the trade is still known to us at this point because it's possible that the trade was
-				// removed from known open trades asynchronously which is why we check again here even though we're
-				// looping through the set of what we thought were the known open trades here
-				if(!currentKnownOpenTrades.has(openTradeKey)) {
-					appLogger.warn(`Trade ${openTradeKey} no longer exists in our known open trades list; skipping order!`);
+			appLogger.debug(`Received "charts" message, checking if any of the ${currentKnownOpenTrades.size} known open trades should be acted upon...`, { candleTime: messageData.time, chartCandleAge, knownOpenTradesCount: currentKnownOpenTrades.size });
+
+			for(const openTrade of currentKnownOpenTrades.values()) {
+				const { trader, pairIndex, index, buy } = openTrade;
+				const openTradeKey = buildOpenTradeKey({ trader, pairIndex, index });
+
+				const price = messageData.closes[pairIndex];
+
+				// Under certain conditions (forex/stock market just opened, server restart, etc) the price is not
+				// available, so we need to make sure we skip any processing in that case
+				if((price ?? 0) <= 0) {
+					// appLogger.debug(`Received ${price} for close price for pair ${pairIndex}; skipping processing of ${openTradeKey}!`);
 
 					continue;
 				}
 
-				const triggeredOrderDetails = {
-					cleanupTimerId: null,
-					transactionSent: false,
-					error: null
-				};
+				let orderType = -1;
 
-				// Track that we're triggering this order
-				triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderDetails);
+				// If it's an open trade, determine what type of order it is
+				if(openTrade.openPrice !== undefined) {
+					const tp = parseFloat(openTrade.tp)/1e10;
+					const sl = parseFloat(openTrade.sl)/1e10;
+					const open = parseFloat(openTrade.openPrice)/1e10;
+					const lev = parseFloat(openTrade.leverage);
+					const liqPrice = buy ? open - 0.9/lev*open : open + 0.9/lev*open;
 
-				appLogger.info(`Trying to trigger ${triggeredOrderTrackingInfoIdentifier} order with NFT ${availableNft.id}...`);
+					if(tp !== 0 && ((buy && price >= tp) || (!buy && price <= tp))) {
+						orderType = 0;
+					} else if(sl !== 0 && ((buy && price <= sl) || (!buy && price >= sl))) {
+						orderType = 1;
+					} else if(sl === 0 && ((buy && price <= liqPrice) || (!buy && price >= liqPrice))) {
+						orderType = 2;
+					} else {
+						//appLogger.debug(`Open trade ${openTradeKey} is not ready for us to act on yet.`);
+					}
+				} else {
+					const spread = spreadsP[pairIndex]/1e10*(100-openTrade.spreadReductionP)/100;
+					const priceIncludingSpread = !buy ? price*(1-spread/100) : price*(1+spread/100);
+					const interestDai = buy ? parseFloat(openInterests[pairIndex].long) : parseFloat(openInterests[pairIndex].short);
+					const collateralDai = buy ? parseFloat(collaterals[pairIndex].long) : parseFloat(collaterals[pairIndex].short);
+					const newInterestDai = (interestDai + parseFloat(openTrade.leverage)*parseFloat(openTrade.positionSize));
+					const newCollateralDai = (collateralDai + parseFloat(openTrade.positionSize));
+					const maxInterestDai = parseFloat(openInterests[pairIndex].max);
+					const maxCollateralDai = parseFloat(collaterals[pairIndex].max);
+					const minPrice = parseFloat(openTrade.minPrice)/1e10;
+					const maxPrice = parseFloat(openTrade.maxPrice)/1e10;
+
+					if(newInterestDai <= maxInterestDai && newCollateralDai <= maxCollateralDai) {
+						const tradeType = openTrade.type;
+
+						if(tradeType === "0" && priceIncludingSpread >= minPrice && priceIncludingSpread <= maxPrice
+						|| tradeType === "1" && (buy ? priceIncludingSpread <= maxPrice : priceIncludingSpread >= minPrice)
+						|| tradeType === "2" && (buy ? priceIncludingSpread >= minPrice : priceIncludingSpread <= maxPrice)){
+							orderType = 3;
+						} else {
+							//appLogger.debug(`Limit trade ${openTradeKey} is not ready for us to act on yet.`);
+						}
+					}
+				}
+
+				// If it's not an order type we want to act on yet, just skip it
+				if(orderType === -1) {
+					continue;
+				}
+
+				const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
+					trader,
+					pairIndex,
+					index,
+					orderType
+				});
+
+				// Make sure this order hasn't already been triggered
+				if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
+					appLogger.debug(`Order ${triggeredOrderTrackingInfoIdentifier} has already been triggered by us and is pending!`);
+
+					continue;
+				}
+
+				// Attempt to lease an available NFT to process this order
+				const availableNft = await nftManager.leaseAvailableNft(currentlySelectedWeb3Client);
+
+				// If there are no more NFTs available, we can stop trying to trigger any other trades
+				if(availableNft === null) {
+					appLogger.warn("No NFTS available; unable to trigger any other trades at this time!");
+
+					return;
+				}
 
 				try {
-					const orderTransaction = {
-						from: process.env.PUBLIC_KEY,
-						to: tradingContract.options.address,
-						data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
-						maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(priorityTransactionMaxPriorityFeePerGas*1e9),
-						maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-						gas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PER_TRANSACTION),
-						nonce: nonceManager.getNextNonce(),
-						chainId: CHAIN_ID,
-						chain: CHAIN,
-						hardfork: HARDFORK,
-					};
+					// Make sure the trade is still known to us at this point because it's possible that the trade was
+					// removed from known open trades asynchronously which is why we check again here even though we're
+					// looping through the set of what we thought were the known open trades here
+					if(!currentKnownOpenTrades.has(openTradeKey)) {
+						appLogger.warn(`Trade ${openTradeKey} no longer exists in our known open trades list; skipping order!`);
 
-					// NOTE: technically this should execute synchronously because we're supplying all necessary details on
-					// the transaction object up front
-					const signedTransaction = await currentlySelectedWeb3Client.eth.accounts.signTransaction(orderTransaction, process.env.PRIVATE_KEY);
-
-					if(DRY_RUN_MODE === false) {
-						await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction);
-					} else {
-						appLogger.info(`DRY RUN MODE ACTIVE: skipping actually sending transaction for order: ${triggeredOrderTrackingInfoIdentifier}`, orderTransaction);
+						continue;
 					}
 
-					triggeredOrderDetails.transactionSent = true;
+					const triggeredOrderDetails = {
+						cleanupTimerId: null,
+						transactionSent: false,
+						error: null
+					};
 
-					// If we successfully send the transaction, we set up a timer to make sure we've heard about its
-					// eventual completion and, if not, we clean up tracking and log that we didn't hear back
-					triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
-						if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-							appLogger.warn(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
+					// Track that we're triggering this order
+					triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderDetails);
+
+					appLogger.info(`🤞 Trying to trigger ${triggeredOrderTrackingInfoIdentifier} order with NFT ${availableNft.id}...`);
+
+					try {
+						const orderTransaction = {
+							from: process.env.PUBLIC_KEY,
+							to: tradingContract.options.address,
+							data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
+							maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(priorityTransactionMaxPriorityFeePerGas*1e9),
+							maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
+							gas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PER_TRANSACTION),
+							nonce: nonceManager.getNextNonce(),
+							chainId: CHAIN_ID,
+							chain: CHAIN,
+							hardfork: HARDFORK,
+						};
+
+						// NOTE: technically this should execute synchronously because we're supplying all necessary details on
+						// the transaction object up front
+						const signedTransaction = await currentlySelectedWeb3Client.eth.accounts.signTransaction(orderTransaction, process.env.PRIVATE_KEY);
+
+						if(DRY_RUN_MODE === false) {
+							await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction);
+						} else {
+							appLogger.info(`DRY RUN MODE ACTIVE: skipping actually sending transaction for order: ${triggeredOrderTrackingInfoIdentifier}`, orderTransaction);
 						}
-					}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
 
-					appLogger.info(`Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
-				} catch(error) {
-					triggeredOrderDetails.error = error;
+						triggeredOrderDetails.transactionSent = true;
 
-					switch(error.reason) {
-						case "NO_TRADE":
-						case "TOO_LATE":
-						case "SAME_BLOCK_LIMIT":
-							appLogger.warn(`X Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${error.reason}" error; removing order from known trades and triggered tracking.`);
+						// If we successfully send the transaction, we set up a timer to make sure we've heard about its
+						// eventual completion and, if not, we clean up tracking and log that we didn't hear back
+						triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
+							if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
+								appLogger.warn(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
+							}
+						}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
 
-							// The trade is gone, just remove it from known trades
-							triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
-							currentKnownOpenTrades.delete(openTradeKey);
+						appLogger.info(`⚡️ Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
+					} catch(error) {
+						triggeredOrderDetails.error = error;
 
-							break;
+						switch(error.reason) {
+							case "NO_TRADE":
+							case "TOO_LATE":
+							case "SAME_BLOCK_LIMIT":
+								appLogger.warn(`X Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${error.reason}" error; removing order from known trades and triggered tracking.`);
 
-						case "NO_SL":
-						case "NO_TP":
-						case "SUCCESS_TIMELOCK":
-							appLogger.warn(`⚠️ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${error.reason}" error; will remove order from triggered tracking.`);
-
-							// Wait a bit and then clean from triggered orders list so it might get tried again
-							triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
-								if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-									appLogger.warn(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed due to "${error.reason}", but it was already removed.`);
-								}
-
-							}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
-
-							break;
-
-						default:
-							appLogger.error(`🔥 Order ${triggeredOrderTrackingInfoIdentifier} transaction failed for unexpected reason "${error.reason}"; removing order from tracking and known open trades.`, error);
-
-							const errorMessage = error.message?.toLowerCase();
-
-							if(errorMessage !== undefined && (errorMessage.includes("nonce too low") || errorMessage.includes("replacement transaction underpriced"))) {
-								appLogger.error(`Some how we ended up with a nonce that was too low, forcing a refresh now...`);
-
-								await nonceManager.initializeFromClient(currentlySelectedWeb3Client);
+								// The trade is gone, just remove it from known trades
 								triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
+								currentKnownOpenTrades.delete(openTradeKey);
 
-								appLogger.info("Nonce refreshed and tracking of triggered order cleared so it can possibly be retried.");
-							} else {
+								break;
+
+							case "NO_SL":
+							case "NO_TP":
+							case "SUCCESS_TIMELOCK":
+								appLogger.warn(`⚠️ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${error.reason}" error; will remove order from triggered tracking.`);
+
 								// Wait a bit and then clean from triggered orders list so it might get tried again
 								triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 									if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-										appLogger.debug(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
+										appLogger.warn(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed due to "${error.reason}", but it was already removed.`);
 									}
 
 								}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
-							}
+
+								break;
+
+							default:
+								appLogger.error(`🔥 Order ${triggeredOrderTrackingInfoIdentifier} transaction failed for unexpected reason "${error.reason}"; removing order from tracking and known open trades.`, error);
+
+								const errorMessage = error.message?.toLowerCase();
+
+								if(errorMessage !== undefined && (errorMessage.includes("nonce too low") || errorMessage.includes("replacement transaction underpriced"))) {
+									appLogger.error(`Some how we ended up with a nonce that was too low, forcing a refresh now...`);
+
+									await nonceManager.initializeFromClient(currentlySelectedWeb3Client);
+									triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
+
+									appLogger.info("Nonce refreshed and tracking of triggered order cleared so it can possibly be retried.");
+								} else {
+									// Wait a bit and then clean from triggered orders list so it might get tried again
+									triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
+										if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
+											appLogger.debug(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
+										}
+
+									}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
+								}
+						}
 					}
+				} finally {
+					// Always release the NFT back to the NFT manager
+					nftManager.releaseNft(availableNft);
 				}
-			} finally {
-				// Always release the NFT back to the NFT manager
-				nftManager.releaseNft(availableNft);
 			}
+		} finally {
+			currentlyProcessingChartsMessage = false;
 		}
 	}
 }
