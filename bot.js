@@ -832,7 +832,7 @@ function watchPricingStream() {
 			// Under certain conditions (forex/stock market just opened, server restart, etc) the price is not
 			// available, so we need to make sure we skip any processing in that case
 			if((price ?? 0) <= 0) {
-				appLogger.debug(`Received ${price} for close price for pair ${pairIndex}; skipping processing of ${openTradeKey}!`);
+				// appLogger.debug(`Received ${price} for close price for pair ${pairIndex}; skipping processing of ${openTradeKey}!`);
 
 				continue;
 			}
@@ -893,6 +893,13 @@ function watchPricingStream() {
 				orderType
 			});
 
+			// Make sure this order hasn't already been triggered
+			if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
+				appLogger.debug(`Order ${triggeredOrderTrackingInfoIdentifier} has already been triggered by us and is pending!`);
+
+				continue;
+			}
+
 			// Attempt to lease an available NFT to process this order
 			const availableNft = await nftManager.leaseAvailableNft(currentlySelectedWeb3Client);
 
@@ -909,13 +916,6 @@ function watchPricingStream() {
 				// looping through the set of what we thought were the known open trades here
 				if(!currentKnownOpenTrades.has(openTradeKey)) {
 					appLogger.warn(`Trade ${openTradeKey} no longer exists in our known open trades list; skipping order!`);
-
-					continue;
-				}
-
-				// Make sure this order hasn't already been triggered
-				if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
-					appLogger.debug(`Order ${triggeredOrderTrackingInfoIdentifier} has already been triggered by us and is pending!`);
 
 					continue;
 				}
