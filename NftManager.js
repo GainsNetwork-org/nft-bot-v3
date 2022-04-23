@@ -141,7 +141,7 @@ export class NFTManager {
     }
 
     async selectNftFromMultiple(web3Client) {
-        this.logger.info(`Selecting from multiple available NFTs: total loaded=${this.availableNfts.length}`);
+        this.logger.debug(`Selecting from multiple available NFTs: total loaded=${this.availableNfts.length}`);
 
         // If timelock checks are disabled or there's no timelock even set then just use round robin strategy
 		if(this.options.disableTimelockChecks === true || this.nftTimelock === 0) {
