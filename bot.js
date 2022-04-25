@@ -637,10 +637,17 @@ function watchLiveTradingEvents(){
 async function synchronizeOpenTrades(event){
 	try {
 		const currentKnownOpenTrades = knownOpenTrades;
+
 		const eventName = event.event;
 		const eventReturnValues = event.returnValues;
 
 		appLogger.debug(`Synchronizing open trades based on event ${eventName} from block ${event.blockNumber}...`);
+
+		if(currentKnownOpenTrades === null) {
+			appLogger.warn(`Known open trades not yet initialized, cannot synchronize ${eventName} from block ${event.blockNumber} at this time!`);
+
+			return;
+		}
 
 		// UNREGISTER OPEN LIMIT ORDER
 		// => IF OPEN LIMIT CANCELED OR OPEN LIMIT EXECUTED
