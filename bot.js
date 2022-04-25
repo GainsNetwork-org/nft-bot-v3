@@ -206,8 +206,14 @@ function createWeb3Provider(providerUrl) {
 	});
 
 	provider.on('reconnect', () => {
-		appLogger.info(`Reconnecting to provider ${providerUrl}...`);
-	})
+		appLogger.info(`Provider ${providerUrl} is reconnecting...`);
+
+		if(provider.url === currentlySelectedWeb3Client.currentProvider.url) {
+			appLogger.warn(`${providerUrl} was currently selected provider and is now reconnecting, need to select new provider!`);
+
+			checkWeb3ClientLiveness();
+		}
+	});
 
 	provider.on('error', (error) => {
 		appLogger.info(`Provider error: ${providerUrl}`, error);
