@@ -871,7 +871,7 @@ function watchPricingStream() {
 
 			appLogger.debug(`Received "charts" message, checking if any of the ${currentKnownOpenTrades.size} known open trades should be acted upon...`, { candleTime: messageData.time, chartCandleAge, knownOpenTradesCount: currentKnownOpenTrades.size });
 
-			for(const openTrade of currentKnownOpenTrades.values()) {
+			await Promise.allSettled([...currentKnownOpenTrades.values()].map(async openTrade => {
 				const { trader, pairIndex, index, buy } = openTrade;
 				const openTradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 
@@ -882,7 +882,7 @@ function watchPricingStream() {
 				if((price ?? 0) <= 0) {
 					// appLogger.debug(`Received ${price} for close price for pair ${pairIndex}; skipping processing of ${openTradeKey}!`);
 
-					continue;
+					return;
 				}
 
 				let orderType = -1;
@@ -931,7 +931,7 @@ function watchPricingStream() {
 
 				// If it's not an order type we want to act on yet, just skip it
 				if(orderType === -1) {
-					continue;
+					return;
 				}
 
 				const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
@@ -945,7 +945,7 @@ function watchPricingStream() {
 				if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
 					appLogger.debug(`Order ${triggeredOrderTrackingInfoIdentifier} has already been triggered by us and is pending!`);
 
-					continue;
+					return;
 				}
 
 				// Attempt to lease an available NFT to process this order
@@ -965,7 +965,7 @@ function watchPricingStream() {
 					if(!currentKnownOpenTrades.has(openTradeKey)) {
 						appLogger.warn(`Trade ${openTradeKey} no longer exists in our known open trades list; skipping order!`);
 
-						continue;
+						return;
 					}
 
 					const triggeredOrderDetails = {
@@ -1071,7 +1071,7 @@ function watchPricingStream() {
 					// Always release the NFT back to the NFT manager
 					nftManager.releaseNft(availableNft);
 				}
-			}
+			}));
 		} finally {
 			currentlyProcessingChartsMessage = false;
 		}
