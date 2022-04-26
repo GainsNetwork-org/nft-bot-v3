@@ -1017,7 +1017,7 @@ function watchPricingStream() {
 							if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
 								appLogger.warn(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
 							}
-						}, FAILED_ORDER_TRIGGER_TIMEOUT_MS * 10);
+						}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
 
 						appLogger.info(`⚡️ Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
 					} catch(error) {
