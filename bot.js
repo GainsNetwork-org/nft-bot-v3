@@ -256,7 +256,16 @@ if(MAX_PROVIDER_BLOCK_DRIFT < 1) {
 	MAX_PROVIDER_BLOCK_DRIFT = 1;
 }
 
+let web3LivenessCheckTimerId = null;
+
 async function checkWeb3ClientLiveness() {
+	// Make sure to cancel any pending check
+	if(web3LivenessCheckTimerId !== null) {
+		clearTimeout(web3LivenessCheckTimerId);
+
+		web3LivenessCheckTimerId = null;
+	}
+
 	appLogger.info("Checking liveness of all " + WEB3_PROVIDER_URLS.length + " web3 client(s)...");
 
 	const executionStartTime = performance.now();
@@ -297,9 +306,7 @@ async function checkWeb3ClientLiveness() {
 		appLogger.error("An unexpected error occurred while checking web3 client liveness!!!", error);
 	} finally {
 		// Schedule the next check
-		setTimeout(async () => {
-			checkWeb3ClientLiveness();
-		}, WEB3_LIVENESS_CHECK_INTERVAL_MS);
+		web3LivenessCheckTimerId = setTimeout(checkWeb3ClientLiveness, WEB3_LIVENESS_CHECK_INTERVAL_MS);
 	}
 
 	async function selectInitialProvider() {
@@ -911,6 +918,7 @@ function watchPricingStream() {
 						//appLogger.debug(`Open trade ${openTradeKey} is not ready for us to act on yet.`);
 					}
 				} else {
+					// It's an already open trade, so determine if it's time close is now
 					const spread = spreadsP[pairIndex]/1e10*(100-openTrade.spreadReductionP)/100;
 					const priceIncludingSpread = !buy ? price*(1-spread/100) : price*(1+spread/100);
 					const interestDai = buy ? parseFloat(openInterests[pairIndex].long) : parseFloat(openInterests[pairIndex].short);
