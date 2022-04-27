@@ -28,6 +28,7 @@ if(process.env.NODE_ENV) {
 }
 
 const appLogger = createLogger('BOT', process.env.LOG_LEVEL);
+let executionStats = null;
 
 // -----------------------------------------
 // 2. GLOBAL VARIABLES
@@ -65,7 +66,8 @@ const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
 	  MIN_PRIORITY_GWEI = parseFloat(process.env.MIN_PRIORITY_GWEI),
 	  OPEN_TRADES_REFRESH_MS = (process.env.OPEN_TRADES_REFRESH_SEC ?? '').length > 0 ? parseFloat(process.env.OPEN_TRADES_REFRESH_SEC) * 1000 : 120,
 	  GAS_REFRESH_INTERVAL_MS = (process.env.GAS_REFRESH_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.GAS_REFRESH_INTERVAL_SEC) * 1000 : 3,
-	  WEB3_LIVENESS_CHECK_INTERVAL_MS = (process.env.WEB3_LIVENESS_CHECK_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.WEB3_LIVENESS_CHECK_INTERVAL_SEC) * 1000 : 10 * 1000;
+	  WEB3_LIVENESS_CHECK_INTERVAL_MS = (process.env.WEB3_LIVENESS_CHECK_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.WEB3_LIVENESS_CHECK_INTERVAL_SEC) * 1000 : 10 * 1000,
+	  WEB3_STATUS_REPORT_INTERVAL_MS = (process.env.WEB3_STATUS_REPORT_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.WEB3_STATUS_REPORT_INTERVAL_SEC) * 1000 : 30 * 1000;
 
 const CHAIN_ID = process.env.CHAIN_ID ?? 137; // Polygon chain id
 const CHAIN = process.env.CHAIN ?? "mainnet";
@@ -354,9 +356,10 @@ setInterval(() => {
 	if(currentlySelectedWeb3ClientIndex === -1) {
 		appLogger.warn("No Web3 client has been selected yet!");
 	} else {
-		appLogger.info(`Current Web3 client: ${currentlySelectedWeb3Client.currentProvider.url} (#${currentlySelectedWeb3ClientIndex})`);
+		appLogger.info(`Current Web3 Client: ${currentlySelectedWeb3Client.currentProvider.url} (#${currentlySelectedWeb3ClientIndex})`);
+		appLogger.info(`Event Processing Stats:`, executionStats ?? '<none yet>');
 	}
-}, 10*1000);
+}, WEB3_STATUS_REPORT_INTERVAL_MS);
 
 // -----------------------------------------
 // 5. FETCH DYNAMIC GAS PRICE
@@ -793,8 +796,18 @@ async function synchronizeOpenTrades(event){
 				if(triggeredOrderDetails.transactionSent === true) {
 					if(eventReturnValues.nftHolder === process.env.PUBLIC_KEY) {
 						appLogger.info(`💰💰💰 SUCCESSFULLY TRIGGERED ORDER ${triggeredOrderTrackingInfoIdentifier} FIRST!!!`);
+
+						executionStats = {
+							...executionStats,
+							firstTriggers: (executionStats?.firstTriggers ?? 0) + 1,
+						}
 					} else {
 						appLogger.info(`💰 SUCCESSFULLY TRIGGERED ORDER ${triggeredOrderTrackingInfoIdentifier} AS SAME BLOCK!!!`);
+
+						executionStats = {
+							...executionStats,
+							sameBlockTriggers: (executionStats?.sameBlockTriggers ?? 0) + 1,
+						}
 					}
 
 					clearTimeout(triggeredOrderDetails.cleanupTimerId);
@@ -804,6 +817,13 @@ async function synchronizeOpenTrades(event){
 				appLogger.debug(`Synchronize open trades from event ${eventName}: Order ${triggeredOrderTrackingInfoIdentifier} was not being tracked as triggered by us.`);
 			}
 		}
+
+		executionStats = {
+			...executionStats,
+			totalEventsProcessed: (executionStats?.totalEventsProcessed ?? 0) + 1,
+			lastEventBlockNumber: event.blockNumber,
+			lastEventProcessed: new Date(),
+		};
 	} catch(error) {
 		appLogger.error("Error occurred when refreshing trades.", error);
 	}
