@@ -300,7 +300,10 @@ async function checkWeb3ClientLiveness() {
 		if(originalWeb3ClientIndex === -1){
 			await selectInitialProvider();
 		} else {
-			await ensureCurrentlySelectedProviderHasLatestBlock(originalWeb3ClientIndex);
+			// If there's more than one provider configured, then make sure we're using the most up to date one
+			if(WEB3_PROVIDER_URLS.length > 1) {
+				await ensureCurrentlySelectedProviderHasLatestBlock(originalWeb3ClientIndex);
+			}
 		}
 
 		appLogger.info(`Web3 client liveness check completed. Took: ${performance.now() - executionStartTime}ms`);
@@ -357,7 +360,7 @@ setInterval(() => {
 		appLogger.warn("No Web3 client has been selected yet!");
 	} else {
 		appLogger.info(`Current Web3 Client: ${currentlySelectedWeb3Client.currentProvider.url} (#${currentlySelectedWeb3ClientIndex})`);
-		appLogger.info(`Event Processing Stats:`, executionStats ?? '<none yet>');
+		appLogger.info(`Execution Stats:`, executionStats ?? '<none yet>');
 	}
 }, WEB3_STATUS_REPORT_INTERVAL_MS);
 
