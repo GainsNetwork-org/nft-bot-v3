@@ -1069,14 +1069,14 @@ function watchPricingStream() {
 					} catch(error) {
 						triggeredOrderDetails.error = error;
 
-						const executionStatsErrors = executionStats.errors ?? {};
+						const executionStatsTriggerErrors = executionStats.triggerErrors ?? {};
 						const errorReason = error.reason ?? "UNKNOWN_TRANSACTION_ERROR";
 
-						executionStatsErrors[errorReason] = (executionStatsErrors[errorReason] ?? 0) + 1;
+						executionStatsTriggerErrors[errorReason] = (executionStatsTriggerErrors[errorReason] ?? 0) + 1;
 
 						executionStats = {
 							...executionStats,
-							errors: executionStatsErrors,
+							triggerErrors: executionStatsTriggerErrors,
 						}
 
 						switch(errorReason) {
