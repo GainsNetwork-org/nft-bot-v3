@@ -10,7 +10,8 @@ import fetch from "node-fetch";
 import { default as abis } from "./abis.js";
 import { NonceManager } from "./NonceManager.js";
 import { NFTManager } from "./NftManager.js";
-import { DateTime, Duration } from "luxon";
+import { DateTime } from "luxon";
+import { exec } from "child_process";
 
 // Load base .env file first
 dotenv.config();
@@ -1055,7 +1056,7 @@ function watchPricingStream() {
 						// eventual completion and, if not, we clean up tracking and log that we didn't hear back
 						triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 							if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-								appLogger.warn(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
+								appLogger.warn(`❕ Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
 
 								executionStats = {
 									...executionStats,
@@ -1068,27 +1069,32 @@ function watchPricingStream() {
 					} catch(error) {
 						triggeredOrderDetails.error = error;
 
-						switch(error.reason) {
+						const executionStatsErrors = executionStats.errors ?? {};
+						const errorReason = error.reason ?? "UNKNOWN_TRANSACTION_ERROR";
+
+						executionStatsErrors[errorReason] = (executionStatsErrors[errorReason] ?? 0) + 1;
+
+						executionStats = {
+							...executionStats,
+							errors: executionStatsErrors,
+						}
+
+						switch(errorReason) {
 							case "NO_TRADE":
 							case "TOO_LATE":
 							case "SAME_BLOCK_LIMIT":
-								appLogger.warn(`X Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${error.reason}" error; removing order from known trades and triggered tracking.`);
+								appLogger.warn(`❌ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${errorReason}" error; removing order from known trades and triggered tracking.`);
 
 								// The trade is gone, just remove it from known trades
 								triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 								currentKnownOpenTrades.delete(openTradeKey);
-
-								executionStats = {
-									...executionStats,
-									lateTriggers: (executionStats.lateTriggers ?? 0) + 1
-								}
 
 								break;
 
 							case "NO_SL":
 							case "NO_TP":
 							case "SUCCESS_TIMELOCK":
-								appLogger.warn(`⚠️ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${error.reason}" error; will remove order from triggered tracking.`);
+								appLogger.warn(`❗️ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${errorReason}" error; will remove order from triggered tracking.`);
 
 								// Wait a bit and then clean from triggered orders list so it might get tried again
 								triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
@@ -1101,23 +1107,18 @@ function watchPricingStream() {
 								break;
 
 							default:
-								appLogger.error(`🔥 Order ${triggeredOrderTrackingInfoIdentifier} transaction failed for unexpected reason "${error.reason}"; removing order from tracking and known open trades.`, error);
-
-								executionStats = {
-									...executionStats,
-									failedTriggerTransactions: (executionStats.failedTriggerTransactions ?? 0) + 1
-								}
-
 								const errorMessage = error.message?.toLowerCase();
 
 								if(errorMessage !== undefined && (errorMessage.includes("nonce too low") || errorMessage.includes("replacement transaction underpriced"))) {
-									appLogger.error(`Some how we ended up with a nonce that was too low, forcing a refresh now...`);
+									appLogger.error(`⁉️ Some how we ended up with a nonce that was too low, forcing a refresh now...`);
 
 									await nonceManager.initializeFromClient(currentlySelectedWeb3Client);
 									triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 
 									appLogger.info("Nonce refreshed and tracking of triggered order cleared so it can possibly be retried.");
 								} else {
+									appLogger.error(`🔥 Order ${triggeredOrderTrackingInfoIdentifier} transaction failed for unexpected reason "${errorReason}"; removing order from tracking and known open trades.`, { error });
+
 									// Wait a bit and then clean from triggered orders list so it might get tried again
 									triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 										if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
