@@ -10,6 +10,7 @@ import fetch from "node-fetch";
 import { default as abis } from "./abis.js";
 import { NonceManager } from "./NonceManager.js";
 import { NFTManager } from "./NftManager.js";
+import { DateTime, Duration } from "luxon";
 
 // Load base .env file first
 dotenv.config();
@@ -28,7 +29,9 @@ if(process.env.NODE_ENV) {
 }
 
 const appLogger = createLogger('BOT', process.env.LOG_LEVEL);
-let executionStats = null;
+let executionStats = {
+	startTime: new Date()
+};
 
 // -----------------------------------------
 // 2. GLOBAL VARIABLES
@@ -360,8 +363,14 @@ setInterval(() => {
 		appLogger.warn("No Web3 client has been selected yet!");
 	} else {
 		appLogger.info(`Current Web3 Client: ${currentlySelectedWeb3Client.currentProvider.url} (#${currentlySelectedWeb3ClientIndex})`);
-		appLogger.info(`Execution Stats:`, executionStats ?? '<none yet>');
 	}
+
+	executionStats = {
+		...executionStats,
+		uptime: DateTime.now().diff(DateTime.fromJSDate(executionStats.startTime), ["minutes", "seconds"]).toHuman({ unitDisplay: "short" }),
+	}
+
+	appLogger.info(`Execution Stats:`, executionStats);
 }, WEB3_STATUS_REPORT_INTERVAL_MS);
 
 // -----------------------------------------
@@ -1047,6 +1056,11 @@ function watchPricingStream() {
 						triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 							if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
 								appLogger.warn(`Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
+
+								executionStats = {
+									...executionStats,
+									missedTriggers: (executionStats.missedTriggers ?? 0) + 1
+								}
 							}
 						}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
 
@@ -1063,6 +1077,11 @@ function watchPricingStream() {
 								// The trade is gone, just remove it from known trades
 								triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 								currentKnownOpenTrades.delete(openTradeKey);
+
+								executionStats = {
+									...executionStats,
+									lateTriggers: (executionStats.lateTriggers ?? 0) + 1
+								}
 
 								break;
 
@@ -1083,6 +1102,11 @@ function watchPricingStream() {
 
 							default:
 								appLogger.error(`🔥 Order ${triggeredOrderTrackingInfoIdentifier} transaction failed for unexpected reason "${error.reason}"; removing order from tracking and known open trades.`, error);
+
+								executionStats = {
+									...executionStats,
+									failedTriggerTransactions: (executionStats.failedTriggerTransactions ?? 0) + 1
+								}
 
 								const errorMessage = error.message?.toLowerCase();
 
