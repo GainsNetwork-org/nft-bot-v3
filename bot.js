@@ -197,8 +197,8 @@ function createWeb3Provider(providerUrl) {
 			clientConfig: {
 				keepalive:true,
 				keepaliveInterval:30*1000,
-			 },
-			 reconnect: {
+			},
+			reconnect: {
 				auto: true,
 				delay: 1000,
 				onTimeout: true
@@ -368,7 +368,7 @@ setInterval(() => {
 
 	executionStats = {
 		...executionStats,
-		uptime: DateTime.now().diff(DateTime.fromJSDate(executionStats.startTime), ["minutes", "seconds"]).toHuman({ unitDisplay: "short" }),
+		uptime: DateTime.now().diff(DateTime.fromJSDate(executionStats.startTime), ["days", "hours", "minutes", "seconds"]).toFormat("d'd'h'h'm'm's's'"),
 	}
 
 	appLogger.info(`Execution Stats:`, executionStats);
