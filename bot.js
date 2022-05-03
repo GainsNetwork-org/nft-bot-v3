@@ -11,7 +11,6 @@ import { default as abis } from "./abis.js";
 import { NonceManager } from "./NonceManager.js";
 import { NFTManager } from "./NftManager.js";
 import { DateTime } from "luxon";
-import { exec } from "child_process";
 
 // Load base .env file first
 dotenv.config();
