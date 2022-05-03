@@ -1067,8 +1067,6 @@ function watchPricingStream() {
 
 						appLogger.info(`⚡️ Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
 					} catch(error) {
-						triggeredOrderDetails.error = error;
-
 						const executionStatsTriggerErrors = executionStats.triggerErrors ?? {};
 						const errorReason = error.reason ?? "UNKNOWN_TRANSACTION_ERROR";
 
