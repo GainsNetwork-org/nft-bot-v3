@@ -24,3 +24,4 @@ README.md
 **/Procfile
 **/.editorconfig
 **/*.log
+**/.dev
