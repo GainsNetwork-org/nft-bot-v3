@@ -898,6 +898,8 @@ function watchPricingStream() {
 
 		// Ignore non-"charts" messages from the backend
 		if(messageData.name !== "charts") {
+			appLogger.debug(`Received a message "${messageData.name}" from the pricing stream, but we only care about "charts"; ignoring.`);
+
 			return;
 		}
 
@@ -1077,9 +1079,23 @@ function watchPricingStream() {
 						}
 
 						switch(errorReason) {
-							case "NO_TRADE":
-							case "TOO_LATE":
 							case "SAME_BLOCK_LIMIT":
+							case "TOO_LATE":
+								// The trade has been triggered by others, delay removing it and maybe we'll have a
+								// chance to try again if original trigger fails
+								appLogger.warn(`⭕️ Order ${triggeredOrderTrackingInfoIdentifier} was already triggered and we got a "${errorReason}"; will remove from triggered tracking shortly and it may be tried again if original trigger didn't hit!`);
+
+								// Wait a bit and then clean from triggered orders list so it might get tried again
+								triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
+									if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
+										appLogger.debug(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed due to "${errorReason}", but it was already removed.`);
+									}
+
+								}, FAILED_ORDER_TRIGGER_TIMEOUT_MS / 2);
+
+								break;
+
+							case "NO_TRADE":
 								appLogger.warn(`❌ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${errorReason}" error; removing order from known trades and triggered tracking.`);
 
 								// The trade is gone, just remove it from known trades
@@ -1096,7 +1112,7 @@ function watchPricingStream() {
 								// Wait a bit and then clean from triggered orders list so it might get tried again
 								triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
 									if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-										appLogger.warn(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed due to "${error.reason}", but it was already removed.`);
+										appLogger.warn(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed due to "${errorReason}", but it was already removed.`);
 									}
 
 								}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
@@ -1107,14 +1123,14 @@ function watchPricingStream() {
 								const errorMessage = error.message?.toLowerCase();
 
 								if(errorMessage !== undefined && (errorMessage.includes("nonce too low") || errorMessage.includes("replacement transaction underpriced"))) {
-									appLogger.error(`⁉️ Some how we ended up with a nonce that was too low, forcing a refresh now...`);
+									appLogger.error(`⁉️ Some how we ended up with a nonce that was too low; forcing a refresh now and the trade may be tried again if still available.`);
 
 									await nonceManager.initializeFromClient(currentlySelectedWeb3Client);
 									triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 
 									appLogger.info("Nonce refreshed and tracking of triggered order cleared so it can possibly be retried.");
 								} else {
-									appLogger.error(`🔥 Order ${triggeredOrderTrackingInfoIdentifier} transaction failed for unexpected reason "${errorReason}"; removing order from tracking and known open trades.`, { error });
+									appLogger.error(`🔥 Order ${triggeredOrderTrackingInfoIdentifier} transaction failed for unexpected reason "${errorReason}"; removing order from tracking.`, { error });
 
 									// Wait a bit and then clean from triggered orders list so it might get tried again
 									triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
