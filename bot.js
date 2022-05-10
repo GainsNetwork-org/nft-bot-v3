@@ -742,9 +742,9 @@ async function synchronizeOpenTrades(event){
 			eventName === "TpUpdated" || eventName === "SlUpdated" || eventName === "SlCanceled"
 				||
 			eventName === "MarketCloseCanceled"){
-			const trader = eventName !== "MarketExecuted" && eventName !== "LimitExecuted" ? eventReturnValues.trader : eventReturnValues.t[0];
-			const pairIndex = eventName !== "MarketExecuted" && eventName !== "LimitExecuted" ? eventReturnValues.pairIndex : eventReturnValues.t[1];
-			const index = eventName !== "MarketExecuted" && eventName !== "LimitExecuted" ? eventReturnValues.index : eventReturnValues.t[2];
+			const trader =  eventReturnValues.trader ?? eventReturnValues.t[0];
+			const pairIndex = eventReturnValues.pairIndex ?? eventReturnValues.t[1];
+			const index = eventReturnValues.index ?? eventReturnValues.t[2];
 
 			const trade = await storageContract.methods.openTrades(trader, pairIndex, index).call();
 			const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
