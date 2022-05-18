@@ -177,8 +177,8 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	watchLiveTradingEvents();
 
 	await Promise.all([
-		nftManager.loadNfts(currentlySelectedWeb3Client),
-		nonceManager.initializeFromClient(currentlySelectedWeb3Client)
+		nftManager.loadNfts(),
+		nonceManager.initialize()
 	]);
 
 	// Fire and forget refreshing of data using new provider
@@ -232,22 +232,18 @@ function createWeb3Client(providerUrl, nonceManager ) {
 	const web3Client = new Web3(provider);
 	web3Client.eth.handleRevert = true;
 
-	provider.once("connect", async() => {
-		if(!nonceManager.isInitialized) {
-			await nonceManager.initializeFromClient(web3Client);
-		}
-	});
-
 	return web3Client;
 }
 
-const nonceManager = new NonceManager(process.env.PUBLIC_KEY, createLogger('NONCE_MANAGER', process.env.LOG_LEVEL));
+const nonceManager = new NonceManager(
+	process.env.PUBLIC_KEY,
+	() => currentlySelectedWeb3Client,
+	createLogger('NONCE_MANAGER', process.env.LOG_LEVEL));
+
 const nftManager = new NFTManager(
 	process.env.STORAGE_ADDRESS,
-	createLogger('NFT_MANAGER', process.env.LOG_LEVEL),
-	{
-		disableTimelockChecks: process.env.DISABLE_NFT_TIMELOCK_CHECKS === "true"
-	});
+	() => currentlySelectedWeb3Client,
+	createLogger('NFT_MANAGER', process.env.LOG_LEVEL));
 
 for(var web3ProviderUrlIndex = 0; web3ProviderUrlIndex < WEB3_PROVIDER_URLS.length; web3ProviderUrlIndex++){
 	web3Clients.push(createWeb3Client(WEB3_PROVIDER_URLS[web3ProviderUrlIndex], nonceManager));

@@ -1,8 +1,9 @@
 import abis from "./abis.js";
 
 export class NFTManager {
-    constructor(storageContractAddress, logger, options = undefined) {
+    constructor(storageContractAddress, getWeb3Client, logger, options = undefined) {
 		this.storageContractAddress = storageContractAddress;
+		this.getWeb3Client = getWeb3Client;
 		this.logger = logger;
         this.availableNfts = [];
         this.nftTimelock = 0;
@@ -45,8 +46,10 @@ export class NFTManager {
 		this.logger.debug(`NFT ${nft.id} lease released.`);
     }
 
-    async loadNfts(web3Client) {
+    async loadNfts() {
 		this.logger.info("Loading available NFTs...");
+
+		const web3Client = this.getWeb3Client();
 
         const storageContract = new web3Client.eth.Contract(abis.STORAGE, this.storageContractAddress);
 
