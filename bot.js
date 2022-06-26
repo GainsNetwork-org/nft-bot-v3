@@ -624,7 +624,7 @@ async function refreshOpenTrades(event){
 						funding: initialAccFees.funding / 1e18,
 						openedAfterUpdate: initialAccFees.openedAfterUpdate.toString() === "true",
 					}});
-					
+
 					console.log("Watch events ("+eventName+"): Stored trade");
 				}
 			}else{
@@ -712,12 +712,12 @@ function getRolloverFee (
   initialAccRolloverFees,
   openedAfterUpdate
 ){
-  const { accPerCollateral, lastUpdateBlock } = pairRolloverFees[pairIndex];
-  const { rolloverFeePerBlockP } = pairParams[pairIndex];
+	const { accPerCollateral, lastUpdateBlock } = pairRolloverFees[pairIndex];
+	const { rolloverFeePerBlockP } = pairParams[pairIndex];
 
-  const pendingAccRolloverFees = accPerCollateral + (blocks[selectedProvider] - lastUpdateBlock) * rolloverFeePerBlockP;
+	const pendingAccRolloverFees = accPerCollateral + (blocks[selectedProvider] - lastUpdateBlock) * rolloverFeePerBlockP;
 
-  return posDai * (pendingAccRolloverFees - initialAccRolloverFees);
+	return posDai * (pendingAccRolloverFees - initialAccRolloverFees);
 };
 function getFundingFee(
   leveragedPosDai,
@@ -726,17 +726,17 @@ function getFundingFee(
   buy,
   openedAfterUpdate
 ){
-  const { accPerOiLong, accPerOiShort, lastUpdateBlock } = pairFundingFees[pairIndex];
-  const { fundingFeePerBlockP } = pairParams[pairIndex];
+	const { accPerOiLong, accPerOiShort, lastUpdateBlock } = pairFundingFees[pairIndex];
+	const { fundingFeePerBlockP } = pairParams[pairIndex];
 
-  const { long: longOi, short: shortOi } = openInterests[pairIndex];
-  const fundingFeesPaidByLongs = (longOi - shortOi) * fundingFeePerBlockP * (blocks[selectedProvider] - lastUpdateBlock);
+	const { long: longOi, short: shortOi } = openInterests[pairIndex];
+	const fundingFeesPaidByLongs = (longOi - shortOi) * fundingFeePerBlockP * (blocks[selectedProvider] - lastUpdateBlock);
 
-  const pendingAccFundingFees = buy
-    ? accPerOiLong + fundingFeesPaidByLongs / longOi
-    : accPerOiShort + (fundingFeesPaidByLongs * -1) / shortOi;
+	const pendingAccFundingFees = buy
+	? accPerOiLong + fundingFeesPaidByLongs / longOi
+	: accPerOiShort + (fundingFeesPaidByLongs * -1) / shortOi;
 
-  return leveragedPosDai * (pendingAccFundingFees - initialAccFundingFees);
+	return leveragedPosDai * (pendingAccFundingFees - initialAccFundingFees);
 };
 function getTradeLiquidationPrice(t){
 	const {trade, tradeInfo, initialAccFees} = t;
