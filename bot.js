@@ -209,12 +209,6 @@ function createWeb3Provider(providerUrl) {
 
 	provider.on('reconnect', () => {
 		appLogger.info(`Provider ${providerUrl} is reconnecting...`);
-
-		if(provider.url === currentlySelectedWeb3Client.currentProvider.url) {
-			appLogger.warn(`${providerUrl} was currently selected provider and is now reconnecting, need to select new provider!`);
-
-			checkWeb3ClientLiveness();
-		}
 	});
 
 	provider.on('error', (error) => {
@@ -224,10 +218,38 @@ function createWeb3Provider(providerUrl) {
 	return provider;
 };
 
-function createWeb3Client(providerUrl, nonceManager ) {
+function createWeb3Client(providerIndex, providerUrl) {
 	const provider = createWeb3Provider(providerUrl);
 	const web3Client = new Web3(provider);
 	web3Client.eth.handleRevert = true;
+
+	web3Client.eth.subscribe('newBlockHeaders').on('data', (header) => {
+		const newBlockNumber = header.number;
+
+		if(newBlockNumber === null) {
+			appLogger.debug(`Received unfinished block from provider ${providerUrl}; ignoring...`);
+
+			return;
+		}
+
+		currentWeb3ClientBlocks[providerIndex] = newBlockNumber;
+
+		appLogger.debug(`New block received ${newBlockNumber} from provider ${providerUrl}...`);
+
+		if(currentlySelectedWeb3ClientIndex === providerIndex) {
+			return;
+		}
+
+		const blockDiff = currentlySelectedWeb3ClientIndex === -1 ? newBlockNumber : newBlockNumber - currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex];
+
+		// Check if this block is more recent than the currently selected provider's block by the max drift
+		// and, if so, switch now
+		if(blockDiff > MAX_PROVIDER_BLOCK_DRIFT) {
+			appLogger.info(`Switching to provider ${providerUrl} #${providerIndex} because it is ${blockDiff} block(s) ahead of current provider (${newBlockNumber} vs ${currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex]})`);
+
+			setCurrentWeb3Client(providerIndex);
+		}
+	});
 
 	return web3Client;
 }
@@ -243,7 +265,7 @@ const nftManager = new NFTManager(
 	createLogger('NFT_MANAGER', process.env.LOG_LEVEL));
 
 for(var web3ProviderUrlIndex = 0; web3ProviderUrlIndex < WEB3_PROVIDER_URLS.length; web3ProviderUrlIndex++){
-	web3Clients.push(createWeb3Client(WEB3_PROVIDER_URLS[web3ProviderUrlIndex], nonceManager));
+	web3Clients.push(createWeb3Client(web3ProviderUrlIndex, WEB3_PROVIDER_URLS[web3ProviderUrlIndex]));
 }
 
 let MAX_PROVIDER_BLOCK_DRIFT = (process.env.MAX_PROVIDER_BLOCK_DRIFT ?? '').length > 0 ? parseInt(process.env.MAX_PROVIDER_BLOCK_DRIFT, 10) : 2;
@@ -253,103 +275,6 @@ if(MAX_PROVIDER_BLOCK_DRIFT < 1) {
 
 	MAX_PROVIDER_BLOCK_DRIFT = 1;
 }
-
-let web3LivenessCheckTimerId = null;
-
-async function checkWeb3ClientLiveness() {
-	// Make sure to cancel any pending check
-	if(web3LivenessCheckTimerId !== null) {
-		clearTimeout(web3LivenessCheckTimerId);
-
-		web3LivenessCheckTimerId = null;
-	}
-
-	appLogger.info("Checking liveness of all " + WEB3_PROVIDER_URLS.length + " web3 client(s)...");
-
-	const executionStartTime = performance.now();
-
-	try {
-		const latestWeb3ProviderBlocks = await Promise.all(WEB3_PROVIDER_URLS.map(async (providerUrl, providerIndex) => {
-			// If not currently connected, then skip call
-			if(web3Clients[providerIndex].connected === false) {
-				return Number.MAX_SAFE_INTEGER;
-			}
-
-			try
-			{
-				return await web3Clients[providerIndex].eth.getBlockNumber();
-			} catch (error) {
-				appLogger.error(`Error retrieving current block number from web3 client ${providerUrl}!`, error);
-
-				return Number.MIN_SAFE_INTEGER;
-			}
-		}));
-
-		appLogger.info("Current vs. latest provider blocks.", { WEB3_PROVIDER_URLS, currentWeb3ClientBlocks, latestWeb3ProviderBlocks });
-
-		// Update global to latest blocks
-		currentWeb3ClientBlocks = latestWeb3ProviderBlocks;
-
-		const originalWeb3ClientIndex = currentlySelectedWeb3ClientIndex;
-
-		// Check if no client has been selected yet (i.e. this is initialization phase of app)
-		if(originalWeb3ClientIndex === -1){
-			await selectInitialProvider();
-		} else {
-			// If there's more than one provider configured, then make sure we're using the most up to date one
-			if(WEB3_PROVIDER_URLS.length > 1) {
-				await ensureCurrentlySelectedProviderHasLatestBlock(originalWeb3ClientIndex);
-			}
-		}
-
-		appLogger.info(`Web3 client liveness check completed. Took: ${performance.now() - executionStartTime}ms`);
-	} catch (error) {
-		appLogger.error("An unexpected error occurred while checking web3 client liveness!!!", error);
-	} finally {
-		// Schedule the next check
-		web3LivenessCheckTimerId = setTimeout(checkWeb3ClientLiveness, WEB3_LIVENESS_CHECK_INTERVAL_MS);
-	}
-
-	async function selectInitialProvider() {
-		// Find the most recent block
-		const maxBlock = Math.max(...currentWeb3ClientBlocks);
-
-		const clientWithMaxBlockIndex = currentWeb3ClientBlocks.findIndex(v => v === maxBlock);
-
-		// Start with the provider with the most recent block
-		await setCurrentWeb3Client(clientWithMaxBlockIndex);
-
-		appLogger.info(`Initial Web3 client selected: ${WEB3_PROVIDER_URLS[clientWithMaxBlockIndex]}`);
-	}
-
-	async function ensureCurrentlySelectedProviderHasLatestBlock(originalWeb3ClientIndex) {
-		const currentlySelectedWeb3ClientIndexMaxDriftBlock = currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex] + MAX_PROVIDER_BLOCK_DRIFT;
-
-		for(let i = 0; i < currentWeb3ClientBlocks.length; i++){
-			// Don't check the currently selected client against itself
-			if(i === currentlySelectedWeb3ClientIndex) {
-				continue;
-			}
-
-			// If the current provider is ahead of the selected provider by more N blocks then switch to this provider instead
-			if(currentWeb3ClientBlocks[i] >= currentlySelectedWeb3ClientIndexMaxDriftBlock){
-				appLogger.info(`Switching to provider ${WEB3_PROVIDER_URLS[i]} #${i} (${currentWeb3ClientBlocks[i]} vs ${currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex]})`);
-
-				await setCurrentWeb3Client(i);
-
-				break;
-			}
-		}
-
-		if(currentlySelectedWeb3ClientIndex === originalWeb3ClientIndex) {
-			appLogger.info(`No need to switch to a different client; sticking with ${WEB3_PROVIDER_URLS[currentlySelectedWeb3ClientIndex]}.`);
-		} else {
-			appLogger.info(`Switched to client ${WEB3_PROVIDER_URLS[currentlySelectedWeb3ClientIndex]} completed.`);
-		}
-	}
-}
-
-checkWeb3ClientLiveness();
 
 setInterval(() => {
 	if(currentlySelectedWeb3ClientIndex === -1) {
