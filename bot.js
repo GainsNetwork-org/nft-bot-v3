@@ -794,7 +794,7 @@ function wss(){
 					const tp = parseFloat(t.tp)/1e10;
 					const sl = parseFloat(t.sl)/1e10;
 					const lev = parseFloat(t.leverage);
-					const liqPrice = getTradeLiquidationPrice(t);
+					const liqPrice = getTradeLiquidationPrice(openTrades[i]);
 
 					if(tp.toString() !== "0" && ((buy && price >= tp) || (!buy && price <= tp))){
 						orderType = 0;
