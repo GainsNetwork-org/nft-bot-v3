@@ -610,12 +610,7 @@ async function refreshOpenTrades(event){
 					&& openTrades[i].trade.pairIndex === pairIndex
 					&& openTrades[i].trade.index === index){
 
-						openTrades[i] = {trade, tradeInfo, initialAccFees: {
-							rollover: initialAccFees.rollover / 1e18,
-							funding: initialAccFees.funding / 1e18,
-							openedAfterUpdate: initialAccFees.openedAfterUpdate.toString() === "true",
-						}};
-
+						openTrades[i].trade = trade;
 						found = true;
 
 						console.log("Watch events ("+eventName+"): Updated trade");
@@ -624,7 +619,12 @@ async function refreshOpenTrades(event){
 				}
 
 				if(!found){ 
-					openTrades.push(trade); 
+					openTrades.push({trade, tradeInfo, initialAccFees: {
+						rollover: initialAccFees.rollover / 1e18,
+						funding: initialAccFees.funding / 1e18,
+						openedAfterUpdate: initialAccFees.openedAfterUpdate.toString() === "true",
+					}});
+					
 					console.log("Watch events ("+eventName+"): Stored trade");
 				}
 			}else{
