@@ -253,6 +253,7 @@ async function fetchTradingVariables(){
 		const maxPerPair = await storageContract.methods.maxTradesPerPair().call();
 		const nftSuccessTimelock = await storageContract.methods.nftSuccessTimelock().call();
 		const pairsCount = await pairsStorageContract.methods.pairsCount().call();
+
 		nfts = [];
 
 		const nftsCount1 = await nftContract1.methods.balanceOf(process.env.PUBLIC_KEY).call();
@@ -300,8 +301,8 @@ async function fetchTradingVariables(){
 				collaterals[j] = {long: collateralLong, short: collateralShort, max: collateralMax};
 			}
 
-			const pairInfos = await pairInfosContract.methods.getPairInfos([...Array(pairsCount).keys()]).call();
-			
+			const pairInfos = await pairInfosContract.methods.getPairInfos([...Array(parseInt(pairsCount)).keys()]).call();
+
 			pairParams = pairInfos["0"].map((value) => {
 				return {
 					onePercentDepthAbove: value.onePercentDepthAbove, 
@@ -485,7 +486,6 @@ function watchLiveTradingEvents(){
 
 		if(eventSubPairInfos === null){
 			eventSubPairInfos = pairInfosContract.events.allEvents({ fromBlock: 'latest' }).on('data', function (event){
-				console.log(event);
 				const eventName = event.event.toString();
 
 				if(eventName !== "AccFundingFeesStored"){
