@@ -315,7 +315,7 @@ async function fetchTradingVariables(){
 			pairRolloverFees = pairInfos["1"].map((value) => {
 				return {
 					accPerCollateral: value.accPerCollateral / 1e18,
-					lastUpdateBlock: value.lastUpdateBlock
+					lastUpdateBlock: parseInt(value.lastUpdateBlock)
 				}
 			});
 
@@ -323,7 +323,7 @@ async function fetchTradingVariables(){
 				return {
 					accPerOiLong: value.accPerOiLong / 1e18, 
 					accPerOiShort: value.accPerOiShort / 1e18, 
-					lastUpdateBlock: value.lastUpdateBlock
+					lastUpdateBlock: parseInt(value.lastUpdateBlock)
 				}
 			});
 
@@ -681,7 +681,7 @@ async function refreshPairFundingFees(event){
 		pairFundingFees[pairIndex] = {
 			accPerOiLong: pairFundingFees.accPerOiLong / 1e18, 
 			accPerOiShort: pairFundingFees.accPerOiShort / 1e18, 
-			lastUpdateBlock: pairFundingFees.lastUpdateBlock
+			lastUpdateBlock: parseInt(pairFundingFees.lastUpdateBlock)
 		};
 	});
 }
