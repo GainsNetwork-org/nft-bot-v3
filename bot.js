@@ -18,14 +18,11 @@ dotenv.config();
 // If there's a specific NODE_ENV set, attempt to load that environment specific .env file
 if(process.env.NODE_ENV) {
 	const environmentSpecificFile = `.env.${process.env.NODE_ENV}`;
-	const fs = await import("fs");
 
-	if(fs.existsSync(environmentSpecificFile)) {
-		dotenv.config({
-			path: environmentSpecificFile,
-			override: true
-		});
-	}
+	dotenv.config({
+		path: environmentSpecificFile,
+		override: true
+	});
 }
 
 const appLogger = createLogger('BOT', process.env.LOG_LEVEL);
