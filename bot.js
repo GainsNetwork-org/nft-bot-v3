@@ -480,12 +480,16 @@ async function fetchTradingVariables(){
 // 8. LOAD OPEN TRADES
 // -----------------------------------------
 
-function buildOpenTradeKey({ trader, pairIndex, index }) {
-	return `t=${trader};pi=${pairIndex};i=${index};`;
+function buildTradeIdentifier(trader, pairIndex, index, isPendingOpenLimitOrder) {
+	if(isPendingOpenLimitOrder === undefined) {
+		throw new Error("isPendingOpenLimitOrder was passed as undefined!");
+	}
+
+	return `trade://${trader}/${pairIndex}/${index}?isOpenLimit=${isPendingOpenLimitOrder}`;``
 }
 
-function buildTriggeredOrderTrackingInfoIdentifier({ trader, pairIndex, index, orderType }) {
-	return `t=${trader};pi=${pairIndex};i=${index};ot=${orderType};`;
+function buildTriggerIdentifier(trader, pairIndex, index, limitType) {
+	return `trigger://${trader}/${pairIndex}/${index}[lt=${limitType}]`;
 }
 
 let fetchOpenTradesRetryTimerId = null;
@@ -513,7 +517,9 @@ async function fetchOpenTrades(){
 				fetchOpenPairTrades()
 			]);
 
-		knownOpenTrades = new Map(openLimitOrders.concat(pairTraders).map(trade => [buildOpenTradeKey({ trader: trade.trader, pairIndex: trade.pairIndex, index: trade.index }), trade]));
+		knownOpenTrades = new Map(openLimitOrders
+			.concat(pairTraders)
+			.map(trade => [buildTradeIdentifier(trade.trader, trade.pairIndex, trade.index, trade.openPrice === undefined), trade]));
 
 		appLogger.info(`Fetched ${knownOpenTrades.size} total open trade(s) in ${performance.now() - start}ms.`);
 
@@ -665,7 +671,7 @@ async function synchronizeOpenTrades(event){
 		const eventName = event.event;
 		const eventReturnValues = event.returnValues;
 
-		appLogger.debug(`Synchronizing open trades based on event ${eventName} from block ${event.blockNumber}...`);
+		appLogger.verbose(`Synchronizing open trades based on event ${eventName} from block ${event.blockNumber}...`);
 
 		if(currentKnownOpenTrades === null) {
 			appLogger.warn(`Known open trades not yet initialized, cannot synchronize ${eventName} from block ${event.blockNumber} at this time!`);
@@ -673,118 +679,130 @@ async function synchronizeOpenTrades(event){
 			return;
 		}
 
-		// UNREGISTER OPEN LIMIT ORDER
-		// => IF OPEN LIMIT CANCELED OR OPEN LIMIT EXECUTED
-		if(eventName === "OpenLimitCanceled"
-				||
-			(eventName === "LimitExecuted" && eventReturnValues.orderType.toString() === "3")) {
-			const trader = eventName === "OpenLimitCanceled" ? eventReturnValues.trader : eventReturnValues.t[0];
-			const pairIndex = eventName === "OpenLimitCanceled" ? eventReturnValues.pairIndex : eventReturnValues.t[1];
-			const index = eventName === "OpenLimitCanceled" ? eventReturnValues.index : eventReturnValues.limitIndex;
+		if(eventName === "OpenLimitCanceled") {
+			const { trader, pairIndex, index } = eventReturnValues;
 
-			const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
+			const tradeKey = buildTradeIdentifier(trader, pairIndex, index, true);
 			const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
 
-			if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')) {
+			if(existingKnownOpenTrade !== undefined) {
 				currentKnownOpenTrades.delete(tradeKey);
 
-				appLogger.debug(`Synchronize open trades from event ${eventName}: Removed limit for ${tradeKey}`);
+				appLogger.verbose(`Synchronize open trades from event ${eventName}: Removed limit for ${tradeKey}`);
 			} else {
-				appLogger.debug(`Synchronize open trades from event ${eventName}: Limit not found for ${tradeKey}`);
+				appLogger.verbose(`Synchronize open trades from event ${eventName}: Limit not found for ${tradeKey}`);
 			}
-		}
-
-		// STORE/UPDATE OPEN LIMIT ORDER
-		// => IF OPEN LIMIT ORDER PLACED OR OPEN LIMIT ORDER UPDATED
-		if(eventName === "OpenLimitPlaced"
-				||
-			eventName === "OpenLimitUpdated"){
+		} else if(eventName === "OpenLimitPlaced"
+						||
+					eventName === "OpenLimitUpdated"){
 			const { trader, pairIndex, index } = eventReturnValues;
-			await storageContract.methods.hasOpenLimitOrder(trader, pairIndex, index).call();
-
-			const id = await storageContract.methods.openLimitOrderIds(trader, pairIndex, index).call();
 
 			const [
-				limitOrder,
-				type
-			] = await Promise.all(
-				[
-					storageContract.methods.openLimitOrders(id).call(),
-					nftRewardsContract.methods.openLimitOrderTypes(trader, pairIndex, index).call()
-				]);
+					hasOpenLimitOrder,
+					openLimitOrderId
+			] = await Promise.all([
+				storageContract.methods.hasOpenLimitOrder(trader, pairIndex, index).call(),
+				storageContract.methods.openLimitOrderIds(trader, pairIndex, index).call()
+			]);
 
-			limitOrder.type = type;
-
-			const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
-			const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
-
-			if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('minPrice')){
-				currentKnownOpenTrades.set(tradeKey, limitOrder);
-
-				appLogger.debug(`Synchronize open trades from event ${eventName}: Updated limit for ${tradeKey}`);
+			if(hasOpenLimitOrder === false) {
+				appLogger.warn(`Open limit order not found for ${trader}/${pairIndex}/${index}; ignoring!`);
 			} else {
+				const [
+					limitOrder,
+					type
+				] = await Promise.all(
+					[
+						storageContract.methods.openLimitOrders(openLimitOrderId).call(),
+						nftRewardsContract.methods.openLimitOrderTypes(trader, pairIndex, index).call()
+					]);
+
+				limitOrder.type = type;
+
+				const tradeKey = buildTradeIdentifier(trader, pairIndex, index, true);
+
+				if(currentKnownOpenTrades.has(tradeKey)) {
+					appLogger.verbose(`Synchronize open trades from event ${eventName}: Updating open limit order for ${tradeKey}`);
+				} else {
+					appLogger.verbose(`Synchronize open trades from event ${eventName}: Storing new open limit order for ${tradeKey}`);
+				}
+
 				currentKnownOpenTrades.set(tradeKey, limitOrder);
-
-				appLogger.debug(`Synchronize open trades from event ${eventName}: Stored limit for ${tradeKey}`);
 			}
-		}
-
-		// STORE/UPDATE TRADE
-		// => IF MARKET OPEN EXECUTED OR OPEN TRADE LIMIT EXECUTED OR TP/SL UPDATED OR TRADE UPDATED (MARKET CLOSED)
-		if((eventName === "MarketExecuted" && eventReturnValues.open === true)
-				||
-			(eventName === "LimitExecuted" && eventReturnValues.orderType === "3")
-				||
-			eventName === "TpUpdated" || eventName === "SlUpdated" || eventName === "SlCanceled"
-				||
-			eventName === "MarketCloseCanceled"){
-			const trader =  eventReturnValues.trader ?? eventReturnValues.t[0];
-			const pairIndex = eventReturnValues.pairIndex ?? eventReturnValues.t[1];
-			const index = eventReturnValues.index ?? eventReturnValues.t[2];
+		} else if(eventName === "TpUpdated" || eventName === "SlUpdated" || eventName === "SlCanceled") {
+			const { trader, pairIndex, index } =  eventReturnValues;
 
 			const trade = await storageContract.methods.openTrades(trader, pairIndex, index).call();
-			const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 
-			// Make sure the trade is still open
-			if(parseFloat(trade.leverage) > 0) {
-				const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
+			// Always fetch fresh trade info
+			trade.tradeInfo = await storageContract.methods.openTradesInfo(trader, pairIndex, index).call();
 
-				if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
-					currentKnownOpenTrades.set(tradeKey, trade);
+			const tradeKey = buildTradeIdentifier(trader, pairIndex, index, false);
+			currentKnownOpenTrades.set(tradeKey, trade);
 
-					appLogger.debug(`Synchronize open trades from event ${eventName}: Updated trade ${tradeKey}`);
-				} else {
-					currentKnownOpenTrades.set(tradeKey, trade);
+			appLogger.verbose(`Synchronize open trades from event ${eventName}: Updated trade ${tradeKey}`);
+		} else if(eventName === "MarketCloseCanceled") {
+			const { trader, pairIndex, index } = eventReturnValues.t;
+			const tradeKey = buildTradeIdentifier(trader, pairIndex, index, false);
 
-					appLogger.debug(`Synchronize open trades from event ${eventName}: Stored trade ${tradeKey}`);
-				}
+			const trade = await storageContract.methods.openTrades(trader, pairIndex, index).call();
+
+			if(parseInt(trade.leverage) > 0) {
+				// Always fetch fresh trade info
+				trade.tradeInfo = await storageContract.methods.openTradesInfo(trader, pairIndex, index).call();
+				currentKnownOpenTrades.set(tradeKey, trade);
 			} else {
 				currentKnownOpenTrades.delete(tradeKey);
-
-				appLogger.debug(`Synchronize open trades from event ${eventName}: Trade ${tradeKey} no longer open!`);
 			}
-		}
 
-		// UNREGISTER TRADE
-		// => IF MARKET CLOSE EXECUTED OR CLOSE LIMIT EXECUTED
-		if((eventName === "MarketExecuted" && eventReturnValues.open === false)
+			return;
+		} else if((eventName === "MarketExecuted" && eventReturnValues.open === true)
+						||
+					(eventName === "LimitExecuted" && eventReturnValues.orderType === "3")) {
+			const { t: trade, limitIndex } = eventReturnValues;
+			const { trader, pairIndex, index } = trade;
+
+			if(eventName === "LimitExecuted") {
+				const openTradeKey = buildTradeIdentifier(trader, pairIndex, limitIndex, true);
+
+				if(currentKnownOpenTrades.has(openTradeKey)) {
+					appLogger.verbose(`Synchronize open trades from event ${eventName}: Removed open limit trade ${openTradeKey}.`);
+
+					currentKnownOpenTrades.delete(openTradeKey);
+				} else {
+					appLogger.warn(`Synchronize open trades from event ${eventName}: Open limit trade ${openTradeKey} was not found? Unable to remove.`);
+				}
+			}
+
+			const tradeInfo = await storageContract.methods.openTradesInfo(trader, pairIndex, index).call()
+			const tradeKey = buildTradeIdentifier(trader, pairIndex, index, false);
+
+			currentKnownOpenTrades.set(
+				tradeKey,
+				{
+					...trade,
+					tradeInfo
+				});
+
+			appLogger.info(`Synchronize open trades from event ${eventName}: Stored active trade ${tradeKey}`);
+		} else if((eventName === "MarketExecuted" && eventReturnValues.open === false)
 				||
 			(eventName === "LimitExecuted" && eventReturnValues.orderType !== "3")){
-			const [ trader, pairIndex, index ] = eventReturnValues.t;
-			const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
+			const { trader, pairIndex, index } = eventReturnValues.t;
+			const tradeKey = buildTradeIdentifier(trader, pairIndex, index, false);
+
+			const triggeredOrderTrackingInfoIdentifier = buildTriggerIdentifier(
 				trader,
 				pairIndex,
 				index,
-				orderType: eventReturnValues.orderType ?? 'N/A'
-			});
+				eventReturnValues.orderType ?? 'N/A');
 
 			appLogger.info(`Synchronize open trades from event ${eventName}: event received for ${triggeredOrderTrackingInfoIdentifier}...`);
 
-			const tradeKey = buildOpenTradeKey({ trader, pairIndex, index });
 			const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
 
 			// If this was a known open trade then we need to remove it now
-			if(existingKnownOpenTrade !== undefined && existingKnownOpenTrade.hasOwnProperty('openPrice')) {
+			if(existingKnownOpenTrade !== undefined) {
 				currentKnownOpenTrades.delete(tradeKey);
 
 				appLogger.debug(`Synchronize open trades from event ${eventName}: Removed ${tradeKey} from known open trades.`);
@@ -902,7 +920,7 @@ function watchPricingStream() {
 		try {
 			currentlyProcessingChartsMessage = true;
 
-			appLogger.debug(`Beginning processing new "charts" message for ${messageData.time}...`);
+			//appLogger.debug(`Beginning processing new "charts" message for ${messageData.time}...`);
 
 			const chartCandleAge = Date.now() - messageData.time;
 
@@ -912,11 +930,12 @@ function watchPricingStream() {
 				return;
 			}
 
-			appLogger.debug(`Received "charts" message, checking if any of the ${currentKnownOpenTrades.size} known open trades should be acted upon...`, { candleTime: messageData.time, chartCandleAge, knownOpenTradesCount: currentKnownOpenTrades.size });
+			// appLogger.debug(`Received "charts" message, checking if any of the ${currentKnownOpenTrades.size} known open trades should be acted upon...`, { candleTime: messageData.time, chartCandleAge, knownOpenTradesCount: currentKnownOpenTrades.size });
 
 			await Promise.allSettled([...currentKnownOpenTrades.values()].map(async openTrade => {
 				const { trader, pairIndex, index, buy } = openTrade;
-				const openTradeKey = buildOpenTradeKey({ trader, pairIndex, index });
+				const isPendingOpenLimitOrder = openTrade.openPrice === undefined;
+				const openTradeKey = buildTradeIdentifier(trader, pairIndex, index, isPendingOpenLimitOrder);
 
 				const price = messageData.closes[pairIndex];
 
@@ -931,7 +950,7 @@ function watchPricingStream() {
 				let orderType = -1;
 
 				// If it's an open trade, determine what type of order it is
-				if(openTrade.openPrice !== undefined) {
+				if(isPendingOpenLimitOrder === false) {
 					const tp = parseFloat(openTrade.tp)/1e10;
 					const sl = parseFloat(openTrade.sl)/1e10;
 					const open = parseFloat(openTrade.openPrice)/1e10;
@@ -978,12 +997,11 @@ function watchPricingStream() {
 					return;
 				}
 
-				const triggeredOrderTrackingInfoIdentifier = buildTriggeredOrderTrackingInfoIdentifier({
+				const triggeredOrderTrackingInfoIdentifier = buildTriggerIdentifier(
 					trader,
 					pairIndex,
 					index,
-					orderType
-				});
+					orderType);
 
 				// Make sure this order hasn't already been triggered
 				if(triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
