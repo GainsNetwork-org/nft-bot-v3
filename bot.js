@@ -779,15 +779,16 @@ function wss(){
 			const isForexMarketClosed = forex.isForexCurrentlyOpen() === false;
 
 			for(var i = 0; i < openTrades.length; i++){
+				const t = openTrades[i].trade !== undefined ? openTrades[i].trade : openTrades[i];
+
+				if(isForexMarketClosed && t.pairIndex >= 21 && t.pairIndex <= 30) continue;
+
 				const price = p.closes[t.pairIndex];
 				if(!(price > 0)) continue;
 
 				let orderType = -1;
 
 				if(openTrades[i].trade !== undefined){
-					const t = openTrades[i].trade;
-					if(isForexMarketClosed && t.pairIndex >= 21 && t.pairIndex <= 30) continue;
-
 					const buy = t.buy.toString() === "true";
 
 					const tp = parseFloat(t.tp)/1e10;
@@ -804,9 +805,6 @@ function wss(){
 					}
 
 				}else{
-					const t = openTrades[i];
-					if(isForexMarketClosed && t.pairIndex >= 21 && t.pairIndex <= 30) continue;
-
 					const buy = t.buy.toString() === "true";
 					const posDai = parseFloat(t.leverage) * parseFloat(t.positionSize);
 
