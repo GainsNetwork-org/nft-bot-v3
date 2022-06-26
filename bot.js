@@ -622,7 +622,7 @@ function watchLiveTradingEvents(){
 			eventSubTrading.unsubscribe();
 		}
 
-		eventSubTrading = tradingContract.events.allEvents({ fromBlock: 'latest' }).on('data', function (event){
+		eventSubTrading = tradingContract.events.allEvents({ fromBlock: 'latest' }).on('data', (event) => {
 			const eventName = event.event;
 
 			if(eventName !== "OpenLimitPlaced" && eventName !== "OpenLimitUpdated"
@@ -643,7 +643,7 @@ function watchLiveTradingEvents(){
 			eventSubCallbacks.unsubscribe();
 		}
 
-		eventSubCallbacks = callbacksContract.events.allEvents({ fromBlock: 'latest' }).on('data', function (event){
+		eventSubCallbacks = callbacksContract.events.allEvents({ fromBlock: 'latest' }).on('data', (event) => {
 			const eventName = event.event;
 
 			if(eventName !== "MarketExecuted" && eventName !== "LimitExecuted"
