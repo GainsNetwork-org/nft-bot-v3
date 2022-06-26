@@ -112,12 +112,11 @@ async function selectProvider(n){
 	pairsStorageContract = new web3[n].eth.Contract(PAIRS_STORAGE_ABI, pairsStorageAddress);
 	nftRewardsContract = new web3[n].eth.Contract(NFT_REWARDS_ABI, nftRewardsAddress);
 
-	callbacksContract = new web3[n].eth.Contract(CALLBACKS_ABI, callbacksAddress);
 	tradingContract = new web3[n].eth.Contract(TRADING_ABI, tradingAddress);
+	callbacksContract = new web3[n].eth.Contract(CALLBACKS_ABI, callbacksAddress);
+	pairInfosContract = new web3[n].eth.Contract(PAIR_INFOS_ABI, process.env.PAIR_INFOS_ADDRESS);
+	
 	vaultContract = new web3[n].eth.Contract(VAULT_ABI, vaultAddress);
-
-	const pairInfosAddress = await callbacksContract.methods.pairInfos().call();
-	pairInfosContract = new web3[n].eth.Contract(PAIR_INFOS_ABI, pairInfosAddress);
 
 	nftContract1 = new web3[n].eth.Contract(NFT_ABI, nftAddress1);
 	nftContract2 = new web3[n].eth.Contract(NFT_ABI, nftAddress2);
