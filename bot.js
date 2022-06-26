@@ -307,22 +307,22 @@ async function fetchTradingVariables(){
 				return {
 					onePercentDepthAbove: value.onePercentDepthAbove, 
 					onePercentDepthBelow: value.onePercentDepthBelow, 
-					rolloverFeePerBlockP: value.rolloverFeePerBlockP, 
-					fundingFeePerBlockP: value.fundingFeePerBlockP
+					rolloverFeePerBlockP: value.rolloverFeePerBlockP / 1e12, 
+					fundingFeePerBlockP: value.fundingFeePerBlockP / 1e12
 				}
 			});
 
 			pairRolloverFees = pairInfos["1"].map((value) => {
 				return {
-					accPerCollateral: value.accPerCollateral, 
+					accPerCollateral: value.accPerCollateral / 1e18,
 					lastUpdateBlock: value.lastUpdateBlock
 				}
 			});
 
 			pairFundingFees = pairInfos["2"].map((value) => {
 				return {
-					accPerOiLong: value.accPerOiLong, 
-					accPerOiShort: value.accPerOiShort, 
+					accPerOiLong: value.accPerOiLong / 1e18, 
+					accPerOiShort: value.accPerOiShort / 1e18, 
 					lastUpdateBlock: value.lastUpdateBlock
 				}
 			});
@@ -426,7 +426,11 @@ async function fetchOpenTrades(){
 						openTrades.push({
 							trade: trades[j],
 							tradeInfo: trades[j+1],
-							initialAccFees: trades[j+2]
+							initialAccFees: {
+								rollover: trades[j+2].rollover / 1e18,
+								funding: trades[j+2].funding / 1e18,
+								openedAfterUpdate: trades[j+2].openedAfterUpdate.toString() === "true",
+							}
 						});
 					}
 
@@ -606,7 +610,12 @@ async function refreshOpenTrades(event){
 					&& openTrades[i].trade.pairIndex === pairIndex
 					&& openTrades[i].trade.index === index){
 
-						openTrades[i] = {trade, tradeInfo, initialAccFees};
+						openTrades[i] = {trade, tradeInfo, initialAccFees: {
+							rollover: initialAccFees.rollover / 1e18,
+							funding: initialAccFees.funding / 1e18,
+							openedAfterUpdate: initialAccFees.openedAfterUpdate.toString() === "true",
+						}};
+
 						found = true;
 
 						console.log("Watch events ("+eventName+"): Updated trade");
@@ -670,8 +679,8 @@ async function refreshPairFundingFees(event){
 		const pairFundingFees = await pairInfosContract.methods.pairFundingFees(pairIndex).call();
 
 		pairFundingFees[pairIndex] = {
-			accPerOiLong: pairFundingFees.accPerOiLong, 
-			accPerOiShort: pairFundingFees.accPerOiShort, 
+			accPerOiLong: pairFundingFees.accPerOiLong / 1e18, 
+			accPerOiShort: pairFundingFees.accPerOiShort / 1e18, 
 			lastUpdateBlock: pairFundingFees.lastUpdateBlock
 		};
 	});
@@ -731,10 +740,13 @@ function getFundingFee(
 };
 function getTradeLiquidationPrice(t){
 	const {trade, tradeInfo, initialAccFees} = t;
-	const posDai = trade.trainitialPosToken * tradeInfo.tokenPriceDai;
+	const posDai = trade.initialPosToken / 1e18 * tradeInfo.tokenPriceDai / 1e10;
+
+	const openPrice = parseFloat(trade.openPrice) / 1e10;
+	const buy = trade.buy.toString() === "true";
 
 	const liqPriceDistance =
-		(trade.openPrice *
+		(openPrice *
 			(posDai * 0.9 -
 				getRolloverFee(
 					posDai,
@@ -752,7 +764,7 @@ function getTradeLiquidationPrice(t){
 		posDai /
 		trade.leverage;
 
- 	return trade.buy ? trade.openPrice - liqPriceDistance : trade.openPrice + liqPriceDistance;
+ 	return trade.buy ? openPrice - liqPriceDistance : openPrice + liqPriceDistance;
 }
 
 function wss(){
@@ -782,7 +794,6 @@ function wss(){
 
 					const tp = parseFloat(t.tp)/1e10;
 					const sl = parseFloat(t.sl)/1e10;
-					const open = parseFloat(t.openPrice)/1e10;
 					const lev = parseFloat(t.leverage);
 					const liqPrice = getTradeLiquidationPrice(t);
 
@@ -790,7 +801,7 @@ function wss(){
 						orderType = 0;
 					}else if(sl.toString() !== "0" && ((buy && price <= sl) || (!buy && price >= sl))){
 						orderType = 1;
-					}else if(sl.toString() === "0" && ((buy && price <= liqPrice) || (!buy && price >= liqPrice))){
+					}else if((buy && price <= liqPrice) || (!buy && price >= liqPrice)){
 						orderType = 2;
 					}
 
