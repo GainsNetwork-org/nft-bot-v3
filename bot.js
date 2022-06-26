@@ -300,7 +300,7 @@ async function fetchTradingVariables(){
 				collaterals[j] = {long: collateralLong, short: collateralShort, max: collateralMax};
 			}
 
-			const pairInfos = await contracts.pairInfos.methods.getPairInfos([...Array(pairsCount).keys()]).call();
+			const pairInfos = await pairInfosContract.methods.getPairInfos([...Array(pairsCount).keys()]).call();
 			
 			pairParams = pairInfos["0"].map((value) => {
 				return {
