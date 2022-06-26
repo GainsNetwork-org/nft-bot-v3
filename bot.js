@@ -43,7 +43,7 @@ if(!process.env.WSS_URLS || !process.env.PRICES_URL || !process.env.STORAGE_ADDR
 || !process.env.PRIVATE_KEY || !process.env.PUBLIC_KEY || !process.env.EVENT_CONFIRMATIONS_SEC 
 || !process.env.TRIGGER_TIMEOUT || !process.env.MAX_GAS_PRICE_GWEI || !process.env.CHECK_REFILL_SEC 
 || !process.env.VAULT_REFILL_ENABLED || !process.env.AUTO_HARVEST_SEC || !process.env.MIN_PRIORITY_GWEI
-|| !process.env.PRIORITY_GWEI_MULTIPLIER){
+|| !process.env.PRIORITY_GWEI_MULTIPLIER || !process.env.PAIR_INFOS_ADDRESS){
 	console.log("Please fill all parameters in the .env file.");
 	process.exit();
 }
@@ -485,6 +485,7 @@ function watchLiveTradingEvents(){
 
 		if(eventSubPairInfos === null){
 			eventSubPairInfos = pairInfosContract.events.allEvents({ fromBlock: 'latest' }).on('data', function (event){
+				console.log(event);
 				const eventName = event.event.toString();
 
 				if(eventName !== "AccFundingFeesStored"){
