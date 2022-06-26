@@ -880,7 +880,7 @@ function watchPricingStream() {
 		appLogger.error("Pricing stream websocket error occurred!", { error });
 		socket.close();
 	};
-	socket.onmessage = async (msg) => {
+	socket.onmessage = (msg) => {
 		const currentKnownOpenTrades = knownOpenTrades;
 
 		if(currentKnownOpenTrades === null) {
@@ -917,18 +917,25 @@ function watchPricingStream() {
 			return;
 		}
 
-		try {
-			currentlyProcessingChartsMessage = true;
+		const chartCandleAge = Date.now() - messageData.time;
 
+		if(chartCandleAge > MAXIMUM_CHART_CANDLE_AGE_MS) {
+			appLogger.warn(`Chart candle data is too old to act on (from ${new Date(messageData.time).toISOString()}); skipping!`);
+
+			return;
+		}
+
+		currentlyProcessingChartsMessage = true;
+
+		handleOnMessageAsync().catch(error => {
+			appLogger.error("Unhandled error occurred when handling pricing stream message!", { error });
+		}).finally(() => {
+			currentlyProcessingChartsMessage = false;
+		});
+
+		async function handleOnMessageAsync() {
 			//appLogger.debug(`Beginning processing new "charts" message for ${messageData.time}...`);
 
-			const chartCandleAge = Date.now() - messageData.time;
-
-			if(chartCandleAge > MAXIMUM_CHART_CANDLE_AGE_MS) {
-				appLogger.warn(`Chart candle data is too old to act on (from ${new Date(messageData.time).toISOString()}); skipping!`);
-
-				return;
-			}
 
 			// appLogger.debug(`Received "charts" message, checking if any of the ${currentKnownOpenTrades.size} known open trades should be acted upon...`, { candleTime: messageData.time, chartCandleAge, knownOpenTradesCount: currentKnownOpenTrades.size });
 
@@ -1161,8 +1168,6 @@ function watchPricingStream() {
 					nftManager.releaseNft(availableNft);
 				}
 			}));
-		} finally {
-			currentlyProcessingChartsMessage = false;
 		}
 	}
 }
