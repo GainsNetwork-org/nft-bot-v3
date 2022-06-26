@@ -780,7 +780,7 @@ function wss(){
 
 			for(var i = 0; i < openTrades.length; i++){
 
-				const {trade: t} = openTrades[i];
+				let trade = openTrades[i].trade === undefined ? openTrades[i] : openTrades[i].trade;
 
 				if(isForexMarketClosed && t.pairIndex >= 21 && t.pairIndex <= 30) continue;
 
