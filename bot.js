@@ -116,7 +116,7 @@ async function selectProvider(n){
 	tradingContract = new web3[n].eth.Contract(TRADING_ABI, tradingAddress);
 	vaultContract = new web3[n].eth.Contract(VAULT_ABI, vaultAddress);
 
-	const pairInfosAddress = await tradingContract.methods.pairInfos().call();
+	const pairInfosAddress = await callbacksContract.methods.pairInfos().call();
 	pairInfosContract = new web3[n].eth.Contract(PAIR_INFOS_ABI, pairInfosAddress);
 
 	nftContract1 = new web3[n].eth.Contract(NFT_ABI, nftAddress1);
