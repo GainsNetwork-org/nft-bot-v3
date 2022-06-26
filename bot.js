@@ -779,18 +779,16 @@ function wss(){
 			const isForexMarketClosed = forex.isForexCurrentlyOpen() === false;
 
 			for(var i = 0; i < openTrades.length; i++){
-
-				let t = openTrades[i].trade === undefined ? openTrades[i] : openTrades[i].trade;
-
 				if(isForexMarketClosed && t.pairIndex >= 21 && t.pairIndex <= 30) continue;
 
 				const price = p.closes[t.pairIndex];
 				if(!(price > 0)) continue;
 
-				const buy = t.buy.toString() === "true";
 				let orderType = -1;
 
-				if(t.openPrice !== undefined){
+				if(openTrades[i].trade !== undefined){
+					const t = openTrades[i].trade;
+					const buy = t.buy.toString() === "true";
 
 					const tp = parseFloat(t.tp)/1e10;
 					const sl = parseFloat(t.sl)/1e10;
@@ -806,18 +804,22 @@ function wss(){
 					}
 
 				}else{
+					const t = openTrades[i];
+
+					const buy = t.buy.toString() === "true";
+					const posDai = parseFloat(t.leverage) * parseFloat(t.positionSize);
 
 					const baseSpread = spreadsP[t.pairIndex]/1e10*(100-t.spreadReductionP)/100;
 					
 					const onePercentDepth = buy ? pairParams.onePercentDepthAbove : pairParams.onePercentDepthBelow;
 					const interestDai = buy ? parseFloat(openInterests[t.pairIndex].long) : parseFloat(openInterests[t.pairIndex].short);
    					
-   					const spread = baseSpread + (interestDai + (collateral * leverage) / 2) / onePercentDepth;
+   					const spread = baseSpread + (interestDai + (posDai / 1e18) / 2) / onePercentDepth;
 					const priceIncludingSpread = !buy ? price*(1-spread/100) : price*(1+spread/100);
 
 					const collateralDai = buy ? parseFloat(collaterals[t.pairIndex].long) : parseFloat(collaterals[t.pairIndex].short);
 					
-					const newInterestDai = (interestDai + parseFloat(t.leverage)*parseFloat(t.positionSize));
+					const newInterestDai = (interestDai + posDai);
 					const newCollateralDai = (collateralDai + parseFloat(t.positionSize));
 					
 					const maxInterestDai = parseFloat(openInterests[t.pairIndex].max);
