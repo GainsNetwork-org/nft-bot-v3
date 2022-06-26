@@ -810,10 +810,10 @@ function wss(){
 
 					const baseSpread = spreadsP[t.pairIndex]/1e10*(100-t.spreadReductionP)/100;
 					
-					const onePercentDepth = buy ? pairParams.onePercentDepthAbove : pairParams.onePercentDepthBelow;
+					const onePercentDepth = buy ? pairParams[t.pairIndex].onePercentDepthAbove : pairParams[t.pairIndex].onePercentDepthBelow;
 					const interestDai = buy ? parseFloat(openInterests[t.pairIndex].long) : parseFloat(openInterests[t.pairIndex].short);
    					
-   					const spread = baseSpread + (interestDai + (posDai / 1e18) / 2) / onePercentDepth;
+   					const spread = onePercentDepth > 0 ? baseSpread + (interestDai / 1e18 + (posDai / 1e18) / 2) / onePercentDepth : baseSpread;
 					const priceIncludingSpread = !buy ? price*(1-spread/100) : price*(1+spread/100);
 
 					const collateralDai = buy ? parseFloat(collaterals[t.pairIndex].long) : parseFloat(collaterals[t.pairIndex].short);
