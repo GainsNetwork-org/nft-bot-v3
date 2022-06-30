@@ -714,6 +714,8 @@ function getRolloverFee (
   initialAccRolloverFees,
   openedAfterUpdate
 ){
+	if(!openedAfterUpdate || !blocks[selectedProvider]) return 0;
+
 	const { accPerCollateral, lastUpdateBlock } = pairRolloverFees[pairIndex];
 	const { rolloverFeePerBlockP } = pairParams[pairIndex];
 
@@ -728,6 +730,8 @@ function getFundingFee(
   buy,
   openedAfterUpdate
 ){
+	if(!openedAfterUpdate || !blocks[selectedProvider]) return 0;
+
 	const { accPerOiLong, accPerOiShort, lastUpdateBlock } = pairFundingFees[pairIndex];
 	const { fundingFeePerBlockP } = pairParams[pairIndex];
 
