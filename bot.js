@@ -470,7 +470,6 @@ function watchLiveTradingEvents(){
 
 		if(eventSubCallbacks === null){
 			eventSubCallbacks = callbacksContract.events.allEvents({ fromBlock: 'latest' }).on('data', function (event){
-				console.log(event);
 				const eventName = event.event.toString();
 
 				if(eventName !== "MarketExecuted" && eventName !== "LimitExecuted"
