@@ -31,7 +31,7 @@ let allowedLink = false, selectedProvider = null, eventSubTrading = null, eventS
 	openTrades = [], spreadsP = [], openInterests = [], collaterals = [], pairParams = [], pairRolloverFees = [], pairFundingFees = [],
 	nfts = [], nftsBeingUsed = [], ordersTriggered = [],
 	storageContract, tradingContract, tradingAddress, pairInfosContract, aggregatorContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract,
-	nftTimelock, maxTradesPerPair,
+	nftTimelock, maxTradesPerPair, maxNegativePnlOnOpenP,
 	nftContract1, nftContract2, nftContract3, nftContract4, nftContract5, linkContract;
 
 // --------------------------------------------
@@ -253,6 +253,7 @@ async function fetchTradingVariables(){
 		const maxPerPair = await storageContract.methods.maxTradesPerPair().call();
 		const nftSuccessTimelock = await storageContract.methods.nftSuccessTimelock().call();
 		const pairsCount = await pairsStorageContract.methods.pairsCount().call();
+		const maxNegativePnlP = await pairInfosContract.methods.maxNegativePnlOnOpenP().call();
 
 		nfts = [];
 
@@ -305,24 +306,24 @@ async function fetchTradingVariables(){
 
 			pairParams = pairInfos["0"].map((value) => {
 				return {
-					onePercentDepthAbove: value.onePercentDepthAbove, 
-					onePercentDepthBelow: value.onePercentDepthBelow, 
-					rolloverFeePerBlockP: value.rolloverFeePerBlockP / 1e12, 
-					fundingFeePerBlockP: value.fundingFeePerBlockP / 1e12
+					onePercentDepthAbove: parseFloat(value.onePercentDepthAbove), 
+					onePercentDepthBelow: parseFloat(value.onePercentDepthBelow), 
+					rolloverFeePerBlockP: parseFloat(value.rolloverFeePerBlockP) / 1e12, 
+					fundingFeePerBlockP: parseFloat(value.fundingFeePerBlockP) / 1e12
 				}
 			});
 
 			pairRolloverFees = pairInfos["1"].map((value) => {
 				return {
-					accPerCollateral: value.accPerCollateral / 1e18,
+					accPerCollateral: parseFloat(value.accPerCollateral) / 1e18,
 					lastUpdateBlock: parseInt(value.lastUpdateBlock)
 				}
 			});
 
 			pairFundingFees = pairInfos["2"].map((value) => {
 				return {
-					accPerOiLong: value.accPerOiLong / 1e18, 
-					accPerOiShort: value.accPerOiShort / 1e18, 
+					accPerOiLong: parseFloat(value.accPerOiLong) / 1e18, 
+					accPerOiShort: parseFloat(value.accPerOiShort) / 1e18, 
 					lastUpdateBlock: parseInt(value.lastUpdateBlock)
 				}
 			});
@@ -332,6 +333,7 @@ async function fetchTradingVariables(){
 
 			nftTimelock = nftSuccessTimelock;
 			maxTradesPerPair = maxPerPair;
+			maxNegativePnlOnOpenP = parseFloat(maxNegativePnlP) / 1e10;
 
 			console.log("Fetched trading variables.");
 		});
@@ -468,6 +470,7 @@ function watchLiveTradingEvents(){
 
 		if(eventSubCallbacks === null){
 			eventSubCallbacks = callbacksContract.events.allEvents({ fromBlock: 'latest' }).on('data', function (event){
+				console.log(event);
 				const eventName = event.event.toString();
 
 				if(eventName !== "MarketExecuted" && eventName !== "LimitExecuted"
@@ -808,13 +811,14 @@ function wss(){
 					const buy = t.buy.toString() === "true";
 					const posDai = parseFloat(t.leverage) * parseFloat(t.positionSize);
 
-					const baseSpread = spreadsP[t.pairIndex]/1e10*(100-t.spreadReductionP)/100;
+					const baseSpreadP = spreadsP[t.pairIndex]/1e10*(100-t.spreadReductionP)/100;
 					
 					const onePercentDepth = buy ? pairParams[t.pairIndex].onePercentDepthAbove : pairParams[t.pairIndex].onePercentDepthBelow;
 					const interestDai = buy ? parseFloat(openInterests[t.pairIndex].long) : parseFloat(openInterests[t.pairIndex].short);
    					
-   					const spread = onePercentDepth > 0 ? baseSpread + (interestDai / 1e18 + (posDai / 1e18) / 2) / onePercentDepth : baseSpread;
-					const priceIncludingSpread = !buy ? price*(1-spread/100) : price*(1+spread/100);
+   					const priceImpactP = (interestDai / 1e18 + (posDai / 1e18) / 2) / onePercentDepth;
+   					const spreadP = onePercentDepth > 0 ? baseSpreadP + priceImpactP : baseSpreadP;
+					const priceIncludingSpread = !buy ? price * (1 - spreadP / 100) : price * (1 + spreadP/100);
 
 					const collateralDai = buy ? parseFloat(collaterals[t.pairIndex].long) : parseFloat(collaterals[t.pairIndex].short);
 					
@@ -827,7 +831,8 @@ function wss(){
 					const minPrice = parseFloat(t.minPrice)/1e10;
 					const maxPrice = parseFloat(t.maxPrice)/1e10;
 
-					if(newInterestDai <= maxInterestDai && newCollateralDai <= maxCollateralDai){
+					if(newInterestDai <= maxInterestDai && newCollateralDai <= maxCollateralDai
+					&& (onePercentDepth === 0 || priceImpactP * t.leverage <= maxNegativePnlOnOpenP)){
 						if(t.type.toString() === "0" && priceIncludingSpread >= minPrice && priceIncludingSpread <= maxPrice
 						|| t.type.toString() === "1" && (buy ? priceIncludingSpread <= maxPrice : priceIncludingSpread >= minPrice)
 						|| t.type.toString() === "2" && (buy ? priceIncludingSpread >= minPrice : priceIncludingSpread <= maxPrice)){
