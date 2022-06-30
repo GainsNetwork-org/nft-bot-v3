@@ -523,6 +523,24 @@ async function fetchOpenTrades(){
 
 				appLogger.debug(`Filtered down to ${actualOpenTrades.length} actual open trades for trader ${pairTraderAddress}.`);
 
+				appLogger.debug("Fetching corresponding trade info...");
+
+				const actualOpenTradesTradeInfos = await Promise.all(actualOpenTrades.map(aot => storageContract.methods.openTradesInfo(aot.trader, aot.pairIndex, aot.index).call()));
+
+				for(let tradeIndex = 0; tradeIndex < actualOpenTrades.length; tradeIndex++) {
+					const tradeInfo = actualOpenTradesTradeInfos[tradeIndex];
+
+					if(tradeInfo === undefined) {
+						appLogger.error("No trade info found for open trade while fetching open trades!", { trade: actualOpenTrades[tradeIndex] });
+
+						continue;
+					}
+
+					actualOpenTrades[tradeIndex].tradeInfo = tradeInfo;
+				}
+
+				appLogger.debug(`Trade info fetched for ${actualOpenTrades.length} trades. Done.`);
+
 				return actualOpenTrades;
 			}));
 
