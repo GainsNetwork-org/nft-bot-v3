@@ -647,6 +647,23 @@ function watchLiveTradingEvents(){
 				setTimeout(() => synchronizeOpenTrades(event), EVENT_CONFIRMATIONS_MS);
 			}
 		});
+
+		if(eventSubPairInfos === null){
+			eventSubPairInfos = pairInfosContract.events.allEvents({ fromBlock: 'latest' }).on('data', function (event){
+				const eventName = event.event.toString();
+
+				if(eventName !== "AccFundingFeesStored"){
+					return;
+				}
+
+				// If no confirmation delay, then execute immediately without timer
+				if(EVENT_CONFIRMATIONS_MS === 0) {
+					refreshPairFundingFees(event);
+				} else {
+					setTimeout(() => refreshPairFundingFees(event));
+				}
+			});
+		}
 	} catch {
 		setTimeout(() => { watchLiveTradingEvents(); }, 2*1000);
 	}
@@ -841,6 +858,17 @@ async function synchronizeOpenTrades(event){
 	} catch(error) {
 		appLogger.error("Error occurred when refreshing trades.", error);
 	}
+}
+
+async function refreshPairFundingFees(event){
+	const pairIndex = parseInt(event.returnValues.pairIndex, 10);
+	const pairFundingFees = await pairInfosContract.methods.pairFundingFees(pairIndex).call();
+
+	pairFundingFees[pairIndex] = {
+		accPerOiLong: pairFundingFees.accPerOiLong / 1e18,
+		accPerOiShort: pairFundingFees.accPerOiShort / 1e18,
+		lastUpdateBlock: parseInt(pairFundingFees.lastUpdateBlock)
+	};
 }
 
 
