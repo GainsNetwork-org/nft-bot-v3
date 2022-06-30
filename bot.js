@@ -34,11 +34,13 @@ let executionStats = {
 // 2. GLOBAL VARIABLES
 // -----------------------------------------
 
-let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, currentlySelectedWeb3Client = null, eventSubTrading = null, eventSubCallbacks = null,
+let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, currentlySelectedWeb3Client = null,
+	eventSubTrading = null, eventSubCallbacks = null, eventSubPairInfos = null,
 	web3Clients = [], priorityTransactionMaxPriorityFeePerGas = 50, standardTransactionGasFees = { maxFee: 31, maxPriorityFee: 31 },
-	knownOpenTrades = null, spreadsP = [], openInterests = [], collaterals = [], triggeredOrders = new Map(),
+	spreadsP = [], openInterests = [], collaterals = [], pairParams = [], pairRolloverFees = [], pairFundingFees = [], maxNegativePnlOnOpenP = 0,
+	knownOpenTrades = null, triggeredOrders = new Map(),
 	storageContract, tradingContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract,
-	maxTradesPerPair = 0, linkContract;
+	maxTradesPerPair = 0, linkContract, pairInfosContract;
 
 // --------------------------------------------
 // 3. INIT: CHECK ENV VARS & LINK ALLOWANCE
@@ -49,7 +51,8 @@ if(!process.env.WSS_URLS || !process.env.PRICES_URL || !process.env.STORAGE_ADDR
 || !process.env.PRIVATE_KEY || !process.env.PUBLIC_KEY || !process.env.EVENT_CONFIRMATIONS_SEC
 || !process.env.MAX_GAS_PRICE_GWEI || !process.env.CHECK_REFILL_SEC
 || !process.env.VAULT_REFILL_ENABLED || !process.env.AUTO_HARVEST_SEC || !process.env.MIN_PRIORITY_GWEI
-|| !process.env.PRIORITY_GWEI_MULTIPLIER || !process.env.MAX_GAS_PER_TRANSACTION){
+|| !process.env.PRIORITY_GWEI_MULTIPLIER || !process.env.MAX_GAS_PER_TRANSACTION
+|| !process.env.PAIR_INFOS_ADDRESS){
 	appLogger.info("Please fill all parameters in the .env file.");
 
 	process.exit();
@@ -66,7 +69,6 @@ const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
 	  MIN_PRIORITY_GWEI = parseFloat(process.env.MIN_PRIORITY_GWEI),
 	  OPEN_TRADES_REFRESH_MS = (process.env.OPEN_TRADES_REFRESH_SEC ?? '').length > 0 ? parseFloat(process.env.OPEN_TRADES_REFRESH_SEC) * 1000 : 120,
 	  GAS_REFRESH_INTERVAL_MS = (process.env.GAS_REFRESH_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.GAS_REFRESH_INTERVAL_SEC) * 1000 : 3,
-	  WEB3_LIVENESS_CHECK_INTERVAL_MS = (process.env.WEB3_LIVENESS_CHECK_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.WEB3_LIVENESS_CHECK_INTERVAL_SEC) * 1000 : 10 * 1000,
 	  WEB3_STATUS_REPORT_INTERVAL_MS = (process.env.WEB3_STATUS_REPORT_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.WEB3_STATUS_REPORT_INTERVAL_SEC) * 1000 : 30 * 1000;
 
 const CHAIN_ID = process.env.CHAIN_ID ?? 137; // Polygon chain id
@@ -163,6 +165,7 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	callbacksContract = new newWeb3Client.eth.Contract(abis.CALLBACKS, callbacksAddress);
 	tradingContract = new newWeb3Client.eth.Contract(abis.TRADING, tradingAddress);
 	vaultContract = new newWeb3Client.eth.Contract(abis.VAULT, vaultAddress);
+	pairInfosContract = new newWeb3Client.eth.Contract(abis.PAIR_INFOS, process.env.PAIR_INFOS_ADDRESS);
 
 	linkContract = new newWeb3Client.eth.Contract(abis.LINK, linkAddress);
 
@@ -335,7 +338,12 @@ async function fetchTradingVariables(){
 
 	try
 	{
-		await fetchPairs();
+		const pairsCount = await pairsStorageContract.methods.pairsCount().call();
+
+		await Promise.all([
+			fetchPairs(pairsCount),
+			fetchPairInfos(pairsCount),
+		]);
 
 		appLogger.info(`Done fetching trading variables; took ${performance.now() - executionStart}ms.`);
 
@@ -348,19 +356,12 @@ async function fetchTradingVariables(){
 		fetchTradingVariablesTimerId = setTimeout(() => { fetchTradingVariablesTimerId = null; fetchTradingVariables(); }, 2*1000);
 	};
 
-	async function fetchPairs() {
-		const [
-			maxPerPair,
-			pairsCount
-		] = await Promise.all(
-			[
-				storageContract.methods.maxTradesPerPair().call(),
-				pairsStorageContract.methods.pairsCount().call()
-			]);
+	async function fetchPairs(pairsCount) {
+		const maxPerPair = await storageContract.methods.maxTradesPerPair().call();
+		let pairsPromises = new Array(pairsCount);
 
-		let pairsPromises = [];
 		for(var i = 0; i < pairsCount; i++){
-			pairsPromises.push(pairsStorageContract.methods.pairsBackend(i).call());
+			pairsPromises[i] = pairsStorageContract.methods.pairsBackend(i).call();
 		}
 
 		const pairs = await Promise.all(pairsPromises);
@@ -376,15 +377,14 @@ async function fetchTradingVariables(){
 				collateralLong,
 				collateralShort,
 				collateralMax
-				] = await Promise.all(
-					[
-					storageContract.methods.openInterestDai(pairIndex, 0).call(),
-					storageContract.methods.openInterestDai(pairIndex, 1).call(),
-					storageContract.methods.openInterestDai(pairIndex, 2).call(),
-					pairsStorageContract.methods.groupsCollaterals(pairIndex, 0).call(),
-					pairsStorageContract.methods.groupsCollaterals(pairIndex, 1).call(),
-					pairsStorageContract.methods.groupMaxCollateral(pairIndex).call()
-				]);
+			] = await Promise.all([
+				storageContract.methods.openInterestDai(pairIndex, 0).call(),
+				storageContract.methods.openInterestDai(pairIndex, 1).call(),
+				storageContract.methods.openInterestDai(pairIndex, 2).call(),
+				pairsStorageContract.methods.groupsCollaterals(pairIndex, 0).call(),
+				pairsStorageContract.methods.groupsCollaterals(pairIndex, 1).call(),
+				pairsStorageContract.methods.groupMaxCollateral(pairIndex).call()
+			]);
 
 			newOpenInterests[pairIndex] = {long: openInterestLong, short: openInterestShort, max: openInterestMax};
 			newCollaterals[pairIndex] = {long: collateralLong, short: collateralShort, max: collateralMax};
@@ -395,6 +395,36 @@ async function fetchTradingVariables(){
 		spreadsP = newSpreadsP;
 		openInterests = newOpenInterests;
 		collaterals = newCollaterals;
+	}
+
+	async function fetchPairInfos(pairsCount) {
+		const [
+			pairInfos,
+			newMaxNegativePnlOnOpenP
+		 ] = await Promise.all([
+			pairInfosContract.methods.getPairInfos([...Array(parseInt(pairsCount)).keys()]).call(),
+			pairInfosContract.methods.maxNegativePnlOnOpenP().call()
+		 ]);
+
+		pairParams = pairInfos["0"].map((value) => ({
+			onePercentDepthAbove: parseFloat(value.onePercentDepthAbove),
+			onePercentDepthBelow: parseFloat(value.onePercentDepthBelow),
+			rolloverFeePerBlockP: parseFloat(value.rolloverFeePerBlockP) / 1e12,
+			fundingFeePerBlockP: parseFloat(value.fundingFeePerBlockP) / 1e12
+		}));
+
+		pairRolloverFees = pairInfos["1"].map((value) => ({
+			accPerCollateral: parseFloat(value.accPerCollateral) / 1e18,
+			lastUpdateBlock: parseInt(value.lastUpdateBlock)
+		}));
+
+		pairFundingFees = pairInfos["2"].map((value) => ({
+			accPerOiLong: parseFloat(value.accPerOiLong) / 1e18,
+			accPerOiShort: parseFloat(value.accPerOiShort) / 1e18,
+			lastUpdateBlock: parseInt(value.lastUpdateBlock)
+		}));
+
+		maxNegativePnlOnOpenP = parseFloat(newMaxNegativePnlOnOpenP) / 1e10;
 	}
 }
 
