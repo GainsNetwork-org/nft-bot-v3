@@ -581,8 +581,8 @@ async function fetchOpenTrades(){
 					const trade = actualOpenTrades[tradeIndex];
 					trade.tradeInfo = tradeInfo;
 					trade.tradeInitialAccFees = {
-						rollover: tradeInitialAccFees.rollover / 1e18,
-						funding: tradeInitialAccFees.funding / 1e18,
+						rollover: parseInt(tradeInitialAccFees.rollover, 10) / 1e18,
+						funding: parseInt(tradeInitialAccFees.funding, 10) / 1e18,
 						openedAfterUpdate: tradeInitialAccFees.openedAfterUpdate === true,
 					};
 				}
@@ -779,14 +779,23 @@ async function synchronizeOpenTrades(event){
 				}
 			}
 
-			const tradeInfo = await storageContract.methods.openTradesInfo(trader, pairIndex, index).call()
+			const [tradeInfo, tradeInitialAccFees] = await Promise.all([
+				storageContract.methods.openTradesInfo(trader, pairIndex, index).call(),
+				pairInfosContract.methods.tradeInitialAccFees(trader, pairIndex, index).call()
+			]);
+
 			const tradeKey = buildTradeIdentifier(trader, pairIndex, index, false);
 
 			currentKnownOpenTrades.set(
 				tradeKey,
 				{
 					...trade,
-					tradeInfo
+					tradeInfo,
+					tradeInitialAccFees: {
+						rollover: parseInt(tradeInitialAccFees.rollover, 10) / 1e18,
+						funding: parseInt(tradeInitialAccFees.funding, 10) / 1e18,
+						openedAfterUpdate: tradeInitialAccFees.openedAfterUpdate === true,
+					}
 				});
 
 			appLogger.info(`Synchronize open trades from event ${eventName}: Stored active trade ${tradeKey}`);
