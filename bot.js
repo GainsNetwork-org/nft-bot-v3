@@ -469,9 +469,11 @@ async function fetchOpenTrades(){
 				fetchOpenPairTrades()
 			]);
 
-		knownOpenTrades = new Map(openLimitOrders
+		const newOpenTrades = new Map(openLimitOrders
 			.concat(pairTraders)
 			.map(trade => [buildTradeIdentifier(trade.trader, trade.pairIndex, trade.index, trade.openPrice === undefined), trade]));
+
+		knownOpenTrades = newOpenTrades;
 
 		appLogger.info(`Fetched ${knownOpenTrades.size} total open trade(s) in ${performance.now() - start}ms.`);
 
@@ -551,11 +553,12 @@ async function fetchOpenTrades(){
 				// Filter out any of the trades that aren't *really* open (NOTE: these will have an empty trader address, so just test against that)
 				const actualOpenTrades = openTradesForTraderAddress.filter(openTrade => openTrade.trader === pairTraderAddress);
 
-				appLogger.debug(`Filtered down to ${actualOpenTrades.length} actual open trades for trader ${pairTraderAddress}.`);
+				appLogger.debug(`Filtered down to ${actualOpenTrades.length} actual open trades for trader ${pairTraderAddress}; fetching corresponding trade info...`);
 
-				appLogger.debug("Fetching corresponding trade info...");
-
-				const actualOpenTradesTradeInfos = await Promise.all(actualOpenTrades.map(aot => storageContract.methods.openTradesInfo(aot.trader, aot.pairIndex, aot.index).call()));
+				const [actualOpenTradesTradeInfos, actualOpenTradesInitialAccFees] = await Promise.all([
+					Promise.all(actualOpenTrades.map(aot => storageContract.methods.openTradesInfo(aot.trader, aot.pairIndex, aot.index).call())),
+					Promise.all(actualOpenTrades.map(aot => pairInfosContract.methods.tradeInitialAccFees(aot.trader, aot.pairIndex, aot.index).call()))
+				]);
 
 				for(let tradeIndex = 0; tradeIndex < actualOpenTrades.length; tradeIndex++) {
 					const tradeInfo = actualOpenTradesTradeInfos[tradeIndex];
@@ -566,10 +569,25 @@ async function fetchOpenTrades(){
 						continue;
 					}
 
-					actualOpenTrades[tradeIndex].tradeInfo = tradeInfo;
+					const tradeInitialAccFees = actualOpenTradesInitialAccFees[tradeIndex];
+
+					if(tradeInitialAccFees === undefined) {
+						appLogger.error("No initial acc fees found for open trade while fetching open trades!", { trade: actualOpenTrades[tradeIndex] });
+
+						continue;
+					}
+
+					// Tack on the additional data to the original trade object
+					const trade = actualOpenTrades[tradeIndex];
+					trade.tradeInfo = tradeInfo;
+					trade.tradeInitialAccFees = {
+						rollover: tradeInitialAccFees.rollover / 1e18,
+						funding: tradeInitialAccFees.funding / 1e18,
+						openedAfterUpdate: tradeInitialAccFees.openedAfterUpdate === true,
+					};
 				}
 
-				appLogger.debug(`Trade info fetched for ${actualOpenTrades.length} trades. Done.`);
+				appLogger.debug(`Trade info fetched for ${actualOpenTrades.length} trades; fetching initial fees...`);
 
 				return actualOpenTrades;
 			}));
