@@ -610,59 +610,62 @@ function watchLiveTradingEvents(){
 			eventSubTrading.unsubscribe();
 		}
 
-		eventSubTrading = tradingContract.events.allEvents({ fromBlock: 'latest' }).on('data', (event) => {
-			const eventName = event.event;
+		eventSubTrading = tradingContract.events.allEvents({ fromBlock: 'latest' })
+			.on('data', (event) => {
+				const eventName = event.event;
 
-			if(eventName !== "OpenLimitPlaced" && eventName !== "OpenLimitUpdated"
-			&& eventName !== "OpenLimitCanceled" && eventName !== "TpUpdated"
-			&& eventName !== "SlUpdated"){
-				return;
-			}
+				if(eventName !== "OpenLimitPlaced" && eventName !== "OpenLimitUpdated"
+				&& eventName !== "OpenLimitCanceled" && eventName !== "TpUpdated"
+				&& eventName !== "SlUpdated"){
+					return;
+				}
 
-			// If no confirmation delay, then execute immediately without timer
-			if(EVENT_CONFIRMATIONS_MS === 0) {
-				synchronizeOpenTrades(event);
-			} else {
-				setTimeout(() => synchronizeOpenTrades(event), EVENT_CONFIRMATIONS_MS);
-			}
+				// If no confirmation delay, then execute immediately without timer
+				if(EVENT_CONFIRMATIONS_MS === 0) {
+					synchronizeOpenTrades(event);
+				} else {
+					setTimeout(() => synchronizeOpenTrades(event), EVENT_CONFIRMATIONS_MS);
+				}
 		});
 
 		if(eventSubCallbacks !== null && eventSubCallbacks.id !== null) {
 			eventSubCallbacks.unsubscribe();
 		}
 
-		eventSubCallbacks = callbacksContract.events.allEvents({ fromBlock: 'latest' }).on('data', (event) => {
-			const eventName = event.event;
+		eventSubCallbacks = callbacksContract.events.allEvents({ fromBlock: 'latest' })
+			.on('data', (event) => {
+				const eventName = event.event;
 
-			if(eventName !== "MarketExecuted" && eventName !== "LimitExecuted"
-			&& eventName !== "MarketCloseCanceled" && eventName !== "SlUpdated"
-			&& eventName !== "SlCanceled"){
-				return;
-			}
-
-			// If no confirmation delay, then execute immediately without timer
-			if(EVENT_CONFIRMATIONS_MS === 0) {
-				synchronizeOpenTrades(event);
-			} else {
-				setTimeout(() => synchronizeOpenTrades(event), EVENT_CONFIRMATIONS_MS);
-			}
-		});
-
-		if(eventSubPairInfos === null){
-			eventSubPairInfos = pairInfosContract.events.allEvents({ fromBlock: 'latest' }).on('data', function (event){
-				const eventName = event.event.toString();
-
-				if(eventName !== "AccFundingFeesStored"){
+				if(eventName !== "MarketExecuted" && eventName !== "LimitExecuted"
+				&& eventName !== "MarketCloseCanceled" && eventName !== "SlUpdated"
+				&& eventName !== "SlCanceled"){
 					return;
 				}
 
 				// If no confirmation delay, then execute immediately without timer
 				if(EVENT_CONFIRMATIONS_MS === 0) {
-					refreshPairFundingFees(event);
+					synchronizeOpenTrades(event);
 				} else {
-					setTimeout(() => refreshPairFundingFees(event));
+					setTimeout(() => synchronizeOpenTrades(event), EVENT_CONFIRMATIONS_MS);
 				}
 			});
+
+		if(eventSubPairInfos === null){
+			eventSubPairInfos = pairInfosContract.events.allEvents({ fromBlock: 'latest' })
+				.on('data', (event) => {
+					const eventName = event.event;
+
+					if(eventName !== "AccFundingFeesStored"){
+						return;
+					}
+
+					// If no confirmation delay, then execute immediately without timer
+					if(EVENT_CONFIRMATIONS_MS === 0) {
+						refreshPairFundingFees(event);
+					} else {
+						setTimeout(() => refreshPairFundingFees(event));
+					}
+				});
 		}
 	} catch {
 		setTimeout(() => { watchLiveTradingEvents(); }, 2*1000);
