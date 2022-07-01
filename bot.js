@@ -737,10 +737,15 @@ async function synchronizeOpenTrades(event){
 		} else if(eventName === "TpUpdated" || eventName === "SlUpdated" || eventName === "SlCanceled") {
 			const { trader, pairIndex, index } =  eventReturnValues;
 
-			const trade = await storageContract.methods.openTrades(trader, pairIndex, index).call();
+			// Fetch all fresh trade information to update known open trades
+			const [trade, tradeInfo, tradeInitialAccFees] = await Promise.all([
+				storageContract.methods.openTrades(trader, pairIndex, index).call(),
+				storageContract.methods.openTradesInfo(trader, pairIndex, index).call(),
+				pairInfosContract.methods.tradeInitialAccFees(trader, pairIndex, index).call()
+			]);
 
-			// Always fetch fresh trade info
-			trade.tradeInfo = await storageContract.methods.openTradesInfo(trader, pairIndex, index).call();
+			trade.tradeInfo = tradeInfo;
+			trade.tradeInitialAccFees = tradeInitialAccFees;
 
 			const tradeKey = buildTradeIdentifier(trader, pairIndex, index, false);
 			currentKnownOpenTrades.set(tradeKey, trade);
@@ -752,9 +757,17 @@ async function synchronizeOpenTrades(event){
 
 			const trade = await storageContract.methods.openTrades(trader, pairIndex, index).call();
 
-			if(parseInt(trade.leverage) > 0) {
-				// Always fetch fresh trade info
-				trade.tradeInfo = await storageContract.methods.openTradesInfo(trader, pairIndex, index).call();
+			// Make sure the trade is still actually active
+			if(parseInt(trade.leverage, 10) > 0) {
+				// Fetch all fresh trade information to update known open trades
+				const [tradeInfo, tradeInitialAccFees] = await Promise.all([
+					storageContract.methods.openTradesInfo(trader, pairIndex, index).call(),
+					pairInfosContract.methods.tradeInitialAccFees(trader, pairIndex, index).call()
+				]);
+
+				trade.tradeInfo = tradeInfo;
+				trade.tradeInitialAccFees = tradeInitialAccFees;
+
 				currentKnownOpenTrades.set(tradeKey, trade);
 			} else {
 				currentKnownOpenTrades.delete(tradeKey);
@@ -800,8 +813,8 @@ async function synchronizeOpenTrades(event){
 
 			appLogger.info(`Synchronize open trades from event ${eventName}: Stored active trade ${tradeKey}`);
 		} else if((eventName === "MarketExecuted" && eventReturnValues.open === false)
-				||
-			(eventName === "LimitExecuted" && eventReturnValues.orderType !== "3")){
+						||
+					(eventName === "LimitExecuted" && eventReturnValues.orderType !== "3")){
 			const { trader, pairIndex, index } = eventReturnValues.t;
 			const tradeKey = buildTradeIdentifier(trader, pairIndex, index, false);
 
@@ -981,13 +994,10 @@ function watchPricingStream() {
 
 				let orderType = -1;
 
-				// If it's an open trade, determine what type of order it is
 				if(isPendingOpenLimitOrder === false) {
 					const tp = parseFloat(openTrade.tp)/1e10;
 					const sl = parseFloat(openTrade.sl)/1e10;
-					const open = parseFloat(openTrade.openPrice)/1e10;
-					const lev = parseFloat(openTrade.leverage);
-					const liqPrice = buy ? open - 0.9/lev*open : open + 0.9/lev*open;
+					const liqPrice = getTradeLiquidationPrice(openTrade);
 
 					if(tp !== 0 && ((buy && price >= tp) || (!buy && price <= tp))) {
 						orderType = 0;
@@ -999,24 +1009,40 @@ function watchPricingStream() {
 						//appLogger.debug(`Open trade ${openTradeKey} is not ready for us to act on yet.`);
 					}
 				} else {
-					// It's an already open trade, so determine if it's time close is now
-					const spread = spreadsP[pairIndex]/1e10*(100-openTrade.spreadReductionP)/100;
-					const priceIncludingSpread = !buy ? price*(1-spread/100) : price*(1+spread/100);
-					const interestDai = buy ? parseFloat(openInterests[pairIndex].long) : parseFloat(openInterests[pairIndex].short);
-					const collateralDai = buy ? parseFloat(collaterals[pairIndex].long) : parseFloat(collaterals[pairIndex].short);
-					const newInterestDai = (interestDai + parseFloat(openTrade.leverage)*parseFloat(openTrade.positionSize));
+					const posDai = parseFloat(openTrade.leverage) * parseFloat(openTrade.positionSize);
+
+					const baseSpreadP = spreadsP[openTrade.pairIndex]/1e10*(100-openTrade.spreadReductionP)/100;
+
+					const onePercentDepth = buy ? pairParams[openTrade.pairIndex].onePercentDepthAbove : pairParams[openTrade.pairIndex].onePercentDepthBelow;
+					const interestDai = buy ? parseFloat(openInterests[openTrade.pairIndex].long) : parseFloat(openInterests[openTrade.pairIndex].short);
+
+   					const priceImpactP = (interestDai / 1e18 + (posDai / 1e18) / 2) / onePercentDepth;
+   					const spreadP = onePercentDepth > 0 ? baseSpreadP + priceImpactP : baseSpreadP;
+					const priceIncludingSpread = !buy ? price * (1 - spreadP / 100) : price * (1 + spreadP/100);
+
+					const collateralDai = buy ? parseFloat(collaterals[openTrade.pairIndex].long) : parseFloat(collaterals[openTrade.pairIndex].short);
+
+					const newInterestDai = (interestDai + posDai);
 					const newCollateralDai = (collateralDai + parseFloat(openTrade.positionSize));
-					const maxInterestDai = parseFloat(openInterests[pairIndex].max);
-					const maxCollateralDai = parseFloat(collaterals[pairIndex].max);
+
+					const maxInterestDai = parseFloat(openInterests[openTrade.pairIndex].max);
+					const maxCollateralDai = parseFloat(collaterals[openTrade.pairIndex].max);
+
 					const minPrice = parseFloat(openTrade.minPrice)/1e10;
 					const maxPrice = parseFloat(openTrade.maxPrice)/1e10;
 
-					if(newInterestDai <= maxInterestDai && newCollateralDai <= maxCollateralDai) {
+					if(newInterestDai <= maxInterestDai
+							&&
+						newCollateralDai <= maxCollateralDai
+							&&
+						(onePercentDepth === 0
+								||
+							priceImpactP * openTrade.leverage <= maxNegativePnlOnOpenP)) {
 						const tradeType = openTrade.type;
 
 						if(tradeType === "0" && priceIncludingSpread >= minPrice && priceIncludingSpread <= maxPrice
-						|| tradeType === "1" && (buy ? priceIncludingSpread <= maxPrice : priceIncludingSpread >= minPrice)
-						|| tradeType === "2" && (buy ? priceIncludingSpread >= minPrice : priceIncludingSpread <= maxPrice)){
+							|| tradeType === "1" && (buy ? priceIncludingSpread <= maxPrice : priceIncludingSpread >= minPrice)
+							|| tradeType === "2" && (buy ? priceIncludingSpread >= minPrice : priceIncludingSpread <= maxPrice)) {
 							orderType = 3;
 						} else {
 							//appLogger.debug(`Limit trade ${openTradeKey} is not ready for us to act on yet.`);
@@ -1193,6 +1219,80 @@ function watchPricingStream() {
 					nftManager.releaseNft(availableNft);
 				}
 			}));
+		}
+	}
+
+	function getTradeLiquidationPrice(trade) {
+		const { tradeInfo, tradeInitialAccFees } = trade;
+		const posDai = trade.initialPosToken / 1e18 * tradeInfo.tokenPriceDai / 1e10;
+
+		const openPrice = parseFloat(trade.openPrice) / 1e10;
+		const buy = trade.buy === true;
+
+		const liqPriceDistance =
+			(openPrice *
+				(posDai * 0.9 -
+					getRolloverFee(
+						posDai,
+						trade.pairIndex,
+						tradeInitialAccFees.rollover,
+						tradeInitialAccFees.openedAfterUpdate
+					) -
+					getFundingFee(
+						posDai * trade.leverage,
+						trade.pairIndex,
+						tradeInitialAccFees.funding,
+						buy,
+						tradeInitialAccFees.openedAfterUpdate
+					))) /
+			posDai /
+			trade.leverage;
+
+		return buy === true ? openPrice - liqPriceDistance : openPrice + liqPriceDistance;
+
+		// Calculate liquidation price
+		function getRolloverFee (
+			posDai,
+			pairIndex,
+			initialAccRolloverFees,
+			openedAfterUpdate
+		) {
+			// If this is a legacy trade (e.g. before v6.1) there are no rollover fees applied
+			if(openedAfterUpdate === false) {
+				return 0;
+			}
+
+			const { accPerCollateral, lastUpdateBlock } = pairRolloverFees[pairIndex];
+			const { rolloverFeePerBlockP } = pairParams[pairIndex];
+
+			const pendingAccRolloverFees = accPerCollateral + (currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex] - lastUpdateBlock) * rolloverFeePerBlockP;
+
+			return posDai * (pendingAccRolloverFees - initialAccRolloverFees);
+		}
+
+		function getFundingFee(
+			leveragedPosDai,
+			pairIndex,
+			initialAccFundingFees,
+			buy,
+			openedAfterUpdate
+		) {
+			// If this is a legacy trade (e.g. before v6.1) there are no funding fees applied
+			if(openedAfterUpdate === false) {
+				return 0;
+			}
+
+			const { accPerOiLong, accPerOiShort, lastUpdateBlock } = pairFundingFees[pairIndex];
+			const { fundingFeePerBlockP } = pairParams[pairIndex];
+
+			const { long: longOi, short: shortOi } = openInterests[pairIndex];
+			const fundingFeesPaidByLongs = (longOi - shortOi) * fundingFeePerBlockP * (currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex] - lastUpdateBlock);
+
+			const pendingAccFundingFees = buy ? accPerOiLong + fundingFeesPaidByLongs / longOi
+													:
+												accPerOiShort + (fundingFeesPaidByLongs * -1) / shortOi;
+
+			return leveragedPosDai * (pendingAccFundingFees - initialAccFundingFees);
 		}
 	}
 }
