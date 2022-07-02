@@ -1208,7 +1208,7 @@ function watchPricingStream() {
 								if(errorMessage !== undefined && (errorMessage.includes("nonce too low") || errorMessage.includes("replacement transaction underpriced"))) {
 									appLogger.error(`⁉️ Some how we ended up with a nonce that was too low; forcing a refresh now and the trade may be tried again if still available.`);
 
-									await nonceManager.initializeFromClient(currentlySelectedWeb3Client);
+									await nonceManager.refreshNonceFromOnChainTransactionCount();
 									triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 
 									appLogger.info("Nonce refreshed and tracking of triggered order cleared so it can possibly be retried.");
