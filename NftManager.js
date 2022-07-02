@@ -186,7 +186,7 @@ export class NFTManager {
 			this.logger.debug(`${nftsWithLastSuccesses.length} candidate NFTs to consider.`, { currentBlock, nftsWithLastSuccesses });
 
             // Try to find the first NFT whose last successful block is older than the current block by the required timelock amount
-            const firstEligibleNft = nftsWithLastSuccesses.find(nftwls => currentBlock - nftwls.lastSuccess >= this.nftTimelock);
+            const firstEligibleNft = nftsWithLastSuccesses.find(nftwls => currentBlock - nftwls.lastSuccess > this.nftTimelock);
 
             if(firstEligibleNft !== undefined) {
                 return firstEligibleNft.nft;
