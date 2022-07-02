@@ -748,7 +748,11 @@ async function synchronizeOpenTrades(event){
 			]);
 
 			trade.tradeInfo = tradeInfo;
-			trade.tradeInitialAccFees = tradeInitialAccFees;
+			trade.tradeInitialAccFees = {
+				rollover: parseInt(tradeInitialAccFees.rollover, 10) / 1e18,
+				funding: parseInt(tradeInitialAccFees.funding, 10) / 1e18,
+				openedAfterUpdate: tradeInitialAccFees.openedAfterUpdate === true,
+			};
 
 			const tradeKey = buildTradeIdentifier(trader, pairIndex, index, false);
 			currentKnownOpenTrades.set(tradeKey, trade);
@@ -769,7 +773,11 @@ async function synchronizeOpenTrades(event){
 				]);
 
 				trade.tradeInfo = tradeInfo;
-				trade.tradeInitialAccFees = tradeInitialAccFees;
+				trade.tradeInitialAccFees = {
+					rollover: parseInt(tradeInitialAccFees.rollover, 10) / 1e18,
+					funding: parseInt(tradeInitialAccFees.funding, 10) / 1e18,
+					openedAfterUpdate: tradeInitialAccFees.openedAfterUpdate === true,
+				};
 
 				currentKnownOpenTrades.set(tradeKey, trade);
 			} else {
