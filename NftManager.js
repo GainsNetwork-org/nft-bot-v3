@@ -87,7 +87,7 @@ export class NFTManager {
 				nftContract2.methods.balanceOf(process.env.PUBLIC_KEY).call(),
 				nftContract3.methods.balanceOf(process.env.PUBLIC_KEY).call(),
 				nftContract4.methods.balanceOf(process.env.PUBLIC_KEY).call(),
-				nftContract4.methods.balanceOf(process.env.PUBLIC_KEY).call(),
+				nftContract5.methods.balanceOf(process.env.PUBLIC_KEY).call(),
 			]);
 
 		this.availableNfts = (await Promise.all(
