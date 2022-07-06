@@ -78,3 +78,30 @@ It is perfectly possible to run the bot locally off your own laptop/workstation.
    2. Deploy your main branch
 
 > NOTE: a Procfile is also provided in the repo for Heroku to run the bot as a worker. [More details on Procfiles are available here](https://devcenter.heroku.com/articles/procfile).
+
+## All Environment Variables
+
+| Name                                         | Description |
+| -------------------------------------------- | ----------- |
+| LOG_LEVEL                                    | Sets the level at which the bot should log. Valid values are: `error`, `warn`, `info`, `verbose`, `debug`. Using `debug` will produce a massive amount of output and is not suggested except for initial setup or problem solving.            |
+| ENABLE_CONSOLE_LOGGING                       | Whether or not log messages should be output to the console.            |
+| ENABLE_FS_LOGGING                            | Whether or not log messages should be output to a log file. This will log into a `.logs/<utc-date>` directory each time the bot is started.            |
+| WSS_URLS                                     | The RPC endpoint URLs that should be used for all blockchain communication.            |
+| PRICES_URL                                   | The WSS endpoint where the Gains backend pricing service is running.           |
+| STORAGE_ADDRESS                              | The address of the Gains Storage contract on chain.            |
+| PAIR_INFOS_ADDRESS                           | The address of the Gains Pair Infos contract on chain.            |
+| PRIVATE_KEY                                  | The private key of your account that should be used to execute transactions. ⚠️ DO NOT PUBLISH THIS ANYWHERE. ⚠️           |
+| PUBLIC_KEY                                   | The public key of your account that should be used to execute transactions.             |
+| EVENT_CONFIRMATIONS_SEC                      | The number of seconds that must pass for an event coming from the blockchain to be considered as confirmed and safe for execution against.           |
+| MIN_PRIORITY_GWEI                            | The minimum priority gas fee in GWEI that should be used when triggering orders.            |
+| MAX_GAS_PRICE_GWEI                           | The maximum gas price in GWEI that should be used when triggering orders.             |
+| MAX_GAS_PER_TRANSACTION                      |             |
+| PRIORITY_GWEI_MULTIPLIER                     | A multiplier that can be applied to the current priority gas fee which was fetched from the polygon gas station.           |
+| VAULT_REFILL_ENABLED                         | Whether or not you want the bot to participate in refilling the vault as a good citizen of the Gains Network.            |
+| CHECK_REFILL_SEC                             | How frequently the vault refilling process should occur.            |
+| AUTO_HARVEST_SEC                             | How frequently the bot will harvest any rewards earned from triggering orders. |
+| FAILED_ORDER_TRIGGER_TIMEOUT_SEC             | How long the bot should wait before it will retry an order after it has failed to successfully process on chain.           |
+| OPEN_TRADES_REFRESH_SEC                      | How frequently the bot should fully refresh trade data from the Gains smart contracts on chain. By default, the bot is keeping itself up to date based on delta events it's receiving from the chain so this isn't technically necessary, but it's a good fail safe in case the bot fails to hear about a certain even due to connectivity or other issues. Setting this to `0` will disable explicit refreshing and only ever keep state based on events it receives.          |
+| GAS_REFRESH_INTERVAL_SEC                     | How frequently to get the latest gas prices from the gas station.            |
+| FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_SEC | How frequently trading variables should be refreshed from the Gains smart contracts on chain. There are many variables that go into the calculations of triggering order and these variables need to be freshed to ensure the bot is always using the latest numbers. This is always done at start up, but does not need to be done too frequently at runtime. |
+| DRY_RUN                                      | Set to `true` to enable a "dry run" mode where the bot will do everything except submit the actual transactions to the chain for processing. This is good for initial setup to ensure everything is working as expected and other testing combined with a `LOG_LEVEL` of `debug`.           |
