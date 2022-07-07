@@ -58,9 +58,9 @@ if(!process.env.WSS_URLS || !process.env.PRICES_URL || !process.env.STORAGE_ADDR
 	process.exit();
 }
 
-// Parse non-string configuration constants from environment variables up front
-const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
-	  MAX_GAS_PER_TRANSACTION = parseInt(process.env.MAX_GAS_PER_TRANSACTION, 10),
+// Parse non-fixed string configuration constants from environment variables up front
+const MAX_FEE_PER_GAS_WEI_HEX = Web3.utils.toHex(parseInt(process.env.MAX_GAS_PRICE_GWEI, 10) * 1e9),
+	  MAX_GAS_PER_TRANSACTION_HEX = Web3.utils.toHex(parseInt(process.env.MAX_GAS_PER_TRANSACTION, 10)),
 	  CHECK_REFILL_MS = parseFloat(process.env.CHECK_REFILL_SEC) * 1000,
 	  EVENT_CONFIRMATIONS_MS = parseFloat(process.env.EVENT_CONFIRMATIONS_SEC) * 1000,
 	  AUTO_HARVEST_MS = parseFloat(process.env.AUTO_HARVEST_SEC) * 1000,
@@ -71,8 +71,10 @@ const MAX_GAS_PRICE_GWEI = parseInt(process.env.MAX_GAS_PRICE_GWEI, 10),
 	  GAS_REFRESH_INTERVAL_MS = (process.env.GAS_REFRESH_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.GAS_REFRESH_INTERVAL_SEC) * 1000 : 3,
 	  WEB3_STATUS_REPORT_INTERVAL_MS = (process.env.WEB3_STATUS_REPORT_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.WEB3_STATUS_REPORT_INTERVAL_SEC) * 1000 : 30 * 1000;
 
-const CHAIN_ID = process.env.CHAIN_ID ?? 137; // Polygon chain id
+const CHAIN_ID = process.env.CHAIN_ID !== undefined ? parseInt(process.env.CHAIN_ID, 10) : 137; // Polygon chain id
+const NETWORK_ID = process.env.NETWORK_ID !== undefined ? parseInt(process.env.NETWORK_ID, 10) : CHAIN_ID;
 const CHAIN = process.env.CHAIN ?? "mainnet";
+const BASE_CHAIN = process.env.BASE_CHAIN;
 const HARDFORK = process.env.HARDFORK ?? "london";
 
 const DRY_RUN_MODE = process.env.DRY_RUN_MODE === 'true';
@@ -87,18 +89,13 @@ async function checkLinkAllowance() {
 		}else{
 			appLogger.info("LINK not allowed, approving now.");
 
-			const tx = {
-				from: process.env.PUBLIC_KEY,
+			const tx = createTransaction({
 				to : linkContract.options.address,
 				data : linkContract.methods.approve(process.env.STORAGE_ADDRESS, "115792089237316195423570985008687907853269984665640564039457584007913129639935").encodeABI(),
-				maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee * 1e9),
-				maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee * 1e9),
-				gas: currentlySelectedWeb3Client.utils.toHex("100000"),
+				maxPriorityFeePerGas: Web3.utils.toHex(standardTransactionGasFees.maxPriorityFee * 1e9),
+				maxFeePerGas: Web3.utils.toHex(standardTransactionGasFees.maxFee * 1e9),
 				nonce: nonceManager.getNextNonce(),
-				chainId: CHAIN_ID,
-				chain: CHAIN,
-				hardfork: HARDFORK
-			};
+			});
 
 			try {
 				const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
@@ -225,6 +222,19 @@ function createWeb3Client(providerIndex, providerUrl) {
 	const provider = createWeb3Provider(providerUrl);
 	const web3Client = new Web3(provider);
 	web3Client.eth.handleRevert = true;
+	web3Client.eth.defaultAccount = process.env.PUBLIC_KEY;
+	web3Client.eth.defaultChain = CHAIN;
+
+	if(CHAIN_ID !== undefined) {
+		web3Client.eth.defaultCommon = {
+			customChain: {
+				chainId: CHAIN_ID,
+				networkId: NETWORK_ID,
+			},
+			baseChain: BASE_CHAIN,
+			hardfork: HARDFORK,
+		};
+	}
 
 	web3Client.eth.subscribe('newBlockHeaders').on('data', (header) => {
 		const newBlockNumber = header.number;
@@ -1111,18 +1121,12 @@ function watchPricingStream() {
 					appLogger.info(`🤞 Trying to trigger ${triggeredOrderTrackingInfoIdentifier} order with NFT ${availableNft.id}...`);
 
 					try {
-						const orderTransaction = {
-							from: process.env.PUBLIC_KEY,
+						const orderTransaction = createTransaction({
 							to: tradingContract.options.address,
 							data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
-							maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(priorityTransactionMaxPriorityFeePerGas*1e9),
-							maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
-							gas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PER_TRANSACTION),
-							nonce: nonceManager.getNextNonce(),
-							chainId: CHAIN_ID,
-							chain: CHAIN,
-							hardfork: HARDFORK,
-						};
+							maxPriorityFeePerGas: Web3.utils.toHex(priorityTransactionMaxPriorityFeePerGas*1e9),
+							maxFeePerGas: MAX_FEE_PER_GAS_WEI_HEX,
+						});
 
 						// NOTE: technically this should execute synchronously because we're supplying all necessary details on
 						// the transaction object up front
@@ -1316,18 +1320,13 @@ watchPricingStream();
 
 if(process.env.VAULT_REFILL_ENABLED === "true") {
 	async function refill(){
-		const tx = {
-			from: process.env.PUBLIC_KEY,
+		const tx = createTransaction({
 			to : vaultContract.options.address,
 			data : vaultContract.methods.refill().encodeABI(),
-			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
-			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
-			gas: MAX_GAS_PER_TRANSACTION,
+			maxPriorityFeePerGas: Web3.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
+			maxFeePerGas: Web3.utils.toHex(standardTransactionGasFees.maxFee*1e9),
 			nonce: nonceManager.getNextNonce(),
-			chainId: CHAIN_ID,
-			chain: CHAIN,
-			hardfork: HARDFORK
-		};
+		});
 
 		try{
 			const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY)
@@ -1341,18 +1340,13 @@ if(process.env.VAULT_REFILL_ENABLED === "true") {
 	}
 
 	async function deplete(){
-		const tx = {
-			from: process.env.PUBLIC_KEY,
+		const tx = createTransaction({
 			to : vaultContract.options.address,
 			data : vaultContract.methods.deplete().encodeABI(),
-			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
-			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
-			gas: MAX_GAS_PER_TRANSACTION,
+			maxPriorityFeePerGas: Web3.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
+			maxFeePerGas: Web3.utils.toHex(standardTransactionGasFees.maxFee*1e9),
 			nonce: nonceManager.getNextNonce(),
-			chainId: CHAIN_ID,
-			chain: CHAIN,
-			hardfork: HARDFORK
-		};
+		});
 
 		try {
 			const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
@@ -1377,18 +1371,13 @@ if(process.env.VAULT_REFILL_ENABLED === "true") {
 
 if(AUTO_HARVEST_MS > 0){
 	async function claimTokens(){
-		const tx = {
-			from: process.env.PUBLIC_KEY,
+		const tx = createTransaction({
 			to : nftRewardsContract.options.address,
 			data : nftRewardsContract.methods.claimTokens().encodeABI(),
-			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
-			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
-			gas: MAX_GAS_PER_TRANSACTION,
+			maxPriorityFeePerGas: Web3.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
+			maxFeePerGas: Web3.utils.toHex(standardTransactionGasFees.maxFee*1e9),
 			nonce: nonceManager.getNextNonce(),
-			chainId: CHAIN_ID,
-			chain: CHAIN,
-			hardfork: HARDFORK
-		};
+		});
 
 
 		try {
@@ -1415,18 +1404,13 @@ if(AUTO_HARVEST_MS > 0){
 		const fromRound = currentRound < 101 ? 0 : currentRound-101;
 		const toRound =  currentRound - 1;
 
-		const tx = {
-			from: process.env.PUBLIC_KEY,
+		const tx = createTransaction({
 			to : nftRewardsContract.options.address,
 			data : nftRewardsContract.methods.claimPoolTokens(fromRound, toRound).encodeABI(),
-			maxPriorityFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
-			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
-			gas: MAX_GAS_PER_TRANSACTION,
+			maxPriorityFeePerGas: Web3.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
+			maxFeePerGas: Web3.utils.toHex(standardTransactionGasFees.maxFee*1e9),
 			nonce: nonceManager.getNextNonce(),
-			chainId: CHAIN_ID,
-			chain: CHAIN,
-			hardfork: HARDFORK
-		};
+		});
 
 
 		try {
@@ -1454,4 +1438,19 @@ if(AUTO_HARVEST_MS > 0){
 			appLogger.error("Harvesting rewards failed unexpectedly!", error);
 		}
 	}, AUTO_HARVEST_MS);
+}
+
+/**
+ * Creates a base transaction object using fixed, configured values and optionally fills out any additionally
+ * supplied properties.
+ * @param {Object} additionalTransactionProps - Any additional properties that should be applied to (or overridden on)
+ * the base transaction object.
+*/
+function createTransaction(additionalTransactionProps) {
+	const transaction = {
+		gas: MAX_GAS_PER_TRANSACTION_HEX,
+		...additionalTransactionProps
+	}
+
+	return transaction;
 }
