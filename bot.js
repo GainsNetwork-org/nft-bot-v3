@@ -1018,7 +1018,7 @@ function watchPricingStream() {
 				if(isPendingOpenLimitOrder === false) {
 					const tp = parseFloat(openTrade.tp)/1e10;
 					const sl = parseFloat(openTrade.sl)/1e10;
-					const liqPrice = getTradeLiquidationPrice(openTrade);
+					const liqPrice = getTradeLiquidationPrice(openTradeKey, openTrade);
 
 					if(tp !== 0 && ((buy && price >= tp) || (!buy && price <= tp))) {
 						orderType = 0;
@@ -1237,29 +1237,45 @@ function watchPricingStream() {
 		}
 	}
 
-	function getTradeLiquidationPrice(trade) {
+	function getTradeLiquidationPrice(tradeKey, trade) {
 		const { tradeInfo, tradeInitialAccFees } = trade;
 		const posDai = trade.initialPosToken / 1e18 * tradeInfo.tokenPriceDai / 1e10;
 
 		const openPrice = parseFloat(trade.openPrice) / 1e10;
 		const buy = trade.buy === true;
 
+		const tradeOpenedAfterFundingFeesUpdate = trade.tradeInitialAccFees.openedAfterUpdate;
+
+		let rolloverFee;
+		let fundingFee;
+
+		if(tradeOpenedAfterFundingFeesUpdate === true) {
+			rolloverFee = getRolloverFee(
+				posDai,
+				trade.pairIndex,
+				tradeInitialAccFees.rollover,
+				tradeInitialAccFees.openedAfterUpdate);
+
+			fundingFee = getFundingFee(
+				posDai * trade.leverage,
+				trade.pairIndex,
+				tradeInitialAccFees.funding,
+				buy,
+				tradeInitialAccFees.openedAfterUpdate)
+
+			// appLogger.debug(`Trade ${tradeKey} was opened AFTER funding fees update; funding and roller fees will be used in calculations.`);
+		} else {
+			// appLogger.debug(`Trade ${tradeKey} was opened BEFORE funding fees update; no funding or rollover fees will be used in calculations.`);
+
+			rolloverFee = 0;
+			fundingFee = 0;
+		}
+
 		const liqPriceDistance =
 			(openPrice *
 				(posDai * 0.9 -
-					getRolloverFee(
-						posDai,
-						trade.pairIndex,
-						tradeInitialAccFees.rollover,
-						tradeInitialAccFees.openedAfterUpdate
-					) -
-					getFundingFee(
-						posDai * trade.leverage,
-						trade.pairIndex,
-						tradeInitialAccFees.funding,
-						buy,
-						tradeInitialAccFees.openedAfterUpdate
-					))) /
+					rolloverFee -
+					fundingFee)) /
 			posDai /
 			trade.leverage;
 
