@@ -23,7 +23,7 @@ export function createLogger(label, logLevel = 'warn') {
 
 	if(process.env.ENABLE_FS_LOGGING === "true") {
 		transports.push(new winston.transports.File({
-			filename: path.join(process.cwd(), `./logs/${new Date(new Date(new Date().setSeconds(0)).setMilliseconds(0)).toISOString()}/${label}.log`),
+			filename: path.join(process.cwd(), `./logs/${new Date(new Date(new Date().setSeconds(0)).setMilliseconds(0)).toISOString().replace(/:/g, '_')}/${label}.log`),
 			level: logLevel,
 			format: winston.format.combine(
 				winston.format.timestamp(),
