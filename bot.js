@@ -1319,11 +1319,25 @@ function watchPricingStream() {
 			const { long: longOi, short: shortOi } = openInterests[pairIndex];
 			const fundingFeesPaidByLongs = (longOi - shortOi) * fundingFeePerBlockP * (currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex] - lastUpdateBlock);
 
-			const pendingAccFundingFees = buy ? accPerOiLong + fundingFeesPaidByLongs / longOi
-													:
-												accPerOiShort + (fundingFeesPaidByLongs * -1) / shortOi;
+			let pendingAccFundingFees = 0;
 
-			return leveragedPosDai * (pendingAccFundingFees - initialAccFundingFees);
+			if(buy === true) {
+				pendingAccFundingFees = accPerOiLong;
+
+				if(longOi > 0) {
+					pendingAccFundingFees += fundingFeesPaidByLongs / longOi;
+				}
+			} else {
+				pendingAccFundingFees = accPerOiShort;
+
+				if(shortOi > 0) {
+					pendingAccFundingFees += (fundingFeesPaidByLongs * -1) / shortOi;
+				}
+			}
+
+			const fundingFee = leveragedPosDai * (pendingAccFundingFees - initialAccFundingFees);
+
+			return fundingFee;
 		}
 	}
 }
