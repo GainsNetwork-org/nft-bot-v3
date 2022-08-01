@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node bot.js",
-    "start:dev": "NODE_ENV=development node bot.js",
+    "start:dev": "npx cross-env NODE_ENV=development node bot.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
@@ -18,5 +18,8 @@
     "web3": "^1.7.3",
     "winston": "^3.8.1",
     "ws": "^8.6.0"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3"
   }
 }
