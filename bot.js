@@ -157,7 +157,7 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 		nftRewardsAddress
 	 ] = await Promise.all([
 		aggregatorContract.methods.pairsStorage().call(),
-		callbacks.methods.nftRewards().call()
+		callbacksContract.methods.nftRewards().call()
 	 ]);
 
 	pairsStorageContract = new newWeb3Client.eth.Contract(abis.PAIRS_STORAGE, pairsStorageAddress);
