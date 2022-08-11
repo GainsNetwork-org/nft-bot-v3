@@ -145,15 +145,12 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 		storageContract.methods.linkErc677().call()
 	]);
 
-	const aggregatorContract = new newWeb3Client.eth.Contract(abis.AGGREGATOR, aggregatorAddress);
-
-	pairsStorageContract = new newWeb3Client.eth.Contract(abis.PAIRS_STORAGE, pairsStorageAddress);
-	nftRewardsContract = new newWeb3Client.eth.Contract(abis.NFT_REWARDS, nftRewardsAddress);
-
 	callbacksContract = new newWeb3Client.eth.Contract(abis.CALLBACKS, callbacksAddress);
 	tradingContract = new newWeb3Client.eth.Contract(abis.TRADING, tradingAddress);
 	vaultContract = new newWeb3Client.eth.Contract(abis.VAULT, vaultAddress);
 	pairInfosContract = new newWeb3Client.eth.Contract(abis.PAIR_INFOS, process.env.PAIR_INFOS_ADDRESS);
+
+	const aggregatorContract = new newWeb3Client.eth.Contract(abis.AGGREGATOR, aggregatorAddress);
 
 	const [
 		pairsStorageAddress,
@@ -162,6 +159,9 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 		aggregatorContract.methods.pairsStorage().call(),
 		callbacks.methods.nftRewards().call()
 	 ]);
+
+	pairsStorageContract = new newWeb3Client.eth.Contract(abis.PAIRS_STORAGE, pairsStorageAddress);
+	nftRewardsContract = new newWeb3Client.eth.Contract(abis.NFT_REWARDS, nftRewardsAddress);
 
 	linkContract = new newWeb3Client.eth.Contract(abis.LINK, linkAddress);
 
