@@ -95,7 +95,7 @@ async function checkLinkAllowance() {
 				maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee * 1e9),
 				gas: currentlySelectedWeb3Client.utils.toHex("100000"),
 				nonce: nonceManager.getNextNonce(),
-				chainId: CHAIN_ID,
+				chainId: currentlySelectedWeb3Client.utils.toHex(CHAIN_ID),
 				chain: CHAIN,
 				hardfork: HARDFORK
 			};
@@ -1118,7 +1118,7 @@ function watchPricingStream() {
 							maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PRICE_GWEI*1e9),
 							gas: currentlySelectedWeb3Client.utils.toHex(MAX_GAS_PER_TRANSACTION),
 							nonce: nonceManager.getNextNonce(),
-							chainId: CHAIN_ID,
+							chainId: currentlySelectedWeb3Client.utils.toHex(CHAIN_ID),
 							chain: CHAIN,
 							hardfork: HARDFORK,
 						};
@@ -1323,7 +1323,7 @@ if(process.env.VAULT_REFILL_ENABLED === "true") {
 			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
 			gas: MAX_GAS_PER_TRANSACTION,
 			nonce: nonceManager.getNextNonce(),
-			chainId: CHAIN_ID,
+			chainId: currentlySelectedWeb3Client.utils.toHex(CHAIN_ID),
 			chain: CHAIN,
 			hardfork: HARDFORK
 		};
@@ -1348,7 +1348,7 @@ if(process.env.VAULT_REFILL_ENABLED === "true") {
 			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
 			gas: MAX_GAS_PER_TRANSACTION,
 			nonce: nonceManager.getNextNonce(),
-			chainId: CHAIN_ID,
+			chainId: currentlySelectedWeb3Client.utils.toHex(CHAIN_ID),
 			chain: CHAIN,
 			hardfork: HARDFORK
 		};
@@ -1384,7 +1384,7 @@ if(AUTO_HARVEST_MS > 0){
 			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
 			gas: MAX_GAS_PER_TRANSACTION,
 			nonce: nonceManager.getNextNonce(),
-			chainId: CHAIN_ID,
+			chainId: currentlySelectedWeb3Client.utils.toHex(CHAIN_ID),
 			chain: CHAIN,
 			hardfork: HARDFORK
 		};
@@ -1422,7 +1422,7 @@ if(AUTO_HARVEST_MS > 0){
 			maxFeePerGas: currentlySelectedWeb3Client.utils.toHex(standardTransactionGasFees.maxFee*1e9),
 			gas: MAX_GAS_PER_TRANSACTION,
 			nonce: nonceManager.getNextNonce(),
-			chainId: CHAIN_ID,
+			chainId: currentlySelectedWeb3Client.utils.toHex(CHAIN_ID),
 			chain: CHAIN,
 			hardfork: HARDFORK
 		};
