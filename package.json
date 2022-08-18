@@ -13,9 +13,9 @@
   "license": "ISC",
   "dependencies": {
     "dotenv": "^16.0.0",
-    "luxon": "^2.3.2",
-    "node-fetch": "^3.2.4",
-    "web3": "^1.7.3",
+    "luxon": "^3.0.1",
+    "node-fetch": "^3.2.10",
+    "web3": "^1.7.5",
     "winston": "^3.8.1",
     "ws": "^8.6.0"
   },
