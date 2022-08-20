@@ -904,12 +904,12 @@ async function synchronizeOpenTrades(event){
 
 async function refreshPairFundingFees(event){
 	const pairIndex = parseInt(event.returnValues.pairIndex, 10);
-	const pairFundingFees = await pairInfosContract.methods.pairFundingFees(pairIndex).call();
+	const newPairFundingFees = await pairInfosContract.methods.pairFundingFees(pairIndex).call();
 
 	pairFundingFees[pairIndex] = {
-		accPerOiLong: pairFundingFees.accPerOiLong / 1e18,
-		accPerOiShort: pairFundingFees.accPerOiShort / 1e18,
-		lastUpdateBlock: parseInt(pairFundingFees.lastUpdateBlock)
+		accPerOiLong: newPairFundingFees.accPerOiLong / 1e18,
+		accPerOiShort: newPairFundingFees.accPerOiShort / 1e18,
+		lastUpdateBlock: parseInt(newPairFundingFees.lastUpdateBlock)
 	};
 }
 
