@@ -37,10 +37,14 @@ let executionStats = {
 let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, currentlySelectedWeb3Client = null,
 	eventSubTrading = null, eventSubCallbacks = null, eventSubPairInfos = null,
 	web3Clients = [], priorityTransactionMaxPriorityFeePerGas = 50, standardTransactionGasFees = { maxFee: 31, maxPriorityFee: 31 },
-	spreadsP = [], openInterests = [], collaterals = [], pairParams = [], pairRolloverFees = [], pairFundingFees = [], maxNegativePnlOnOpenP = 0,
+	spreadsP = [], openInterests = [], collaterals = [], pairs = [], pairParams = [], pairRolloverFees = [], pairFundingFees = [], maxNegativePnlOnOpenP = 0,
 	knownOpenTrades = null, triggeredOrders = new Map(),
 	storageContract, tradingContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract,
 	maxTradesPerPair = 0, linkContract, pairInfosContract;
+
+// Stocks open and close times in minutes since midnight
+const STOCKS_MARKET_OPEN = 9 * 60 + 30; // minutes
+const STOCKS_MARKET_CLOSE = 16 * 60; // minutes
 
 // --------------------------------------------
 // 3. INIT: CHECK ENV VARS & LINK ALLOWANCE
@@ -373,7 +377,7 @@ async function fetchTradingVariables(){
 			pairsPromises[i] = pairsStorageContract.methods.pairsBackend(i).call();
 		}
 
-		const pairs = await Promise.all(pairsPromises);
+		pairs = await Promise.all(pairsPromises);
 		const newSpreadsP = new Array(pairs.length);
 		const newOpenInterests = new Array(pairs.length);
 		const newCollaterals = new Array(pairs.length);
@@ -594,6 +598,7 @@ async function fetchOpenTrades(){
 						funding: parseInt(tradeInitialAccFees.funding, 10) / 1e18,
 						openedAfterUpdate: tradeInitialAccFees.openedAfterUpdate === true,
 					};
+					
 				}
 
 				appLogger.debug(`Trade info fetched for ${actualOpenTrades.length} trades; fetching initial fees...`);
@@ -1010,6 +1015,20 @@ function watchPricingStream() {
 					// appLogger.debug(`Received ${price} for close price for pair ${pairIndex}; skipping processing of ${openTradeKey}!`);
 
 					return;
+				}
+				// if its a stocks pair, check if market is open
+				if (pairs[pairIndex][0][4]>= 2) {
+					var nowNY = new DateTime.local().setZone('America/New_York');
+
+					// closed on weekends (0 = sunday, 1 = monday ..)
+					if (nowNY.weekday === 6 || nowNY.weekday === 0) {
+						return;
+					}
+					// check if we are outside open hours
+					var nowMinutesNY = nowNY.hour * 60 + nowNY.minute;
+					if (nowMinutesNY < STOCKS_MARKET_OPEN || nowMinutesNY >= STOCKS_MARKET_CLOSE){
+						return;
+					}
 				}
 
 				let orderType = -1;
