@@ -57,7 +57,6 @@ const FOREX_HOLIDAYS = ["1-1", "1-2", "1-3", "12-25", "12-26", "12-27"];
 // Market status checkers
 function ForexMarketsAreClosed(){
 	var now = DateTime.local().setZone('America/New_York');
-	
 	// check if its a holiday
 	if (FOREX_HOLIDAYS.includes(now.month + '-' + now.day)) {
 		return true;
@@ -85,13 +84,13 @@ function StocksMarketsAreClosed(){
 		return true;
 	}
 	// closed on weekends (1 = monday, 7 = sunday)
-	if (now.weekday === 6 || now.weekday === 7) {
+	if (now.weekday >= 6) {
 		return true;
 	}
 	// check if we are outside open hours
 	var minutes = now.hour * 60 + now.minute;
 	// close is different for Nov-24th
-	if (now.month === 11 && now.day === 24 && (minutes < STOCKS_OPEN || minutes >= STOCKS_CLOSE_NOV_25)){
+	if (now.month === 11 && now.day === 25 && (minutes < STOCKS_OPEN || minutes >= STOCKS_CLOSE_NOV_25)){
 		return true;
 	} 
 	if (minutes < STOCKS_OPEN || minutes >= STOCKS_CLOSE){
