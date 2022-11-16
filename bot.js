@@ -43,8 +43,66 @@ let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, currentlySelecte
 	maxTradesPerPair = 0, linkContract, pairInfosContract;
 
 // Stocks open and close times in minutes since midnight
-const STOCKS_MARKET_OPEN = 9 * 60 + 30; // minutes
-const STOCKS_MARKET_CLOSE = 16 * 60; // minutes
+const STOCKS_OPEN = 9 * 60 + 30; // minutes to 9:30 am
+const STOCKS_CLOSE = 16 * 60; // minutes to 4:00 pm
+const STOCKS_CLOSE_NOV_25 = 13 * 60; // minutes to 1:00 pm
+// Stocks closed on: January 17th, February 21st, April 15th, May 30th, June 20th, July 4th, September 5th, November 24th
+const STOCKS_HOLIDAYS = ["1-17", "2-21", "4-15", "5-30", "6-20", "7-4", "9-5", "11-24"];
+
+const FOREX_OPEN = 17 * 60; // minutes to 5pm
+const FOREX_CLOSE = 16 * 60; // minutes to 4pm
+// Forex closed on: January 1-3, December 25-27
+const FOREX_HOLIDAYS = ["1-1", "1-2", "1-3", "12-25", "12-26", "12-27"];
+
+// Market status checkers
+function ForexMarketsAreClosed(){
+	var now = DateTime.local().setZone('America/New_York');
+	
+	// check if its a holiday
+	if (FOREX_HOLIDAYS.includes(now.month + '-' + now.day)) {
+		return true;
+	}
+	// closed on saturday  (1 = monday, 7 = sunday)
+	if (now.weekday === 6) {
+		return true;
+	}
+	var minutes = now.hour * 60 + now.minute;
+	// closed on sunday before 4pm
+	if ((now.weekday === 7) && (minutes < FOREX_OPEN)) {
+		return true;
+	}
+	// closed on friday after 5pm
+	if ((now.weekday === 5) && (minutes >= FOREX_CLOSE)) {
+		return true;
+	}
+	return false;
+}
+
+function StocksMarketsAreClosed(){
+	var now = DateTime.local().setZone('America/New_York');
+	// check if its a holiday
+	if (STOCKS_HOLIDAYS.includes(now.month + '-' + now.day)) {
+		return true;
+	}
+	// closed on weekends (1 = monday, 7 = sunday)
+	if (now.weekday === 6 || now.weekday === 7) {
+		return true;
+	}
+	// check if we are outside open hours
+	var minutes = now.hour * 60 + now.minute;
+	// close is different for Nov-24th
+	if (now.month === 11 && now.day === 24 && (minutes < STOCKS_OPEN || minutes >= STOCKS_CLOSE_NOV_25)){
+		return true;
+	} 
+	if (minutes < STOCKS_OPEN || minutes >= STOCKS_CLOSE){
+		return true;
+	}
+	return false;
+}
+
+appLogger.info(`Forex markets are ${ForexMarketsAreClosed() ? "closed ❌." : "open ✅."}`);
+appLogger.info(`Stocks markets are ${StocksMarketsAreClosed() ? "closed ❌." : "open ✅."}`);
+
 
 // --------------------------------------------
 // 3. INIT: CHECK ENV VARS & LINK ALLOWANCE
@@ -1016,19 +1074,14 @@ function watchPricingStream() {
 
 					return;
 				}
-				// if its a stocks pair, check if market is open
-				if (pairs[pairIndex][0][4]>= 2) {
-					var nowNY = new DateTime.local().setZone('America/New_York');
-
-					// closed on weekends (0 = sunday, 1 = monday ..)
-					if (nowNY.weekday === 6 || nowNY.weekday === 0) {
-						return;
+				// Check forex / stocks market status
+				// groupIndex is the 5-th element of the pair struct
+				// 0 = crypto  1 = forex   2, 3, 4 = stocks
+				if (pairs[pairIndex][0][4] === 1 && ForexMarketsAreClosed()) {
+					return;
 					}
-					// check if we are outside open hours
-					var nowMinutesNY = nowNY.hour * 60 + nowNY.minute;
-					if (nowMinutesNY < STOCKS_MARKET_OPEN || nowMinutesNY >= STOCKS_MARKET_CLOSE){
-						return;
-					}
+				if (pairs[pairIndex][0][4] >= 2 && StocksMarketsAreClosed()) {
+					return;
 				}
 
 				let orderType = -1;
