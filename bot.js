@@ -390,8 +390,8 @@ async function fetchTradingVariables(){
 				storageContract.methods.openInterestDai(pairIndex, 0).call(),
 				storageContract.methods.openInterestDai(pairIndex, 1).call(),
 				storageContract.methods.openInterestDai(pairIndex, 2).call(),
-				pairsStorageContract.methods.groupsCollaterals(pairIndex, 0).call(),
-				pairsStorageContract.methods.groupsCollaterals(pairIndex, 1).call(),
+				pairsStorageContract.methods.groupCollateral(pairIndex, true).call(),
+				pairsStorageContract.methods.groupCollateral(pairIndex, false).call(),
 				pairsStorageContract.methods.groupMaxCollateral(pairIndex).call()
 			]);
 
