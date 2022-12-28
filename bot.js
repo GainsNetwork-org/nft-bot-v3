@@ -3,14 +3,15 @@
 // ------------------------------------
 
 import dotenv from "dotenv";
-import { createLogger } from "./logger.js";
 import Web3 from "web3";
 import { WebSocket } from "ws";
+import { DateTime } from "luxon";
 import fetch from "node-fetch";
+import { createLogger } from "./logger.js";
 import { default as abis } from "./abis.js";
 import { NonceManager } from "./NonceManager.js";
 import { NFTManager } from "./NftManager.js";
-import { DateTime } from "luxon";
+import { GAS_MODE, CHAIN_IDS, NETWORKS } from "./constants.js";
 
 // Load base .env file first
 dotenv.config();
@@ -40,7 +41,7 @@ let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, currentlySelecte
 	spreadsP = [], openInterests = [], collaterals = [], pairParams = [], pairRolloverFees = [], pairFundingFees = [], maxNegativePnlOnOpenP = 0,
 	knownOpenTrades = null, triggeredOrders = new Map(),
 	storageContract, tradingContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract,
-	maxTradesPerPair = 0, linkContract, pairInfosContract;
+	maxTradesPerPair = 0, linkContract, pairInfosContract, gasPriceBn = new Web3.utils.BN(0.1 * 1e9);
 
 // --------------------------------------------
 // 3. INIT: CHECK ENV VARS & LINK ALLOWANCE
@@ -71,13 +72,16 @@ const MAX_FEE_PER_GAS_WEI_HEX = Web3.utils.toHex(parseInt(process.env.MAX_GAS_PR
 	  GAS_REFRESH_INTERVAL_MS = (process.env.GAS_REFRESH_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.GAS_REFRESH_INTERVAL_SEC) * 1000 : 3,
 	  WEB3_STATUS_REPORT_INTERVAL_MS = (process.env.WEB3_STATUS_REPORT_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.WEB3_STATUS_REPORT_INTERVAL_SEC) * 1000 : 30 * 1000;
 
-const CHAIN_ID = process.env.CHAIN_ID !== undefined ? parseInt(process.env.CHAIN_ID, 10) : 137; // Polygon chain id
+const CHAIN_ID = process.env.CHAIN_ID !== undefined ? parseInt(process.env.CHAIN_ID, 10) : CHAIN_IDS.POLYGON; // Polygon chain id
 const NETWORK_ID = process.env.NETWORK_ID !== undefined ? parseInt(process.env.NETWORK_ID, 10) : CHAIN_ID;
 const CHAIN = process.env.CHAIN ?? "mainnet";
 const BASE_CHAIN = process.env.BASE_CHAIN;
 const HARDFORK = process.env.HARDFORK ?? "london";
+const NETWORK = NETWORKS[CHAIN_ID];
 
-const EIP_1559_CHAIN_IDS = [137, 80001];
+if (!NETWORK) {
+	throw Error("Invalid chain id: " + CHAIN_ID);
+}
 
 const DRY_RUN_MODE = process.env.DRY_RUN_MODE === 'true';
 
@@ -95,7 +99,7 @@ async function checkLinkAllowance() {
 				to : linkContract.options.address,
 				data : linkContract.methods.approve(process.env.STORAGE_ADDRESS, "115792089237316195423570985008687907853269984665640564039457584007913129639935").encodeABI(),
 				nonce: nonceManager.getNextNonce(),
-				...getGasFees(CHAIN_ID, false)
+				...getGasFees(NETWORK, false)
 			});
 
 			try {
@@ -309,25 +313,36 @@ setInterval(() => {
 // 5. FETCH DYNAMIC GAS PRICE
 // -----------------------------------------
 
-if (CHAIN_ID === 137 || CHAIN_ID === 80001) {
-	setInterval(async () => {
+setInterval(async () => {
+	if (NETWORK.gasStationUrl) {
 		try {
-			const response = await fetch("https://gasstation-mainnet.matic.network/v2/");
+			const response = await fetch(NETWORK.gasStationUrl);
 			const gasPriceData = await response.json();
 
-			standardTransactionGasFees = { maxFee: Math.round(gasPriceData.standard.maxFee), maxPriorityFee: Math.round(gasPriceData.standard.maxPriorityFee) };
+			if (NETWORK.gasMode === GAS_MODE.EIP1559) {
+				standardTransactionGasFees = { maxFee: Math.round(gasPriceData.standard.maxFee), maxPriorityFee: Math.round(gasPriceData.standard.maxPriorityFee) };
 
-			priorityTransactionMaxPriorityFeePerGas = Math.round(
-				Math.max(
-					Math.round(gasPriceData.fast.maxPriorityFee) * PRIORITY_GWEI_MULTIPLIER,
-					MIN_PRIORITY_GWEI
-				)
-			);
+				priorityTransactionMaxPriorityFeePerGas = Math.round(
+					Math.max(
+						Math.round(gasPriceData.fast.maxPriorityFee) * PRIORITY_GWEI_MULTIPLIER,
+						MIN_PRIORITY_GWEI
+					)
+				);
+			} else {
+				// TODO: Add support for legacy gas stations here
+			}
 		} catch(error) {
 			appLogger.error("Error while fetching gas prices from gas station!", error)
 		};
-	}, GAS_REFRESH_INTERVAL_MS);
-}
+	} else {
+		if (NETWORK.gasMode === GAS_MODE.EIP1559) {
+			// TODO: Add support for EIP1159 provider fetching here
+		} else if (NETWORK.gasMode === GAS_MODE.LEGACY) {
+			const gasPrice = await currentlySelectedWeb3Client.eth.getGasPrice();
+			gasPriceBn = new Web3.utils.BN(gasPrice);
+		}
+	}
+}, GAS_REFRESH_INTERVAL_MS);
 
 // -----------------------------------------
 // 6. FETCH PAIRS, NFTS, AND NFT TIMELOCK
@@ -1127,7 +1142,7 @@ function watchPricingStream() {
 						const orderTransaction = createTransaction({
 							to: tradingContract.options.address,
 							data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
-							...getGasFees(CHAIN_ID, true)
+							...getGasFees(NETWORK, true)
 
 						});
 
@@ -1357,7 +1372,7 @@ if(process.env.VAULT_REFILL_ENABLED === "true") {
 			to : vaultContract.options.address,
 			data : vaultContract.methods.refill().encodeABI(),
 			nonce: nonceManager.getNextNonce(),
-			...getGasFees(CHAIN_ID, false)
+			...getGasFees(NETWORK, false)
 		});
 
 		try{
@@ -1376,7 +1391,7 @@ if(process.env.VAULT_REFILL_ENABLED === "true") {
 			to : vaultContract.options.address,
 			data : vaultContract.methods.deplete().encodeABI(),
 			nonce: nonceManager.getNextNonce(),
-			...getGasFees(CHAIN_ID, false)
+			...getGasFees(NETWORK, false)
 		});
 
 		try {
@@ -1406,7 +1421,7 @@ if(AUTO_HARVEST_MS > 0){
 			to : nftRewardsContract.options.address,
 			data : nftRewardsContract.methods.claimTokens().encodeABI(),
 			nonce: nonceManager.getNextNonce(),
-			...getGasFees(CHAIN_ID, false)
+			...getGasFees(NETWORK, false)
 		});
 
 
@@ -1438,7 +1453,7 @@ if(AUTO_HARVEST_MS > 0){
 			to : nftRewardsContract.options.address,
 			data : nftRewardsContract.methods.claimPoolTokens(fromRound, toRound).encodeABI(),
 			nonce: nonceManager.getNextNonce(),
-			...getGasFees(CHAIN_ID, false)
+			...getGasFees(NETWORK, false)
 		});
 
 
@@ -1484,17 +1499,17 @@ function createTransaction(additionalTransactionProps) {
 	return transaction;
 }
 
-const getGasFees = async (chainId, isPriority = false) => {
-	if (EIP_1559_CHAIN_IDS.includes(chainId)) {
+const getGasFees = async (network, isPriority = false) => {
+	if (network.gasMode === GAS_MODE.EIP1559) {
 		return {
 			maxPriorityFeePerGas: isPriority ? Web3.utils.toHex(priorityTransactionMaxPriorityFeePerGas*1e9) : Web3.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
 			maxFeePerGas: isPriority ? MAX_FEE_PER_GAS_WEI_HEX: Web3.utils.toHex(standardTransactionGasFees.maxFee*1e9),
 		}
+	} else if (network.gasMode === GAS_MODE.LEGACY) {
+		return {
+			gasPrice: isPriority ? gasPriceBn.times(125).div(100).toString() : gasPriceBn.times(120).div(100).toString()
+		}
 	}
 
-	const gasPrice = await currentlySelectedWeb3Client.eth.getGasPrice();
-	const gasPriceBn = web3.utils.BN(gasPrice);
-	return {
-		gasPrice: isPriority ? gasPriceBn.times(125).div(100).toString() : gasPriceBn.times(120).div(100).toString()
-	}
+	return {};
 }
