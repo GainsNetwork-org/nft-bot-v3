@@ -80,7 +80,7 @@ const HARDFORK = process.env.HARDFORK ?? "london";
 const NETWORK = NETWORKS[CHAIN_ID];
 
 if (!NETWORK) {
-	throw Error("Invalid chain id: " + CHAIN_ID);
+	throw new Error(`Invalid chain id: ${CHAIN_ID}`);
 }
 
 const DRY_RUN_MODE = process.env.DRY_RUN_MODE === 'true';
@@ -1511,5 +1511,5 @@ const getGasFees = async (network, isPriority = false) => {
 		}
 	}
 
-	return {};
+	throw new Error(`Unsupported gas mode: ${network?.gasMode}`)
 }
