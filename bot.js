@@ -1495,6 +1495,6 @@ const getGasFees = async (chainId, isPriority = false) => {
 	const gasPrice = await currentlySelectedWeb3Client.eth.getGasPrice();
 	const gasPriceBn = web3.utils.BN(gasPrice);
 	return {
-		gasPrice: isPriority ? gasPriceBn.times(120).div(100).toString() : gasPriceBn.toString()
+		gasPrice: isPriority ? gasPriceBn.times(125).div(100).toString() : gasPriceBn.times(120).div(100).toString()
 	}
 }
