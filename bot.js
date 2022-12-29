@@ -1507,7 +1507,9 @@ const getGasFees = async (network, isPriority = false) => {
 		}
 	} else if (network.gasMode === GAS_MODE.LEGACY) {
 		return {
-			gasPrice: isPriority ? Web3.utils.toHex(gasPriceBn.mul(125).div(100)) : Web3.utils.toHex(gasPriceBn.mul(120).div(100))
+			gasPrice: isPriority ?
+				Web3.utils.toHex(gasPriceBn.mul(web3.utils.toBN(125)).div(web3.utils.toBN(100))) :
+				Web3.utils.toHex(gasPriceBn.mul(web3.utils.toBN(120)).div(web3.utils.toBN(100)))
 		}
 	}
 
