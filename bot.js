@@ -44,25 +44,14 @@ let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, currentlySelecte
 	maxTradesPerPair = 0, linkContract, pairInfosContract, gasPriceBn = new Web3.utils.BN(0.1 * 1e9);
 
 // --------------------------------------------
-// 3. INIT: CHECK ENV VARS & LINK ALLOWANCE
+// 3. INIT ENV VARS & CHECK LINK ALLOWANCE
 // --------------------------------------------
 
 appLogger.info("Welcome to the gTrade NFT bot!");
-if(!process.env.WSS_URLS || !process.env.PRICES_URL || !process.env.STORAGE_ADDRESS
-|| !process.env.PRIVATE_KEY || !process.env.PUBLIC_KEY || !process.env.EVENT_CONFIRMATIONS_SEC
-|| !process.env.MAX_GAS_PRICE_GWEI || !process.env.CHECK_REFILL_SEC
-|| !process.env.VAULT_REFILL_ENABLED || !process.env.AUTO_HARVEST_SEC || !process.env.MIN_PRIORITY_GWEI
-|| !process.env.PRIORITY_GWEI_MULTIPLIER || !process.env.MAX_GAS_PER_TRANSACTION
-|| !process.env.PAIR_INFOS_ADDRESS){
-	appLogger.info("Please fill all parameters in the .env file.");
-
-	process.exit();
-}
 
 // Parse non-fixed string configuration constants from environment variables up front
-const MAX_FEE_PER_GAS_WEI_HEX = Web3.utils.toHex(parseInt(process.env.MAX_GAS_PRICE_GWEI, 10) * 1e9),
+const MAX_FEE_PER_GAS_WEI_HEX = (process.env.MAX_GAS_PRICE_GWEI ?? '').length > 0 ? Web3.utils.toHex(parseInt(process.env.MAX_GAS_PRICE_GWEI, 10) * 1e9) : 0,
 	  MAX_GAS_PER_TRANSACTION_HEX = Web3.utils.toHex(parseInt(process.env.MAX_GAS_PER_TRANSACTION, 10)),
-	  CHECK_REFILL_MS = parseFloat(process.env.CHECK_REFILL_SEC) * 1000,
 	  EVENT_CONFIRMATIONS_MS = parseFloat(process.env.EVENT_CONFIRMATIONS_SEC) * 1000,
 	  AUTO_HARVEST_MS = parseFloat(process.env.AUTO_HARVEST_SEC) * 1000,
 	  FAILED_ORDER_TRIGGER_TIMEOUT_MS = (process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC ?? '').length > 0 ? parseFloat(process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC) * 1000 : 60 * 1000,
@@ -70,7 +59,8 @@ const MAX_FEE_PER_GAS_WEI_HEX = Web3.utils.toHex(parseInt(process.env.MAX_GAS_PR
 	  MIN_PRIORITY_GWEI = parseFloat(process.env.MIN_PRIORITY_GWEI),
 	  OPEN_TRADES_REFRESH_MS = (process.env.OPEN_TRADES_REFRESH_SEC ?? '').length > 0 ? parseFloat(process.env.OPEN_TRADES_REFRESH_SEC) * 1000 : 120,
 	  GAS_REFRESH_INTERVAL_MS = (process.env.GAS_REFRESH_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.GAS_REFRESH_INTERVAL_SEC) * 1000 : 3,
-	  WEB3_STATUS_REPORT_INTERVAL_MS = (process.env.WEB3_STATUS_REPORT_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.WEB3_STATUS_REPORT_INTERVAL_SEC) * 1000 : 30 * 1000;
+	  WEB3_STATUS_REPORT_INTERVAL_MS = (process.env.WEB3_STATUS_REPORT_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.WEB3_STATUS_REPORT_INTERVAL_SEC) * 1000 : 30 * 1000,
+	  l1BlockFetchIntervalMs = process.env.L1_BLOCK_FETCH_INTERVAL_MS ? +process.env.L1_BLOCK_FETCH_INTERVAL_MS : undefined;
 
 const CHAIN_ID = process.env.CHAIN_ID !== undefined ? parseInt(process.env.CHAIN_ID, 10) : CHAIN_IDS.POLYGON; // Polygon chain id
 const NETWORK_ID = process.env.NETWORK_ID !== undefined ? parseInt(process.env.NETWORK_ID, 10) : CHAIN_ID;
@@ -126,6 +116,7 @@ async function checkLinkAllowance() {
 
 const WEB3_PROVIDER_URLS = process.env.WSS_URLS.split(",");
 let currentWeb3ClientBlocks = new Array(WEB3_PROVIDER_URLS.length).fill(0);
+let currentL1Blocks = new Array(WEB3_PROVIDER_URLS.length).fill(0), prevL1BlockFetchTimeMs = 0;
 
 async function setCurrentWeb3Client(newWeb3ClientIndex){
 	appLogger.info("Switching web3 client to " + WEB3_PROVIDER_URLS[newWeb3ClientIndex] + " (#" + newWeb3ClientIndex + ")...");
@@ -241,7 +232,7 @@ function createWeb3Client(providerIndex, providerUrl) {
 		};
 	}
 
-	web3Client.eth.subscribe('newBlockHeaders').on('data', (header) => {
+	web3Client.eth.subscribe('newBlockHeaders').on('data', async (header) => {
 		const newBlockNumber = header.number;
 
 		if(newBlockNumber === null) {
@@ -251,6 +242,20 @@ function createWeb3Client(providerIndex, providerUrl) {
 		}
 
 		currentWeb3ClientBlocks[providerIndex] = newBlockNumber;
+
+		if (l1BlockFetchIntervalMs !== undefined && Date.now() - prevL1BlockFetchTimeMs > l1BlockFetchIntervalMs) {			
+			prevL1BlockFetchTimeMs = Date.now();
+			try {
+				const block = await web3Client.eth.getBlock(newBlockNumber);
+				const _currentL1BlockNumber = Web3.utils.hexToNumber(block.l1BlockNumber);
+				if (currentL1Blocks[providerIndex] !== _currentL1BlockNumber) {
+					currentL1Blocks[providerIndex] = _currentL1BlockNumber;
+					appLogger.debug(`New L1 block received ${_currentL1BlockNumber} from provider ${providerUrl}...`);
+				}
+			} catch (error) {
+				appLogger.error(`An error occurred attempting to fetch L1 block number for block ${newBlockNumber}`, { blockNumber: newBlockNumber, error });
+			}
+		}
 
 		appLogger.debug(`New block received ${newBlockNumber} from provider ${providerUrl}...`);
 
@@ -1314,7 +1319,8 @@ function watchPricingStream() {
 			const { accPerCollateral, lastUpdateBlock } = pairRolloverFees[pairIndex];
 			const { rolloverFeePerBlockP } = pairParams[pairIndex];
 
-			const pendingAccRolloverFees = accPerCollateral + (currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex] - lastUpdateBlock) * rolloverFeePerBlockP;
+			const currentBlock = l1BlockFetchIntervalMs !== undefined ? currentL1Blocks[currentlySelectedWeb3ClientIndex] : currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex];
+			const pendingAccRolloverFees = accPerCollateral + (currentBlock - lastUpdateBlock) * rolloverFeePerBlockP;
 
 			return posDai * (pendingAccRolloverFees - initialAccRolloverFees);
 		}
@@ -1333,9 +1339,10 @@ function watchPricingStream() {
 
 			const { accPerOiLong, accPerOiShort, lastUpdateBlock } = pairFundingFees[pairIndex];
 			const { fundingFeePerBlockP } = pairParams[pairIndex];
-
 			const { long: longOi, short: shortOi } = openInterests[pairIndex];
-			const fundingFeesPaidByLongs = (longOi - shortOi) * fundingFeePerBlockP * (currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex] - lastUpdateBlock);
+			
+			const currentBlock = l1BlockFetchIntervalMs !== undefined ? currentL1Blocks[currentlySelectedWeb3ClientIndex] : currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex];
+			const fundingFeesPaidByLongs = (longOi - shortOi) * fundingFeePerBlockP * (currentBlock - lastUpdateBlock);
 
 			let pendingAccFundingFees = 0;
 
@@ -1363,56 +1370,7 @@ function watchPricingStream() {
 watchPricingStream();
 
 // ------------------------------------------
-// 12. REFILL VAULT IF CAN BE REFILLED
-// ------------------------------------------
-
-if(process.env.VAULT_REFILL_ENABLED === "true") {
-	async function refill(){
-		const tx = createTransaction({
-			to : vaultContract.options.address,
-			data : vaultContract.methods.refill().encodeABI(),
-			nonce: nonceManager.getNextNonce(),
-			...getGasFees(NETWORK, false)
-		});
-
-		try{
-			const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY)
-
-			await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
-
-			appLogger.info("Vault successfully refilled.");
-		} catch(error) {
-			appLogger.error("Vault refill transaction failed!", error);
-		};
-	}
-
-	async function deplete(){
-		const tx = createTransaction({
-			to : vaultContract.options.address,
-			data : vaultContract.methods.deplete().encodeABI(),
-			nonce: nonceManager.getNextNonce(),
-			...getGasFees(NETWORK, false)
-		});
-
-		try {
-			const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
-
-			await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
-
-			appLogger.info("Vault successfully depleted.");
-		} catch(error) {
-			appLogger.error("Vault deplete transaction failed!", error);
-		}
-	}
-
-	setInterval(() => {
-		refill();
-		deplete();
-	}, CHECK_REFILL_MS);
-}
-
-// ------------------------------------------
-// 13. AUTO HARVEST REWARDS
+// 12. AUTO HARVEST REWARDS
 // ------------------------------------------
 
 if(AUTO_HARVEST_MS > 0){
