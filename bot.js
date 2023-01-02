@@ -375,6 +375,7 @@ async function startFetchingLatestGasPrices() {
 const FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS = (process.env.FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_SEC) * 1000 : 60 * 1000;
 
 let fetchTradingVariablesTimerId = null;
+let currentTradingVariablesFetchPromise = null;
 
 async function fetchTradingVariables(){
 	appLogger.info("Fetching trading variables...");
@@ -388,14 +389,22 @@ async function fetchTradingVariables(){
 
 	const executionStart = performance.now();
 
+	const pairsCount = await pairsStorageContract.methods.pairsCount().call();
+
+	if(currentTradingVariablesFetchPromise !== null) {
+		appLogger.warn(`A current fetchTradingVariables call was already in progress, just awaiting that...`);
+
+		return await currentTradingVariablesFetchPromise;
+	}
+
 	try
 	{
-		const pairsCount = await pairsStorageContract.methods.pairsCount().call();
-
-		await Promise.all([
+		currentTradingVariablesFetchPromise = Promise.all([
 			fetchPairs(pairsCount),
 			fetchPairInfos(pairsCount),
 		]);
+
+		await currentTradingVariablesFetchPromise;
 
 		appLogger.info(`Done fetching trading variables; took ${performance.now() - executionStart}ms.`);
 
@@ -406,7 +415,9 @@ async function fetchTradingVariables(){
 		appLogger.error("Error while fetching trading variables!", { error });
 
 		fetchTradingVariablesTimerId = setTimeout(() => { fetchTradingVariablesTimerId = null; fetchTradingVariables(); }, 2*1000);
-	};
+	} finally {
+		currentTradingVariablesFetchPromise = null;
+	}
 
 	async function fetchPairs(pairsCount) {
 		const maxPerPair = await storageContract.methods.maxTradesPerPair().call();
