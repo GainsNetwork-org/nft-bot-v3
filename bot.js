@@ -328,15 +328,26 @@ setInterval(() => {
 // -----------------------------------------
 
 async function startFetchingLatestGasPrices() {
-	try {
-		await fetchLatestGasPrices();
-	} finally {
-		setTimeout(async () => {
+	// Wait for the first to complete
+	await doNextLatestGasPricesFetch();
+
+	async function doNextLatestGasPricesFetch() {
+		try {
 			await fetchLatestGasPrices();
-		}, GAS_REFRESH_INTERVAL_MS);
+		} finally {
+			// No matter what, schedule the next fetch
+			setTimeout(async () => {
+				doNextLatestGasPricesFetch()
+					.catch((error) => {
+						appLogger.error(`An error occurred attempting to fetch latest gas prices; will be tried again in ${GAS_REFRESH_INTERVAL_MS}.`, { error });
+					});
+			}, GAS_REFRESH_INTERVAL_MS);
+		}
 	}
 
 	async function fetchLatestGasPrices() {
+		appLogger.verbose("Fetching latest gas prices...");
+
 		if (NETWORK.gasStationUrl) {
 			try {
 				const response = await fetch(NETWORK.gasStationUrl);
@@ -1077,7 +1088,7 @@ function watchPricingStream() {
 						orderType = 0;
 					} else if(sl !== 0 && ((buy && price <= sl) || (!buy && price >= sl))) {
 						orderType = 1;
-					} else if(sl === 0 && ((buy && price <= liqPrice) || (!buy && price >= liqPrice))) {
+					} else if((buy && price <= liqPrice) || (!buy && price >= liqPrice)) {
 						orderType = 2;
 					} else {
 						//appLogger.debug(`Open trade ${openTradeKey} is not ready for us to act on yet.`);
