@@ -1,3 +1,4 @@
+import Web3 from "web3";
 import abis from "./abis.js";
 
 export class NFTManager {
@@ -135,8 +136,10 @@ export class NFTManager {
                 storageContract.methods.nftLastSuccess(onlyNft.id).call()
             ]);
 
+		const latestBlockNumber = this._getTimelockRelativeBlockNumber(currentBlock);
+
         // If the NFT is still time locked we return null because we still can't use it
-        if(currentBlock - nftLastSuccess <= this.nftTimelock) {
+        if(latestBlockNumber - nftLastSuccess <= this.nftTimelock) {
             return null;
         }
 
@@ -173,7 +176,7 @@ export class NFTManager {
             // Load the last successful block for each NFT that we know is not actively being used
             const [currentBlock, nftsWithLastSuccesses] = await Promise.all(
                 [
-                    web3Client.eth.getBlockNumber(),
+                    web3Client.eth.getBlock('latest'),
                     Promise.all(
                         this.availableNfts
                             .filter(nft => !this.nftsBeingUsed.has(nft.id))
@@ -185,8 +188,10 @@ export class NFTManager {
 
 			this.logger.debug(`${nftsWithLastSuccesses.length} candidate NFTs to consider.`, { currentBlock, nftsWithLastSuccesses });
 
+			const latestBlockNumber = this._getTimelockRelativeBlockNumber(currentBlock);
+
             // Try to find the first NFT whose last successful block is older than the current block by the required timelock amount
-            const firstEligibleNft = nftsWithLastSuccesses.find(nftwls => currentBlock - nftwls.lastSuccess > this.nftTimelock);
+            const firstEligibleNft = nftsWithLastSuccesses.find(nftwls => latestBlockNumber - nftwls.lastSuccess > this.nftTimelock);
 
             if(firstEligibleNft !== undefined) {
                 return firstEligibleNft.nft;
@@ -201,4 +206,12 @@ export class NFTManager {
             return null;
         }
     }
+
+	_getTimelockRelativeBlockNumber(block) {
+		if(block.l1BlockNumber !== undefined) {
+			return Web3.utils.hexToNumber(block.l1BlockNumber);
+		}
+
+		return block.number;
+	}
 }
