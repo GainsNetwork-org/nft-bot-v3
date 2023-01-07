@@ -89,7 +89,6 @@ async function checkLinkAllowance() {
 				to : linkContract.options.address,
 				data : linkContract.methods.approve(process.env.STORAGE_ADDRESS, "115792089237316195423570985008687907853269984665640564039457584007913129639935").encodeABI(),
 				nonce: nonceManager.getNextNonce(),
-				...getGasFees(NETWORK, false)
 			});
 
 			try {
@@ -162,6 +161,8 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 
 	linkContract = new newWeb3Client.eth.Contract(abis.LINK, linkAddress);
 
+	const wasFirstClientSelection = currentlySelectedWeb3Client === null;
+
 	// Update the globally selected provider with this new provider
 	currentlySelectedWeb3ClientIndex = newWeb3ClientIndex;
 	currentlySelectedWeb3Client = newWeb3Client;
@@ -169,9 +170,17 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	// Subscribe to events using the new provider
 	watchLiveTradingEvents();
 
+	var startFetchingLatestGasPricesPromise = null;
+
+	// If no client was previously selected, start fetching gas prices
+	if(wasFirstClientSelection)	{
+		startFetchingLatestGasPricesPromise = startFetchingLatestGasPrices();
+	}
+
 	await Promise.all([
 		nftManager.loadNfts(),
-		nonceManager.initialize()
+		nonceManager.initialize(),
+		startFetchingLatestGasPricesPromise,
 	]);
 
 	// Fire and forget refreshing of data using new provider
@@ -243,7 +252,7 @@ function createWeb3Client(providerIndex, providerUrl) {
 
 		currentWeb3ClientBlocks[providerIndex] = newBlockNumber;
 
-		if (l1BlockFetchIntervalMs !== undefined && Date.now() - prevL1BlockFetchTimeMs > l1BlockFetchIntervalMs) {			
+		if (l1BlockFetchIntervalMs !== undefined && Date.now() - prevL1BlockFetchTimeMs > l1BlockFetchIntervalMs) {
 			prevL1BlockFetchTimeMs = Date.now();
 			try {
 				const block = await web3Client.eth.getBlock(newBlockNumber);
@@ -318,36 +327,57 @@ setInterval(() => {
 // 5. FETCH DYNAMIC GAS PRICE
 // -----------------------------------------
 
-setInterval(async () => {
-	if (NETWORK.gasStationUrl) {
+async function startFetchingLatestGasPrices() {
+	// Wait for the first to complete
+	await doNextLatestGasPricesFetch();
+
+	async function doNextLatestGasPricesFetch() {
 		try {
-			const response = await fetch(NETWORK.gasStationUrl);
-			const gasPriceData = await response.json();
-
-			if (NETWORK.gasMode === GAS_MODE.EIP1559) {
-				standardTransactionGasFees = { maxFee: Math.round(gasPriceData.standard.maxFee), maxPriorityFee: Math.round(gasPriceData.standard.maxPriorityFee) };
-
-				priorityTransactionMaxPriorityFeePerGas = Math.round(
-					Math.max(
-						Math.round(gasPriceData.fast.maxPriorityFee) * PRIORITY_GWEI_MULTIPLIER,
-						MIN_PRIORITY_GWEI
-					)
-				);
-			} else {
-				// TODO: Add support for legacy gas stations here
-			}
-		} catch(error) {
-			appLogger.error("Error while fetching gas prices from gas station!", error)
-		};
-	} else {
-		if (NETWORK.gasMode === GAS_MODE.EIP1559) {
-			// TODO: Add support for EIP1159 provider fetching here
-		} else if (NETWORK.gasMode === GAS_MODE.LEGACY) {
-			const gasPrice = await currentlySelectedWeb3Client.eth.getGasPrice();
-			gasPriceBn = new Web3.utils.BN(gasPrice);
+			await fetchLatestGasPrices();
+		} finally {
+			// No matter what, schedule the next fetch
+			setTimeout(async () => {
+				doNextLatestGasPricesFetch()
+					.catch((error) => {
+						appLogger.error(`An error occurred attempting to fetch latest gas prices; will be tried again in ${GAS_REFRESH_INTERVAL_MS}.`, { error });
+					});
+			}, GAS_REFRESH_INTERVAL_MS);
 		}
 	}
-}, GAS_REFRESH_INTERVAL_MS);
+
+	async function fetchLatestGasPrices() {
+		appLogger.verbose("Fetching latest gas prices...");
+
+		if (NETWORK.gasStationUrl) {
+			try {
+				const response = await fetch(NETWORK.gasStationUrl);
+				const gasPriceData = await response.json();
+
+				if (NETWORK.gasMode === GAS_MODE.EIP1559) {
+					standardTransactionGasFees = { maxFee: Math.round(gasPriceData.standard.maxFee), maxPriorityFee: Math.round(gasPriceData.standard.maxPriorityFee) };
+
+					priorityTransactionMaxPriorityFeePerGas = Math.round(
+						Math.max(
+							Math.round(gasPriceData.fast.maxPriorityFee) * PRIORITY_GWEI_MULTIPLIER,
+							MIN_PRIORITY_GWEI
+						)
+					);
+				} else {
+					// TODO: Add support for legacy gas stations here
+				}
+			} catch(error) {
+				appLogger.error("Error while fetching gas prices from gas station!", error)
+			};
+		} else {
+			if (NETWORK.gasMode === GAS_MODE.EIP1559) {
+				// TODO: Add support for EIP1159 provider fetching here
+			} else if (NETWORK.gasMode === GAS_MODE.LEGACY) {
+				const gasPrice = await currentlySelectedWeb3Client.eth.getGasPrice();
+				gasPriceBn = new Web3.utils.BN(gasPrice);
+			}
+		}
+	}
+}
 
 // -----------------------------------------
 // 6. FETCH PAIRS, NFTS, AND NFT TIMELOCK
@@ -356,6 +386,7 @@ setInterval(async () => {
 const FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS = (process.env.FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_SEC) * 1000 : 60 * 1000;
 
 let fetchTradingVariablesTimerId = null;
+let currentTradingVariablesFetchPromise = null;
 
 async function fetchTradingVariables(){
 	appLogger.info("Fetching trading variables...");
@@ -369,14 +400,22 @@ async function fetchTradingVariables(){
 
 	const executionStart = performance.now();
 
+	const pairsCount = await pairsStorageContract.methods.pairsCount().call();
+
+	if(currentTradingVariablesFetchPromise !== null) {
+		appLogger.warn(`A current fetchTradingVariables call was already in progress, just awaiting that...`);
+
+		return await currentTradingVariablesFetchPromise;
+	}
+
 	try
 	{
-		const pairsCount = await pairsStorageContract.methods.pairsCount().call();
-
-		await Promise.all([
+		currentTradingVariablesFetchPromise = Promise.all([
 			fetchPairs(pairsCount),
 			fetchPairInfos(pairsCount),
 		]);
+
+		await currentTradingVariablesFetchPromise;
 
 		appLogger.info(`Done fetching trading variables; took ${performance.now() - executionStart}ms.`);
 
@@ -387,7 +426,9 @@ async function fetchTradingVariables(){
 		appLogger.error("Error while fetching trading variables!", { error });
 
 		fetchTradingVariablesTimerId = setTimeout(() => { fetchTradingVariablesTimerId = null; fetchTradingVariables(); }, 2*1000);
-	};
+	} finally {
+		currentTradingVariablesFetchPromise = null;
+	}
 
 	async function fetchPairs(pairsCount) {
 		const maxPerPair = await storageContract.methods.maxTradesPerPair().call();
@@ -1047,7 +1088,7 @@ function watchPricingStream() {
 						orderType = 0;
 					} else if(sl !== 0 && ((buy && price <= sl) || (!buy && price >= sl))) {
 						orderType = 1;
-					} else if(sl === 0 && ((buy && price <= liqPrice) || (!buy && price >= liqPrice))) {
+					} else if((buy && price <= liqPrice) || (!buy && price >= liqPrice)) {
 						orderType = 2;
 					} else {
 						//appLogger.debug(`Open trade ${openTradeKey} is not ready for us to act on yet.`);
@@ -1147,9 +1188,7 @@ function watchPricingStream() {
 						const orderTransaction = createTransaction({
 							to: tradingContract.options.address,
 							data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
-							...getGasFees(NETWORK, true)
-
-						});
+						}, true);
 
 						// NOTE: technically this should execute synchronously because we're supplying all necessary details on
 						// the transaction object up front
@@ -1340,7 +1379,7 @@ function watchPricingStream() {
 			const { accPerOiLong, accPerOiShort, lastUpdateBlock } = pairFundingFees[pairIndex];
 			const { fundingFeePerBlockP } = pairParams[pairIndex];
 			const { long: longOi, short: shortOi } = openInterests[pairIndex];
-			
+
 			const currentBlock = l1BlockFetchIntervalMs !== undefined ? currentL1Blocks[currentlySelectedWeb3ClientIndex] : currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex];
 			const fundingFeesPaidByLongs = (longOi - shortOi) * fundingFeePerBlockP * (currentBlock - lastUpdateBlock);
 
@@ -1379,7 +1418,6 @@ if(AUTO_HARVEST_MS > 0){
 			to : nftRewardsContract.options.address,
 			data : nftRewardsContract.methods.claimTokens().encodeABI(),
 			nonce: nonceManager.getNextNonce(),
-			...getGasFees(NETWORK, false)
 		});
 
 
@@ -1411,7 +1449,6 @@ if(AUTO_HARVEST_MS > 0){
 			to : nftRewardsContract.options.address,
 			data : nftRewardsContract.methods.claimPoolTokens(fromRound, toRound).encodeABI(),
 			nonce: nonceManager.getNextNonce(),
-			...getGasFees(NETWORK, false)
 		});
 
 
@@ -1447,29 +1484,39 @@ if(AUTO_HARVEST_MS > 0){
  * supplied properties.
  * @param {Object} additionalTransactionProps - Any additional properties that should be applied to (or overridden on)
  * the base transaction object.
+ * @param {boolean} isPriority - Whether or not the transaction is a priority transaction; defaults to false. (NOTE:
+ * ultimately controls the gas price used.
 */
-function createTransaction(additionalTransactionProps) {
+function createTransaction(additionalTransactionProps, isPriority = false) {
 	const transaction = {
 		gas: MAX_GAS_PER_TRANSACTION_HEX,
+		...getTransactionGasFees(NETWORK, isPriority),
 		...additionalTransactionProps
 	}
 
 	return transaction;
 }
 
-const getGasFees = async (network, isPriority = false) => {
+/**
+ * Gets the appropriate gas fee settings to apply to a transaction based on the network type.
+ * @param {NETWORK} network - The network instance that gas fees are to be retrieved for.
+ * @param {boolean} isPriority - Whether or not the transaction is a priority transaction; defaults to false. (NOTE:
+ * this controls the amount of gas used for the transaction.)
+ * @returns The appropriate gas fee settings for the transaction based on the network type.
+ */
+function getTransactionGasFees(network, isPriority = false) {
 	if (network.gasMode === GAS_MODE.EIP1559) {
 		return {
 			maxPriorityFeePerGas: isPriority ? Web3.utils.toHex(priorityTransactionMaxPriorityFeePerGas*1e9) : Web3.utils.toHex(standardTransactionGasFees.maxPriorityFee*1e9),
 			maxFeePerGas: isPriority ? MAX_FEE_PER_GAS_WEI_HEX: Web3.utils.toHex(standardTransactionGasFees.maxFee*1e9),
-		}
+		};
 	} else if (network.gasMode === GAS_MODE.LEGACY) {
+		const priorityMultiplier = isPriority ? 125 : 120;
+
 		return {
-			gasPrice: isPriority ?
-				Web3.utils.toHex(gasPriceBn.mul(Web3.utils.toBN(125)).div(Web3.utils.toBN(100))) :
-				Web3.utils.toHex(gasPriceBn.mul(Web3.utils.toBN(120)).div(Web3.utils.toBN(100)))
-		}
+			gasPrice: Web3.utils.toHex(gasPriceBn.mul(Web3.utils.toBN(priorityMultiplier)).div(Web3.utils.toBN(100)))
+		};
 	}
 
-	throw new Error(`Unsupported gas mode: ${network?.gasMode}`)
+	throw new Error(`Unsupported gas mode: ${network?.gasMode}`);
 }
