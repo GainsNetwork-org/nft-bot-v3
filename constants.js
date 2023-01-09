@@ -37,3 +37,7 @@ export const GROUP_IDS = {
     STOCKS_2: 3,
     STOCKS_3: 4,
 }
+
+export const isCryptoGroup = (groupId) => groupId === GROUP_IDS.CRYPTO;
+export const isForexGroup = (groupId) => groupId === GROUP_IDS.FOREX;
+export const isStocksGroup = (groupId) => groupId >= GROUP_IDS.STOCKS_1 && groupId <= GROUP_IDS.STOCKS_3;

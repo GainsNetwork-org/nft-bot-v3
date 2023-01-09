@@ -12,7 +12,7 @@ import { createLogger } from "./logger.js";
 import { default as abis } from "./abis.js";
 import { NonceManager } from "./NonceManager.js";
 import { NFTManager } from "./NftManager.js";
-import { GAS_MODE, CHAIN_IDS, NETWORKS, GROUP_IDS } from "./constants.js";
+import { GAS_MODE, CHAIN_IDS, NETWORKS, isStocksGroup, isForexGroup } from "./constants.js";
 
 // Load base .env file first
 dotenv.config();
@@ -1142,16 +1142,11 @@ function watchPricingStream() {
 				}
 
 				const groupId = pairs[pairIndex][0][4];
-				if (groupId === GROUP_IDS.FOREX && !isForexOpen(new Date())) {
+				if (isForexGroup(groupId) && !isForexOpen(new Date())) {
 					return;
 				}
 
-				if (
-					(groupId === GROUP_IDS.STOCKS_1 ||
-						groupId === GROUP_IDS.STOCKS_2 ||
-						groupId === GROUP_IDS.STOCKS_3) &&
-					!isStocksOpen(new Date())
-				) {
+				if (isStocksGroup(groupId) && !isStocksOpen(new Date())) {
 					return;
 				}
 
