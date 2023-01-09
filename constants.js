@@ -29,3 +29,11 @@ export const NETWORKS = {
         gasStationUrl: undefined,
     }
 }
+
+export const GROUP_IDS = {
+    CRYPTO: 0,
+    FOREX: 1,
+    STOCKS_1: 2,
+    STOCKS_2: 3,
+    STOCKS_3: 4,
+}
