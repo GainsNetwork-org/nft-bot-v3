@@ -293,6 +293,9 @@ function createWeb3Client(providerIndex, providerUrl) {
 
 		appLogger.debug(`New block received ${newBlockNumber} from provider ${providerUrl}...`);
 
+		// Always fetch the latest L1 block number if it's time (NOTE: fire and forget!)
+		fetchLatestL1BlockNumberIfTime();
+
 		// If this is already the currently selected provider then we don't need to do anything else
 		if(currentlySelectedWeb3ClientIndex === providerIndex) {
 			return;
@@ -308,12 +311,14 @@ function createWeb3Client(providerIndex, providerUrl) {
 			await switchCurrentWeb3Client(providerIndex);
 		}
 
-		// Always fetch the latest L1 block number if it's time
-		await fetchLatestL1BlockNumberIfTime();
-
 		async function fetchLatestL1BlockNumberIfTime() {
-			if (l1BlockFetchIntervalMs !== undefined && Date.now() - prevL1BlockFetchTimeMs > l1BlockFetchIntervalMs) {
-				prevL1BlockFetchTimeMs = Date.now();
+			const nowMs = Date.now();
+
+			if (l1BlockFetchIntervalMs !== undefined && nowMs - prevL1BlockFetchTimeMs > l1BlockFetchIntervalMs) {
+				appLogger.debug(`Fetching next L1 block from provider ${providerUrl}...`, { nowMs, prevL1BlockFetchTimeMs, l1BlockFetchIntervalMs });
+
+				prevL1BlockFetchTimeMs = nowMs;
+
 				try {
 					const latestBlock = await web3Client.eth.getBlock(newBlockNumber);
 					const _currentL1BlockNumber = Web3.utils.hexToNumber(latestBlock.l1BlockNumber);
