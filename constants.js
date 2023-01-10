@@ -29,3 +29,15 @@ export const NETWORKS = {
         gasStationUrl: undefined,
     }
 }
+
+export const GROUP_IDS = {
+    CRYPTO: 0,
+    FOREX: 1,
+    STOCKS_1: 2,
+    STOCKS_2: 3,
+    STOCKS_3: 4,
+}
+
+export const isCryptoGroup = (groupId) => groupId === GROUP_IDS.CRYPTO;
+export const isForexGroup = (groupId) => groupId === GROUP_IDS.FOREX;
+export const isStocksGroup = (groupId) => groupId >= GROUP_IDS.STOCKS_1 && groupId <= GROUP_IDS.STOCKS_3;

@@ -3,6 +3,7 @@
 // ------------------------------------
 
 import dotenv from "dotenv";
+import { isStocksOpen, isForexOpen } from "@gainsnetwork/sdk";
 import Web3 from "web3";
 import { WebSocket } from "ws";
 import { DateTime } from "luxon";
@@ -11,7 +12,7 @@ import { createLogger } from "./logger.js";
 import { default as abis } from "./abis.js";
 import { NonceManager } from "./NonceManager.js";
 import { NFTManager } from "./NftManager.js";
-import { GAS_MODE, CHAIN_IDS, NETWORKS } from "./constants.js";
+import { GAS_MODE, CHAIN_IDS, NETWORKS, isStocksGroup, isForexGroup } from "./constants.js";
 
 // Load base .env file first
 dotenv.config();
@@ -38,7 +39,7 @@ let executionStats = {
 let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, currentlySelectedWeb3Client = null,
 	eventSubTrading = null, eventSubCallbacks = null, eventSubPairInfos = null,
 	web3Clients = [], priorityTransactionMaxPriorityFeePerGas = 50, standardTransactionGasFees = { maxFee: 31, maxPriorityFee: 31 },
-	spreadsP = [], openInterests = [], collaterals = [], pairParams = [], pairRolloverFees = [], pairFundingFees = [], maxNegativePnlOnOpenP = 0,
+	spreadsP = [], openInterests = [], collaterals = [], pairs = [], pairParams = [], pairRolloverFees = [], pairFundingFees = [], maxNegativePnlOnOpenP = 0,
 	knownOpenTrades = null, triggeredOrders = new Map(),
 	storageContract, tradingContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract,
 	maxTradesPerPair = 0, linkContract, pairInfosContract, gasPriceBn = new Web3.utils.BN(0.1 * 1e9);
@@ -438,7 +439,7 @@ async function fetchTradingVariables(){
 			pairsPromises[i] = pairsStorageContract.methods.pairsBackend(i).call();
 		}
 
-		const pairs = await Promise.all(pairsPromises);
+		pairs = await Promise.all(pairsPromises);
 		const newSpreadsP = new Array(pairs.length);
 		const newOpenInterests = new Array(pairs.length);
 		const newCollaterals = new Array(pairs.length);
@@ -1137,6 +1138,15 @@ function watchPricingStream() {
 
 				// If it's not an order type we want to act on yet, just skip it
 				if(orderType === -1) {
+					return;
+				}
+
+				const groupId = parseInt(pairs[pairIndex][0][4]);
+				if (isForexGroup(groupId) && !isForexOpen(new Date())) {
+					return;
+				}
+
+				if (isStocksGroup(groupId) && !isStocksOpen(new Date())) {
 					return;
 				}
 
