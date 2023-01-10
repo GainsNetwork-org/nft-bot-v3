@@ -1141,7 +1141,7 @@ function watchPricingStream() {
 					return;
 				}
 
-				const groupId = pairs[pairIndex][0][4];
+				const groupId = parseInt(pairs[pairIndex][0][4]);
 				if (isForexGroup(groupId) && !isForexOpen(new Date())) {
 					return;
 				}
