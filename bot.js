@@ -3,7 +3,7 @@
 // ------------------------------------
 
 import dotenv from "dotenv";
-import { isStocksOpen, isForexOpen } from "@gainsnetwork/sdk";
+import { isStocksOpen, isForexOpen, isIndicesOpen, isCommoditiesOpen } from "@gainsnetwork/sdk";
 import Web3 from "web3";
 import { WebSocket } from "ws";
 import { DateTime } from "luxon";
@@ -12,7 +12,7 @@ import { createLogger } from "./logger.js";
 import { default as abis } from "./abis.js";
 import { NonceManager } from "./NonceManager.js";
 import { NFTManager } from "./NftManager.js";
-import { GAS_MODE, CHAIN_IDS, NETWORKS, isStocksGroup, isForexGroup } from "./constants.js";
+import { GAS_MODE, CHAIN_IDS, NETWORKS, isStocksGroup, isForexGroup, isIndicesGroup, isCommoditiesGroup } from "./constants.js";
 
 // Load base .env file first
 dotenv.config();
@@ -1147,6 +1147,14 @@ function watchPricingStream() {
 				}
 
 				if (isStocksGroup(groupId) && !isStocksOpen(new Date())) {
+					return;
+				}
+
+				if (isIndicesGroup(groupId) && !isIndicesOpen(new Date())) {
+					return;
+				}
+
+				if (isCommoditiesGroup(groupId) && !isCommoditiesOpen(new Date())) {
 					return;
 				}
 
