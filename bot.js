@@ -984,8 +984,6 @@ async function refreshPairFundingFees(event){
 // 11. FETCH CURRENT PRICES & TRIGGER ORDERS
 // ---------------------------------------------
 
-const MAXIMUM_CHART_CANDLE_AGE_MS = 61000;
-
 function watchPricingStream() {
 	appLogger.info("Connecting to pricing stream...");
 
@@ -1034,17 +1032,9 @@ function watchPricingStream() {
 
 		const messageData = JSON.parse(msg.data.toString());
 
-		// Ignore non-"charts" messages from the backend
-		if(messageData.name !== "charts") {
+		// Ignore non-prices messages from the backend
+		if(messageData.name !== "p") {
 			appLogger.debug(`Received a message "${messageData.name}" from the pricing stream, but we only care about "charts"; ignoring.`);
-
-			return;
-		}
-
-		const chartCandleAge = Date.now() - messageData.time;
-
-		if(chartCandleAge > MAXIMUM_CHART_CANDLE_AGE_MS) {
-			appLogger.warn(`Chart candle data is too old to act on (from ${new Date(messageData.time).toISOString()}); skipping!`);
 
 			return;
 		}
@@ -1058,17 +1048,18 @@ function watchPricingStream() {
 		});
 
 		async function handleOnMessageAsync() {
-			//appLogger.debug(`Beginning processing new "charts" message for ${messageData.time}...`);
-
-
-			// appLogger.debug(`Received "charts" message, checking if any of the ${currentKnownOpenTrades.size} known open trades should be acted upon...`, { candleTime: messageData.time, chartCandleAge, knownOpenTradesCount: currentKnownOpenTrades.size });
+			// appLogger.debug(`Beginning processing new "charts" message}...`);
+			// appLogger.debug(`Received "charts" message, checking if any of the ${currentKnownOpenTrades.size} known open trades should be acted upon...`, { knownOpenTradesCount: currentKnownOpenTrades.size });
 
 			await Promise.allSettled([...currentKnownOpenTrades.values()].map(async openTrade => {
 				const { trader, pairIndex, index, buy } = openTrade;
+
+				if(pairIndex !== messageData.v[0]) return;
+
 				const isPendingOpenLimitOrder = openTrade.openPrice === undefined;
 				const openTradeKey = buildTradeIdentifier(trader, pairIndex, index, isPendingOpenLimitOrder);
 
-				const price = messageData.closes[pairIndex];
+				const price = messageData.v[1];
 
 				// Under certain conditions (forex/stock market just opened, server restart, etc) the price is not
 				// available, so we need to make sure we skip any processing in that case
