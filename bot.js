@@ -1054,7 +1054,7 @@ function watchPricingStream() {
 			await Promise.allSettled([...currentKnownOpenTrades.values()].map(async openTrade => {
 				const { trader, pairIndex, index, buy } = openTrade;
 
-				if(pairIndex !== messageData.v[0]) return;
+				if(parseInt(pairIndex) !== messageData.v[0]) return;
 
 				const isPendingOpenLimitOrder = openTrade.openPrice === undefined;
 				const openTradeKey = buildTradeIdentifier(trader, pairIndex, index, isPendingOpenLimitOrder);
