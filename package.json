@@ -12,8 +12,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@gainsnetwork/sdk": "^0.0.13",
+    "@gainsnetwork/sdk": "^0.0.17",
     "dotenv": "^16.0.1",
+    "ethers": "^5.7.2",
     "luxon": "^3.0.1",
     "node-fetch": "^3.2.10",
     "web3": "^1.7.5",

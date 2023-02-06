@@ -3,7 +3,8 @@
 // ------------------------------------
 
 import dotenv from "dotenv";
-import { isStocksOpen, isForexOpen, isIndicesOpen, isCommoditiesOpen } from "@gainsnetwork/sdk";
+import ethers from "ethers";
+import { isStocksOpen, isForexOpen, isIndicesOpen, isCommoditiesOpen, fetchOpenPairTradesRaw } from "@gainsnetwork/sdk";
 import Web3 from "web3";
 import { WebSocket } from "ws";
 import { DateTime } from "luxon";
@@ -13,6 +14,7 @@ import { default as abis } from "./abis.js";
 import { NonceManager } from "./NonceManager.js";
 import { NFTManager } from "./NftManager.js";
 import { GAS_MODE, CHAIN_IDS, NETWORKS, isStocksGroup, isForexGroup, isIndicesGroup, isCommoditiesGroup } from "./constants.js";
+import { transformRawTrades } from "./utils.js";
 
 // Load base .env file first
 dotenv.config();
@@ -523,9 +525,8 @@ let fetchOpenTradesRetryTimerId = null;
 
 async function fetchOpenTrades(){
 	appLogger.info("Fetching open trades...");
-
 	try {
-		if(spreadsP.length === 0){
+		if(pairs.length === 0){
 			appLogger.warn("Spreads are not yet loaded; will retry shortly!");
 
 			scheduleRetryFetchOpenTrades();
@@ -537,15 +538,15 @@ async function fetchOpenTrades(){
 
 		const [
 			openLimitOrders,
-			pairTraders
+			pairTrades,
 		] = await Promise.all(
 			[
 				fetchOpenLimitOrders(),
-				fetchOpenPairTrades()
+				fetchOpenPairTrades(),
 			]);
 
 		const newOpenTrades = new Map(openLimitOrders
-			.concat(pairTraders)
+			.concat(pairTrades)
 			.map(trade => [buildTradeIdentifier(trade.trader, trade.pairIndex, trade.index, trade.openPrice === undefined), trade]));
 
 		knownOpenTrades = newOpenTrades;
@@ -595,82 +596,41 @@ async function fetchOpenTrades(){
 	async function fetchOpenPairTrades() {
 		appLogger.info("Fetching open pair trades...");
 
-		const allOpenPairTrades = (await Promise.all(spreadsP.map(async (_, spreadPIndex) => {
-			appLogger.debug(`Fetching pair traders for pairIndex ${spreadPIndex}...`);
+		const ethersProvider = new ethers.providers.WebSocketProvider(
+			currentlySelectedWeb3Client.currentProvider.connection._url
+		);
 
-			const pairTradersCallStartTime = performance.now();
+		const ethersPairsStorage = new ethers.Contract(
+			pairsStorageContract.options.address,
+			pairsStorageContract.options.jsonInterface,
+			ethersProvider
+		);
+		const ethersStorage = new ethers.Contract(
+			storageContract.options.address,
+			storageContract.options.jsonInterface,
+			ethersProvider
+		);
+		const ethersPairInfos = new ethers.Contract(
+			pairInfosContract.options.address,
+			pairInfosContract.options.jsonInterface,
+			ethersProvider
+		);
 
-			const pairTraderAddresses = await storageContract.methods.pairTradersArray(spreadPIndex).call();
-
-			if(pairTraderAddresses.length === 0) {
-				appLogger.debug(`No pair traders found for pairIndex ${spreadPIndex}; no processing left to do!`);
-
-				return [];
+		const openTradesRaw = await fetchOpenPairTradesRaw(
+			{ 
+				gnsPairsStorageV6: ethersPairsStorage,
+				gfarmTradingStorageV5: ethersStorage,
+				gnsPairInfosV6_1: ethersPairInfos,
+			},
+			{
+				useMulticall: true,
+				pairBatchSize: 30,
 			}
+		);
 
-			appLogger.debug(`Fetched ${pairTraderAddresses.length} pair traders for pairIndex ${spreadPIndex} in ${performance.now() - pairTradersCallStartTime}ms; now fetching all open trades...`);
+		const allOpenPairTrades = transformRawTrades(openTradesRaw);
 
-			const openTradesForPairTraders = await Promise.all(pairTraderAddresses.map(async pairTraderAddress => {
-				const openTradesCalls = new Array(maxTradesPerPair);
-
-				const traderOpenTradesCallsStartTime = performance.now();
-
-				for(let pairTradeIndex = 0; pairTradeIndex < maxTradesPerPair; pairTradeIndex++){
-					openTradesCalls[pairTradeIndex] = storageContract.methods.openTrades(pairTraderAddress, spreadPIndex, pairTradeIndex).call();
-				}
-
-				appLogger.debug(`Waiting on ${openTradesCalls.length} StorageContract::openTrades calls for trader ${pairTraderAddress}...`);
-
-				const openTradesForTraderAddress = await Promise.all(openTradesCalls);
-
-				appLogger.debug(`Received ${openTradesForTraderAddress.length} open trades for trader ${pairTraderAddress} in ${performance.now() - traderOpenTradesCallsStartTime}ms.`);
-
-				// Filter out any of the trades that aren't *really* open (NOTE: these will have an empty trader address, so just test against that)
-				const actualOpenTrades = openTradesForTraderAddress.filter(openTrade => openTrade.trader === pairTraderAddress);
-
-				appLogger.debug(`Filtered down to ${actualOpenTrades.length} actual open trades for trader ${pairTraderAddress}; fetching corresponding trade info...`);
-
-				const [actualOpenTradesTradeInfos, actualOpenTradesInitialAccFees] = await Promise.all([
-					Promise.all(actualOpenTrades.map(aot => storageContract.methods.openTradesInfo(aot.trader, aot.pairIndex, aot.index).call())),
-					Promise.all(actualOpenTrades.map(aot => pairInfosContract.methods.tradeInitialAccFees(aot.trader, aot.pairIndex, aot.index).call()))
-				]);
-
-				for(let tradeIndex = 0; tradeIndex < actualOpenTrades.length; tradeIndex++) {
-					const tradeInfo = actualOpenTradesTradeInfos[tradeIndex];
-
-					if(tradeInfo === undefined) {
-						appLogger.error("No trade info found for open trade while fetching open trades!", { trade: actualOpenTrades[tradeIndex] });
-
-						continue;
-					}
-
-					const tradeInitialAccFees = actualOpenTradesInitialAccFees[tradeIndex];
-
-					if(tradeInitialAccFees === undefined) {
-						appLogger.error("No initial acc fees found for open trade while fetching open trades!", { trade: actualOpenTrades[tradeIndex] });
-
-						continue;
-					}
-
-					// Tack on the additional data to the original trade object
-					const trade = actualOpenTrades[tradeIndex];
-					trade.tradeInfo = tradeInfo;
-					trade.tradeInitialAccFees = {
-						rollover: parseInt(tradeInitialAccFees.rollover, 10) / 1e18,
-						funding: parseInt(tradeInitialAccFees.funding, 10) / 1e18,
-						openedAfterUpdate: tradeInitialAccFees.openedAfterUpdate === true,
-					};
-				}
-
-				appLogger.debug(`Trade info fetched for ${actualOpenTrades.length} trades; fetching initial fees...`);
-
-				return actualOpenTrades;
-			}));
-
-			return openTradesForPairTraders;
-		}))).flat(2);
-
-		appLogger.info(`Fetched ${allOpenPairTrades.length} open pair trade(s).`);
+		appLogger.info(`Fetched ${allOpenPairTrades.length} new open pair trade(s).`);
 
 		return allOpenPairTrades;
 	}
