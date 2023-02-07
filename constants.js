@@ -30,19 +30,16 @@ export const NETWORKS = {
     }
 }
 
-export const GROUP_IDS = {
-    CRYPTO: 0,
-    FOREX: 1,
-    STOCKS_1: 2,
-    STOCKS_2: 3,
-    STOCKS_3: 4,
-    INDICES: 5,
-    COMMODITIES_1: 6,
-    COMMODITIES_2: 7,
+const GROUP_IDS = {
+    CRYPTO: [0],
+    FOREX: [1, 8, 9],
+    STOCKS: [2, 3, 4],
+    INDICES: [5],
+    COMMODITIES: [6, 7],
 }
 
-export const isCryptoGroup = (groupId) => groupId === GROUP_IDS.CRYPTO;
-export const isForexGroup = (groupId) => groupId === GROUP_IDS.FOREX;
-export const isStocksGroup = (groupId) => groupId >= GROUP_IDS.STOCKS_1 && groupId <= GROUP_IDS.STOCKS_3;
-export const isIndicesGroup = (groupId) => groupId === GROUP_IDS.INDICES;
-export const isCommoditiesGroup = (groupId) => groupId >= GROUP_IDS.COMMODITIES_1 && groupId <= GROUP_IDS.COMMODITIES_2;
+export const isCryptoGroup = (groupId) => GROUP_IDS.CRYPTO.includes(groupId);
+export const isForexGroup = (groupId) => GROUP_IDS.FOREX.includes(groupId);
+export const isStocksGroup = (groupId) => GROUP_IDS.STOCKS.includes(groupId);
+export const isIndicesGroup = (groupId) => GROUP_IDS.INDICES.includes(groupId);
+export const isCommoditiesGroup = (groupId) => GROUP_IDS.COMMODITIES.includes(groupId);
