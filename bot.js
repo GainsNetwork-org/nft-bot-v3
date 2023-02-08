@@ -624,7 +624,7 @@ async function fetchOpenTrades(){
 			},
 			{
 				useMulticall: true,
-				pairBatchSize: 30,
+				pairBatchSize: 50,
 			}
 		);
 
