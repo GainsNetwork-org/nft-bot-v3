@@ -526,7 +526,7 @@ let fetchOpenTradesRetryTimerId = null;
 async function fetchOpenTrades(){
 	appLogger.info("Fetching open trades...");
 	try {
-		if(pairs.length === 0){
+		if(spreadsP.length === 0){
 			appLogger.warn("Spreads are not yet loaded; will retry shortly!");
 
 			scheduleRetryFetchOpenTrades();
