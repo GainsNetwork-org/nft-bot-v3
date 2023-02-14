@@ -992,11 +992,10 @@ function watchPricingStream() {
 
 		const messageData = JSON.parse(msg.data.toString());
 
-		// Ignore non-prices messages from the backend
-		if(messageData.name !== "p") {
-			appLogger.debug(`Received a message "${messageData.name}" from the pricing stream, but we only care about "charts"; ignoring.`);
-
-			return;
+		const timestamp = messageData.shift();
+		const pairPrices = new Map();
+		for (let i = 0; i < messageData.length; i += 2) {
+			pairPrices.set(messageData[i], messageData[i + 1]);
 		}
 
 		currentlyProcessingChartsMessage = true;
@@ -1014,12 +1013,12 @@ function watchPricingStream() {
 			await Promise.allSettled([...currentKnownOpenTrades.values()].map(async openTrade => {
 				const { trader, pairIndex, index, buy } = openTrade;
 
-				if(parseInt(pairIndex) !== messageData.v[0]) return;
+				const price = pairPrices.get(parseInt(pairIndex));
+				if(price === undefined) return;
 
 				const isPendingOpenLimitOrder = openTrade.openPrice === undefined;
 				const openTradeKey = buildTradeIdentifier(trader, pairIndex, index, isPendingOpenLimitOrder);
 
-				const price = messageData.v[1];
 
 				// Under certain conditions (forex/stock market just opened, server restart, etc) the price is not
 				// available, so we need to make sure we skip any processing in that case
