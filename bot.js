@@ -624,7 +624,7 @@ async function fetchOpenTrades(){
 			},
 			{
 				useMulticall: true,
-				pairBatchSize: 15,
+				pairBatchSize: 10, // This is a conservative batch size to accommodate high trade volumes and default RPC payload limits. Consider adjusting.
 			}
 		);
 
