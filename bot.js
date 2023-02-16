@@ -992,7 +992,12 @@ function watchPricingStream() {
 
 		const messageData = JSON.parse(msg.data.toString());
 
-		const timestamp = messageData.shift();
+		if (messageData.length < 2) {
+			// Checkpoint ts at index 0
+			// const checkpoint = messageData[0]
+			return;
+		}
+
 		const pairPrices = new Map();
 		for (let i = 0; i < messageData.length; i += 2) {
 			pairPrices.set(messageData[i], messageData[i + 1]);
