@@ -76,6 +76,14 @@ if (!NETWORK) {
 	throw new Error(`Invalid chain id: ${CHAIN_ID}`);
 }
 
+const COMMON_TRANSACTION_PROPS = Object.freeze({
+	customChain: {
+		chainId: CHAIN_ID,
+		networkId: NETWORK_ID,
+	},
+	baseChain: BASE_CHAIN,
+	hardfork: HARDFORK,
+});
 const DRY_RUN_MODE = process.env.DRY_RUN_MODE === 'true';
 
 async function checkLinkAllowance() {
@@ -91,7 +99,6 @@ async function checkLinkAllowance() {
 			const tx = createTransaction({
 				to : linkContract.options.address,
 				data : linkContract.methods.approve(process.env.STORAGE_ADDRESS, "115792089237316195423570985008687907853269984665640564039457584007913129639935").encodeABI(),
-				nonce: nonceManager.getNextNonce(),
 			});
 
 			try {
@@ -232,17 +239,6 @@ function createWeb3Client(providerIndex, providerUrl) {
 	web3Client.eth.handleRevert = true;
 	web3Client.eth.defaultAccount = process.env.PUBLIC_KEY;
 	web3Client.eth.defaultChain = CHAIN;
-
-	if(CHAIN_ID !== undefined) {
-		web3Client.eth.defaultCommon = {
-			customChain: {
-				chainId: CHAIN_ID,
-				networkId: NETWORK_ID,
-			},
-			baseChain: BASE_CHAIN,
-			hardfork: HARDFORK,
-		};
-	}
 
 	web3Client.eth.subscribe('newBlockHeaders').on('data', async (header) => {
 		const newBlockNumber = header.number;
@@ -617,7 +613,7 @@ async function fetchOpenTrades(){
 		);
 
 		const openTradesRaw = await fetchOpenPairTradesRaw(
-			{ 
+			{
 				gnsPairsStorageV6: ethersPairsStorage,
 				gfarmTradingStorageV5: ethersStorage,
 				gnsPairInfosV6_1: ethersPairInfos,
@@ -1390,7 +1386,6 @@ if(AUTO_HARVEST_MS > 0){
 		const tx = createTransaction({
 			to : nftRewardsContract.options.address,
 			data : nftRewardsContract.methods.claimTokens().encodeABI(),
-			nonce: nonceManager.getNextNonce(),
 		});
 
 
@@ -1421,7 +1416,6 @@ if(AUTO_HARVEST_MS > 0){
 		const tx = createTransaction({
 			to : nftRewardsContract.options.address,
 			data : nftRewardsContract.methods.claimPoolTokens(fromRound, toRound).encodeABI(),
-			nonce: nonceManager.getNextNonce(),
 		});
 
 
@@ -1462,9 +1456,14 @@ if(AUTO_HARVEST_MS > 0){
 */
 function createTransaction(additionalTransactionProps, isPriority = false) {
 	const transaction = {
+		common: COMMON_TRANSACTION_PROPS,
+		chainId: CHAIN_ID,
+		chain: CHAIN,
+		hardfork: HARDFORK,
+		nonce: nonceManager.getNextNonce(),
 		gas: MAX_GAS_PER_TRANSACTION_HEX,
 		...getTransactionGasFees(NETWORK, isPriority),
-		...additionalTransactionProps
+		...additionalTransactionProps,
 	}
 
 	return transaction;
