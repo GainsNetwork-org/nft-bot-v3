@@ -16,6 +16,22 @@ import { NFTManager } from "./NftManager.js";
 import { GAS_MODE, CHAIN_IDS, NETWORKS, isStocksGroup, isForexGroup, isIndicesGroup, isCommoditiesGroup } from "./constants.js";
 import { transformRawTrades } from "./utils.js";
 
+// Make errors JSON serializable
+Object.defineProperty(Error.prototype, 'toJSON', {
+    value: function () {
+        const tempError = {};
+		const errorProperties = Object.getOwnPropertyNames(this);
+
+        errorProperties.forEach(function (key) {
+            tempError[key] = this[key];
+        }, this);
+
+        return JSON.stringify(tempError, errorProperties);
+    },
+    configurable: true,
+    writable: true
+});
+
 // Load base .env file first
 dotenv.config();
 
