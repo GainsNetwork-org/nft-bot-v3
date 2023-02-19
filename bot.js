@@ -77,15 +77,6 @@ if (!NETWORK) {
 	throw new Error(`Invalid chain id: ${CHAIN_ID}`);
 }
 
-const COMMON_TRANSACTION_PROPS = Object.freeze({
-	customChain: {
-		chainId: CHAIN_ID,
-		networkId: NETWORK_ID,
-	},
-	baseChain: BASE_CHAIN,
-	hardfork: HARDFORK,
-});
-
 const DRY_RUN_MODE = process.env.DRY_RUN_MODE === 'true';
 
 async function checkLinkAllowance() {
@@ -1470,7 +1461,6 @@ if(AUTO_HARVEST_MS > 0){
 */
 function createTransaction(additionalTransactionProps, isPriority = false) {
 	const transaction = {
-		common: COMMON_TRANSACTION_PROPS,
 		chainId: CHAIN_ID,
 		chain: CHAIN,
 		hardfork: HARDFORK,
