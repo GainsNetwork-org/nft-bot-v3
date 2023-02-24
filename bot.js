@@ -16,6 +16,22 @@ import { NFTManager } from "./NftManager.js";
 import { GAS_MODE, CHAIN_IDS, NETWORKS, isStocksGroup, isForexGroup, isIndicesGroup, isCommoditiesGroup } from "./constants.js";
 import { transformRawTrades } from "./utils.js";
 
+// Make errors JSON serializable
+Object.defineProperty(Error.prototype, 'toJSON', {
+    value: function () {
+        const tempError = {};
+		const errorProperties = Object.getOwnPropertyNames(this);
+
+        errorProperties.forEach(function (key) {
+            tempError[key] = this[key];
+        }, this);
+
+        return JSON.stringify(tempError, errorProperties);
+    },
+    configurable: true,
+    writable: true
+});
+
 // Load base .env file first
 dotenv.config();
 
@@ -63,6 +79,7 @@ const MAX_FEE_PER_GAS_WEI_HEX = (process.env.MAX_GAS_PRICE_GWEI ?? '').length > 
 	  OPEN_TRADES_REFRESH_MS = (process.env.OPEN_TRADES_REFRESH_SEC ?? '').length > 0 ? parseFloat(process.env.OPEN_TRADES_REFRESH_SEC) * 1000 : 120,
 	  GAS_REFRESH_INTERVAL_MS = (process.env.GAS_REFRESH_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.GAS_REFRESH_INTERVAL_SEC) * 1000 : 3,
 	  WEB3_STATUS_REPORT_INTERVAL_MS = (process.env.WEB3_STATUS_REPORT_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.WEB3_STATUS_REPORT_INTERVAL_SEC) * 1000 : 30 * 1000,
+	  ENABLE_CONCURRENT_PRICE_UPDATE_PROCESSING = process.env.ENABLE_CONCURRENT_PRICE_UPDATE_PROCESSING ? process.env.ENABLE_CONCURRENT_PRICE_UPDATE_PROCESSING === 'true' : false,
 	  l1BlockFetchIntervalMs = process.env.L1_BLOCK_FETCH_INTERVAL_MS ? +process.env.L1_BLOCK_FETCH_INTERVAL_MS : undefined;
 
 const CHAIN_ID = process.env.CHAIN_ID !== undefined ? parseInt(process.env.CHAIN_ID, 10) : CHAIN_IDS.POLYGON; // Polygon chain id
@@ -91,7 +108,6 @@ async function checkLinkAllowance() {
 			const tx = createTransaction({
 				to : linkContract.options.address,
 				data : linkContract.methods.approve(process.env.STORAGE_ADDRESS, "115792089237316195423570985008687907853269984665640564039457584007913129639935").encodeABI(),
-				nonce: nonceManager.getNextNonce(),
 			});
 
 			try {
@@ -232,17 +248,6 @@ function createWeb3Client(providerIndex, providerUrl) {
 	web3Client.eth.handleRevert = true;
 	web3Client.eth.defaultAccount = process.env.PUBLIC_KEY;
 	web3Client.eth.defaultChain = CHAIN;
-
-	if(CHAIN_ID !== undefined) {
-		web3Client.eth.defaultCommon = {
-			customChain: {
-				chainId: CHAIN_ID,
-				networkId: NETWORK_ID,
-			},
-			baseChain: BASE_CHAIN,
-			hardfork: HARDFORK,
-		};
-	}
 
 	web3Client.eth.subscribe('newBlockHeaders').on('data', async (header) => {
 		const newBlockNumber = header.number;
@@ -617,7 +622,7 @@ async function fetchOpenTrades(){
 		);
 
 		const openTradesRaw = await fetchOpenPairTradesRaw(
-			{ 
+			{
 				gnsPairsStorageV6: ethersPairsStorage,
 				gfarmTradingStorageV5: ethersStorage,
 				gnsPairInfosV6_1: ethersPairInfos,
@@ -948,7 +953,7 @@ function watchPricingStream() {
 	appLogger.info("Connecting to pricing stream...");
 
 	let socket = new WebSocket(process.env.PRICES_URL);
-	let currentlyProcessingChartsMessage = false;
+	let pricingUpdatesMessageProcessingCount = 0;
 
 	socket.onopen = () => {
 		appLogger.info("Pricing stream connected.");
@@ -983,16 +988,17 @@ function watchPricingStream() {
 			return;
 		}
 
-		// If we're still in the middle of processing the last charts message then debounce
-		if(currentlyProcessingChartsMessage === true) {
-			appLogger.debug("Still processing last charts msg; debouncing!");
+		// If concurrent processing is not enabled and we're still in the middle of processing the last pricing update then debounce
+		if(ENABLE_CONCURRENT_PRICE_UPDATE_PROCESSING === false && pricingUpdatesMessageProcessingCount !== 0) {
+			appLogger.debug("Still processing last pricing update msg; debouncing!");
 
 			return;
 		}
 
 		const messageData = JSON.parse(msg.data.toString());
 
-		if (messageData.length < 2) {
+		// If there's only one element in the array then it's a timestamp
+		if (messageData.length === 1) {
 			// Checkpoint ts at index 0
 			// const checkpoint = messageData[0]
 			return;
@@ -1003,16 +1009,16 @@ function watchPricingStream() {
 			pairPrices.set(messageData[i], messageData[i + 1]);
 		}
 
-		currentlyProcessingChartsMessage = true;
+		pricingUpdatesMessageProcessingCount++;
 
 		handleOnMessageAsync().catch(error => {
 			appLogger.error("Unhandled error occurred when handling pricing stream message!", { error });
 		}).finally(() => {
-			currentlyProcessingChartsMessage = false;
+			pricingUpdatesMessageProcessingCount--;
 		});
 
 		async function handleOnMessageAsync() {
-			// appLogger.debug(`Beginning processing new "charts" message}...`);
+			// appLogger.debug(`Beginning processing new "pricingUpdated" message}...`);
 			// appLogger.debug(`Received "charts" message, checking if any of the ${currentKnownOpenTrades.size} known open trades should be acted upon...`, { knownOpenTradesCount: currentKnownOpenTrades.size });
 
 			await Promise.allSettled([...currentKnownOpenTrades.values()].map(async openTrade => {
@@ -1126,12 +1132,25 @@ function watchPricingStream() {
 					return;
 				}
 
+				const triggeredOrderDetails = {
+					cleanupTimerId: null,
+					transactionSent: false,
+					error: null
+				};
+
+				// Track that we're triggering this order any other price updates that come in will not try to process
+				// it at the same time
+				triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderDetails);
+
 				// Attempt to lease an available NFT to process this order
 				const availableNft = await nftManager.leaseAvailableNft(currentlySelectedWeb3Client);
 
 				// If there are no more NFTs available, we can stop trying to trigger any other trades
 				if(availableNft === null) {
 					appLogger.warn("No NFTS available; unable to trigger any other trades at this time!");
+
+					// Clear tracking of this trade because we weren't able to actually progress without an NFT
+					triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 
 					return;
 				}
@@ -1145,15 +1164,6 @@ function watchPricingStream() {
 
 						return;
 					}
-
-					const triggeredOrderDetails = {
-						cleanupTimerId: null,
-						transactionSent: false,
-						error: null
-					};
-
-					// Track that we're triggering this order
-					triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderDetails);
 
 					appLogger.info(`🤞 Trying to trigger ${triggeredOrderTrackingInfoIdentifier} order with NFT ${availableNft.id}...`);
 
@@ -1264,7 +1274,14 @@ function watchPricingStream() {
 								}
 						}
 					}
-				} finally {
+				} catch(error) {
+					appLogger.error(`Failed while trying to trigger order ${triggeredOrderTrackingInfoIdentifier}; removing from triggered tracking so it can be tried again ASAP.`);
+
+					triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
+
+					throw error;
+				}
+				finally {
 					// Always release the NFT back to the NFT manager
 					nftManager.releaseNft(availableNft);
 				}
@@ -1390,7 +1407,6 @@ if(AUTO_HARVEST_MS > 0){
 		const tx = createTransaction({
 			to : nftRewardsContract.options.address,
 			data : nftRewardsContract.methods.claimTokens().encodeABI(),
-			nonce: nonceManager.getNextNonce(),
 		});
 
 
@@ -1421,7 +1437,6 @@ if(AUTO_HARVEST_MS > 0){
 		const tx = createTransaction({
 			to : nftRewardsContract.options.address,
 			data : nftRewardsContract.methods.claimPoolTokens(fromRound, toRound).encodeABI(),
-			nonce: nonceManager.getNextNonce(),
 		});
 
 
@@ -1462,9 +1477,13 @@ if(AUTO_HARVEST_MS > 0){
 */
 function createTransaction(additionalTransactionProps, isPriority = false) {
 	const transaction = {
+		chainId: CHAIN_ID,
+		chain: CHAIN,
+		hardfork: HARDFORK,
+		nonce: nonceManager.getNextNonce(),
 		gas: MAX_GAS_PER_TRANSACTION_HEX,
 		...getTransactionGasFees(NETWORK, isPriority),
-		...additionalTransactionProps
+		...additionalTransactionProps,
 	}
 
 	return transaction;
