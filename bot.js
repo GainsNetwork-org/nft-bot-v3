@@ -1479,8 +1479,6 @@ if(AUTO_HARVEST_MS > 0){
 function createTransaction(additionalTransactionProps, isPriority = false) {
 	const transaction = {
 		chainId: CHAIN_ID,
-		chain: CHAIN,
-		hardfork: HARDFORK,
 		nonce: nonceManager.getNextNonce(),
 		gas: MAX_GAS_PER_TRANSACTION_HEX,
 		...getTransactionGasFees(NETWORK, isPriority),
