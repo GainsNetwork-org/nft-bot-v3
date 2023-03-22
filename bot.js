@@ -91,6 +91,7 @@ const BASE_CHAIN = process.env.BASE_CHAIN;
 const HARDFORK = process.env.HARDFORK ?? "london";
 const NETWORK = NETWORKS[CHAIN_ID];
 const TRADE_TYPE = {MARKET: 0, LIMIT: 1};
+const ORDER_TYPE = {INVALID: -1, TP: 0, SL: 1, LIQ: 2, LIMIT: 3};
 
 if (!NETWORK) {
 	throw new Error(`Invalid chain id: ${CHAIN_ID}`);
@@ -1220,7 +1221,7 @@ function watchPricingStream() {
 				}
 
 				if(!canExecute(lastUpdated, orderType)) {
-					appLogger.warn(`Can't execute trade ${openTradeKey}, timeout not expired!`);
+					appLogger.warn(`Can't execute trade ${openTradeKey}, timeout has not expired!`);
 					return;
 				}
 
@@ -1396,12 +1397,18 @@ function watchPricingStream() {
 
 	function canExecute(lastUpdated, ot) {
 		// Liquidations can always execute
-		if(ot === 2)
+		if(ot === ORDER_TYPE.LIQ)
 			return true;
 
-		const b = ot === 3 ? lastUpdated.limit : ot === 1 ? lastUpdated.sl : lastUpdated.tp
+		const b = ot === ORDER_TYPE.LIQ
+				? lastUpdated.limit : ot === ORDER_TYPE.SL
+				? lastUpdated.sl : lastUpdated.tp
 
-		return parseInt(b) + parseInt(canExecuteTimeout) <= latestL2Block;
+		// We -1 the target block because the transaction we submit will be mined in latestBlock+1 (or later)
+		// eg. lastUpdated was @ 123455, current block 123456 and timeout of 2, making the valid execution block 123457:
+		// Then we can execute at currentBlock of 123456 because the transaction will be mined at block 123457 or
+		// later depending on congestions/gas settings.
+		return parseInt(b) + parseInt(canExecuteTimeout) - 1 <= latestL2Block;
 	}
 
 	function getTradeLiquidationPrice(tradeKey, trade) {
