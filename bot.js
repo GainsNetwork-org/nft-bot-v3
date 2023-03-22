@@ -1400,15 +1400,15 @@ function watchPricingStream() {
 		if(ot === ORDER_TYPE.LIQ)
 			return true;
 
-		const b = ot === ORDER_TYPE.LIQ
-				? lastUpdated.limit : ot === ORDER_TYPE.SL
-				? lastUpdated.sl : lastUpdated.tp
+		const block = ot === ORDER_TYPE.LIQ ?
+			lastUpdated.limit : ot === ORDER_TYPE.SL ?
+			lastUpdated.sl : lastUpdated.tp;
 
 		// We -1 the target block because the transaction we submit will be mined in latestBlock+1 (or later)
 		// eg. lastUpdated was @ 123455, current block 123456 and timeout of 2, making the valid execution block 123457:
 		// Then we can execute at currentBlock of 123456 because the transaction will be mined at block 123457 or
 		// later depending on congestions/gas settings.
-		return parseInt(b) + parseInt(canExecuteTimeout) - 1 <= latestL2Block;
+		return parseInt(block) + parseInt(canExecuteTimeout) - 1 <= latestL2Block;
 	}
 
 	function getTradeLiquidationPrice(tradeKey, trade) {
