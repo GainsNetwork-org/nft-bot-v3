@@ -22,3 +22,36 @@ export const transformRawTrades = (rawTrades) =>
 			openedAfterUpdate: initialAccFees.openedAfterUpdate,
 		},
 	}));
+
+export const buildTradeIdentifier = (trader, pairIndex, index, isPendingOpenLimitOrder) => {
+	if(isPendingOpenLimitOrder === undefined) {
+		throw new Error("isPendingOpenLimitOrder was passed as undefined!");
+	}
+
+	return `trade://${trader}/${pairIndex}/${index}?isOpenLimit=${isPendingOpenLimitOrder}`;
+}
+
+export const transformLastUpdated = (ol, olLastUpdated, t, tLastUpdated) => {
+	return [
+		...olLastUpdated.map(
+			(l, i) => [
+				buildTradeIdentifier(
+					ol[i].trader,
+					ol[i].pairIndex,
+					ol[i].index,
+					true
+				), {sl: l.sl, tp: l.tp, limit: l.limit}
+			]
+		),
+		...tLastUpdated.map(
+			(l, i) => [
+				buildTradeIdentifier(
+					t[i].trader,
+					t[i].pairIndex,
+					t[i].index,
+					false
+				), {sl: l.sl, tp: l.tp, limit: l.limit}
+			]
+		)
+	];
+}

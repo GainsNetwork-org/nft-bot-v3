@@ -15,7 +15,7 @@ import { default as abis } from "./abis.js";
 import { NonceManager } from "./NonceManager.js";
 import { NFTManager } from "./NftManager.js";
 import { GAS_MODE, CHAIN_IDS, NETWORKS, isStocksGroup, isForexGroup, isIndicesGroup, isCommoditiesGroup } from "./constants.js";
-import { transformRawTrades } from "./utils.js";
+import { transformRawTrades, buildTradeIdentifier, transformLastUpdated } from "./utils.js";
 
 // Make errors JSON serializable
 Object.defineProperty(Error.prototype, 'toJSON', {
@@ -533,14 +533,6 @@ async function fetchTradingVariables(){
 // 8. LOAD OPEN TRADES
 // -----------------------------------------
 
-function buildTradeIdentifier(trader, pairIndex, index, isPendingOpenLimitOrder) {
-	if(isPendingOpenLimitOrder === undefined) {
-		throw new Error("isPendingOpenLimitOrder was passed as undefined!");
-	}
-
-	return `trade://${trader}/${pairIndex}/${index}?isOpenLimit=${isPendingOpenLimitOrder}`;``
-}
-
 function buildTriggerIdentifier(trader, pairIndex, index, limitType) {
 	return `trigger://${trader}/${pairIndex}/${index}[lt=${limitType}]`;
 }
@@ -695,33 +687,13 @@ async function fetchOpenTrades(){
 		);
 
 		appLogger.info(`Fetched last updated info for ${tLastUpdated.length + olLastUpdated.length} trade(s).`);
-		return [
-			...olLastUpdated.map(
-				(l, i) => [
-					buildTradeIdentifier(
-						openLimitOrders[i].trader,
-						openLimitOrders[i].pairIndex,
-						openLimitOrders[i].index,
-						true
-					), l
-				]
-			),
-			...tLastUpdated.map(
-				(l, i) => [
-					buildTradeIdentifier(
-						pairTrades[i].trader,
-						pairTrades[i].pairIndex,
-						pairTrades[i].index,
-						false
-					), l
-				]
-			)
-		];
+		return transformLastUpdated(openLimitOrders, olLastUpdated, pairTrades, tLastUpdated);
 	}
 }
 
 async function fetchTradeLastUpdated(trader, pairIndex, index, tradeType) {
-	return await callbacksContract.methods.tradeLastUpdated(trader, pairIndex, index, tradeType).call();
+	const lastUpdated =  await callbacksContract.methods.tradeLastUpdated(trader, pairIndex, index, tradeType).call()
+	return {tp: lastUpdated.tp, sl: lastUpdated.sl, limit: lastUpdated.limit};
 }
 // -----------------------------------------
 // 9. WATCH TRADING EVENTS
