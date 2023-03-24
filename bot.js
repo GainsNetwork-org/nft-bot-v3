@@ -661,8 +661,8 @@ async function fetchOpenTrades(){
 		);
 		const multicallProvider = new Provider();
 		await multicallProvider.init(ethersProvider);
-		const callbacksContractMulticall = new Contract(callbacksContract.address, abis.CALLBACKS);
 
+		const callbacksContractMulticall = new Contract(callbacksContract.options.address, abis.CALLBACKS);
 		const olLastUpdated = await multicallProvider.all(
 			openLimitOrders.map(order =>
 				callbacksContractMulticall.tradeLastUpdated(
@@ -674,6 +674,7 @@ async function fetchOpenTrades(){
 			),
 			"latest"
 		);
+
 		const tLastUpdated = await multicallProvider.all(
 			pairTrades.map(order =>
 				callbacksContractMulticall.tradeLastUpdated(
