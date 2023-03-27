@@ -1318,6 +1318,7 @@ function watchPricingStream() {
 							case "NO_SL":
 							case "NO_TP":
 							case "SUCCESS_TIMELOCK":
+							case "IN_TIMEOUT":
 								appLogger.warn(`❗️ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${errorReason}" error; will remove order from triggered tracking.`);
 
 								// Wait a bit and then clean from triggered orders list so it might get tried again
