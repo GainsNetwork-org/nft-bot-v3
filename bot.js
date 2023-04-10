@@ -1374,7 +1374,7 @@ function watchPricingStream() {
 		if(ot === ORDER_TYPE.LIQ)
 			return true;
 
-		const block = ot === ORDER_TYPE.LIQ ?
+		const block = ot === ORDER_TYPE.LIMIT ?
 			lastUpdated.limit : ot === ORDER_TYPE.SL ?
 			lastUpdated.sl : lastUpdated.tp;
 
