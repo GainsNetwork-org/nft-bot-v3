@@ -9,12 +9,13 @@ import Web3 from "web3";
 import { WebSocket } from "ws";
 import { DateTime } from "luxon";
 import fetch from "node-fetch";
+import { Contract, Provider } from "ethcall";
 import { createLogger } from "./logger.js";
 import { default as abis } from "./abis.js";
 import { NonceManager } from "./NonceManager.js";
 import { NFTManager } from "./NftManager.js";
 import { GAS_MODE, CHAIN_IDS, NETWORKS, isStocksGroup, isForexGroup, isIndicesGroup, isCommoditiesGroup } from "./constants.js";
-import { transformRawTrades } from "./utils.js";
+import { transformRawTrades, buildTradeIdentifier, transformLastUpdated } from "./utils.js";
 
 // Make errors JSON serializable
 Object.defineProperty(Error.prototype, 'toJSON', {
@@ -54,11 +55,11 @@ let executionStats = {
 // 2. GLOBAL VARIABLES
 // -----------------------------------------
 
-let allowedLink = false, currentlySelectedWeb3ClientIndex = -1, currentlySelectedWeb3Client = null,
+let allowedLink = {storage: false, rewards: false}, currentlySelectedWeb3ClientIndex = -1, currentlySelectedWeb3Client = null,
 	eventSubTrading = null, eventSubCallbacks = null, eventSubPairInfos = null,
 	web3Clients = [], priorityTransactionMaxPriorityFeePerGas = 50, standardTransactionGasFees = { maxFee: 31, maxPriorityFee: 31 },
 	spreadsP = [], openInterests = [], collaterals = [], pairs = [], pairParams = [], pairRolloverFees = [], pairFundingFees = [], maxNegativePnlOnOpenP = 0,
-	knownOpenTrades = null, triggeredOrders = new Map(),
+	canExecuteTimeout = 0, knownOpenTrades = null, tradesLastUpdated  = new Map(), triggeredOrders = new Map(),
 	storageContract, tradingContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract,
 	maxTradesPerPair = 0, linkContract, pairInfosContract, gasPriceBn = new Web3.utils.BN(0.1 * 1e9);
 
@@ -89,6 +90,8 @@ const CHAIN = process.env.CHAIN ?? "mainnet";
 const BASE_CHAIN = process.env.BASE_CHAIN;
 const HARDFORK = process.env.HARDFORK ?? "london";
 const NETWORK = NETWORKS[CHAIN_ID];
+const TRADE_TYPE = {MARKET: 0, LIMIT: 1};
+const ORDER_TYPE = {INVALID: -1, TP: 0, SL: 1, LIQ: 2, LIMIT: 3};
 
 if (!NETWORK) {
 	throw new Error(`Invalid chain id: ${CHAIN_ID}`);
@@ -96,19 +99,20 @@ if (!NETWORK) {
 
 const DRY_RUN_MODE = process.env.DRY_RUN_MODE === 'true';
 
-async function checkLinkAllowance() {
+async function checkLinkAllowance(contract) {
 	try {
-		const allowance = await linkContract.methods.allowance(process.env.PUBLIC_KEY, process.env.STORAGE_ADDRESS).call();
+		const allowance = await linkContract.methods.allowance(process.env.PUBLIC_KEY, contract).call();
+		const key = contract === process.env.STORAGE_ADDRESS ? 'storage': 'rewards';
 
 		if(parseFloat(allowance) > 0){
-			allowedLink = true;
-			appLogger.info("LINK allowance OK.");
+			allowedLink[key] = true;
+			appLogger.info(`[${key}] LINK allowance OK.`);
 		}else{
-			appLogger.info("LINK not allowed, approving now.");
+			appLogger.info(`[${key}] LINK not allowed, approving now.`);
 
 			const tx = createTransaction({
 				to : linkContract.options.address,
-				data : linkContract.methods.approve(process.env.STORAGE_ADDRESS, "115792089237316195423570985008687907853269984665640564039457584007913129639935").encodeABI(),
+				data : linkContract.methods.approve(contract, "115792089237316195423570985008687907853269984665640564039457584007913129639935").encodeABI(),
 			});
 
 			try {
@@ -116,16 +120,16 @@ async function checkLinkAllowance() {
 
 				await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
 
-				appLogger.info("LINK successfully approved.");
-				allowedLink = true;
+				appLogger.info(`[${key}] LINK successfully approved.`);
+				allowedLink[key] = true;
 			} catch(error) {
-				appLogger.error("LINK approve transaction failed!", error);
+				appLogger.error(`[${key}] LINK approve transaction failed!`, error);
 
 				throw error;
 			}
 		}
 	} catch {
-		setTimeout(() => { checkLinkAllowance(); }, 5*1000);
+		setTimeout(() => { checkLinkAllowance(contract); }, 5*1000);
 	}
 }
 
@@ -135,7 +139,7 @@ async function checkLinkAllowance() {
 
 const WEB3_PROVIDER_URLS = process.env.WSS_URLS.split(",");
 let currentWeb3ClientBlocks = new Array(WEB3_PROVIDER_URLS.length).fill(0);
-let currentL1Blocks = new Array(WEB3_PROVIDER_URLS.length).fill(0), prevL1BlockFetchTimeMs = 0;
+let currentL1Blocks = new Array(WEB3_PROVIDER_URLS.length).fill(0), prevL1BlockFetchTimeMs = 0, latestL2Block = 0;
 
 async function setCurrentWeb3Client(newWeb3ClientIndex){
 	appLogger.info("Switching web3 client to " + WEB3_PROVIDER_URLS[newWeb3ClientIndex] + " (#" + newWeb3ClientIndex + ")...");
@@ -206,9 +210,15 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	// Fire and forget refreshing of data using new provider
 	fetchTradingVariables();
 	fetchOpenTrades();
-	checkLinkAllowance();
+	checkContractApprovals([process.env.STORAGE_ADDRESS, nftRewardsAddress]);
 
 	appLogger.info("New web3 client selection completed. Took: " + (performance.now() - executionStartTime) + "ms");
+}
+
+async function checkContractApprovals(addresses = [process.env.STORAGE_ADDRESS]) {
+	for(const contract of addresses) {
+		await checkLinkAllowance(contract);
+	}
 }
 
 function createWeb3Provider(providerUrl) {
@@ -257,6 +267,10 @@ function createWeb3Client(providerIndex, providerUrl) {
 			appLogger.debug(`Received unfinished block from provider ${providerUrl}; ignoring...`);
 
 			return;
+		}
+
+		if(newBlockNumber > latestL2Block) {
+			latestL2Block = newBlockNumber;
 		}
 
 		currentWeb3ClientBlocks[providerIndex] = newBlockNumber;
@@ -422,10 +436,10 @@ async function fetchTradingVariables(){
 		currentTradingVariablesFetchPromise = Promise.all([
 			fetchPairs(pairsCount),
 			fetchPairInfos(pairsCount),
+			fetchCanExecuteTimeout(),
 		]);
 
 		await currentTradingVariablesFetchPromise;
-
 		appLogger.info(`Done fetching trading variables; took ${performance.now() - executionStart}ms.`);
 
 		if(FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS > 0) {
@@ -437,6 +451,10 @@ async function fetchTradingVariables(){
 		fetchTradingVariablesTimerId = setTimeout(() => { fetchTradingVariablesTimerId = null; fetchTradingVariables(); }, 2*1000);
 	} finally {
 		currentTradingVariablesFetchPromise = null;
+	}
+
+	async function fetchCanExecuteTimeout() {
+		canExecuteTimeout = await callbacksContract.methods.canExecuteTimeout().call();
 	}
 
 	async function fetchPairs(pairsCount) {
@@ -515,14 +533,6 @@ async function fetchTradingVariables(){
 // 8. LOAD OPEN TRADES
 // -----------------------------------------
 
-function buildTradeIdentifier(trader, pairIndex, index, isPendingOpenLimitOrder) {
-	if(isPendingOpenLimitOrder === undefined) {
-		throw new Error("isPendingOpenLimitOrder was passed as undefined!");
-	}
-
-	return `trade://${trader}/${pairIndex}/${index}?isOpenLimit=${isPendingOpenLimitOrder}`;``
-}
-
 function buildTriggerIdentifier(trader, pairIndex, index, limitType) {
 	return `trigger://${trader}/${pairIndex}/${index}[lt=${limitType}]`;
 }
@@ -555,7 +565,10 @@ async function fetchOpenTrades(){
 			.concat(pairTrades)
 			.map(trade => [buildTradeIdentifier(trade.trader, trade.pairIndex, trade.index, trade.openPrice === undefined), trade]));
 
+		const newTradesLastUpdated = new Map(await populateTradesLastUpdated(openLimitOrders, pairTrades));
+
 		knownOpenTrades = newOpenTrades;
+		tradesLastUpdated = newTradesLastUpdated;
 
 		appLogger.info(`Fetched ${knownOpenTrades.size} total open trade(s) in ${performance.now() - start}ms.`);
 
@@ -640,6 +653,48 @@ async function fetchOpenTrades(){
 
 		return allOpenPairTrades;
 	}
+
+	async function populateTradesLastUpdated(openLimitOrders, pairTrades) {
+		appLogger.info("Fetching last updated info...");
+		const ethersProvider = new ethers.providers.WebSocketProvider(
+			currentlySelectedWeb3Client.currentProvider.connection._url
+		);
+		const multicallProvider = new Provider();
+		await multicallProvider.init(ethersProvider);
+
+		const callbacksContractMulticall = new Contract(callbacksContract.options.address, abis.CALLBACKS);
+		const olLastUpdated = await multicallProvider.all(
+			openLimitOrders.map(order =>
+				callbacksContractMulticall.tradeLastUpdated(
+					order.trader,
+					order.pairIndex,
+					order.index,
+					TRADE_TYPE.LIMIT
+				)
+			),
+			"latest"
+		);
+
+		const tLastUpdated = await multicallProvider.all(
+			pairTrades.map(order =>
+				callbacksContractMulticall.tradeLastUpdated(
+					order.trader,
+					order.pairIndex,
+					order.index,
+					TRADE_TYPE.MARKET
+				)
+			),
+			"latest"
+		);
+
+		appLogger.info(`Fetched last updated info for ${tLastUpdated.length + olLastUpdated.length} trade(s).`);
+		return transformLastUpdated(openLimitOrders, olLastUpdated, pairTrades, tLastUpdated);
+	}
+}
+
+async function fetchTradeLastUpdated(trader, pairIndex, index, tradeType) {
+	const lastUpdated =  await callbacksContract.methods.tradeLastUpdated(trader, pairIndex, index, tradeType).call()
+	return {tp: lastUpdated.tp, sl: lastUpdated.sl, limit: lastUpdated.limit};
 }
 // -----------------------------------------
 // 9. WATCH TRADING EVENTS
@@ -759,11 +814,13 @@ async function synchronizeOpenTrades(event){
 			} else {
 				const [
 					limitOrder,
-					type
+					type,
+					lastUpdated
 				] = await Promise.all(
 					[
 						storageContract.methods.openLimitOrders(openLimitOrderId).call(),
-						nftRewardsContract.methods.openLimitOrderTypes(trader, pairIndex, index).call()
+						nftRewardsContract.methods.openLimitOrderTypes(trader, pairIndex, index).call(),
+						fetchTradeLastUpdated(trader, pairIndex, index, TRADE_TYPE.LIMIT)
 					]);
 
 				limitOrder.type = type;
@@ -776,16 +833,18 @@ async function synchronizeOpenTrades(event){
 					appLogger.verbose(`Synchronize open trades from event ${eventName}: Storing new open limit order for ${tradeKey}`);
 				}
 
+				tradesLastUpdated.set(tradeKey, lastUpdated);
 				currentKnownOpenTrades.set(tradeKey, limitOrder);
 			}
 		} else if(eventName === "TpUpdated" || eventName === "SlUpdated" || eventName === "SlCanceled") {
 			const { trader, pairIndex, index } =  eventReturnValues;
 
 			// Fetch all fresh trade information to update known open trades
-			const [trade, tradeInfo, tradeInitialAccFees] = await Promise.all([
+			const [trade, tradeInfo, tradeInitialAccFees, lastUpdated] = await Promise.all([
 				storageContract.methods.openTrades(trader, pairIndex, index).call(),
 				storageContract.methods.openTradesInfo(trader, pairIndex, index).call(),
-				pairInfosContract.methods.tradeInitialAccFees(trader, pairIndex, index).call()
+				pairInfosContract.methods.tradeInitialAccFees(trader, pairIndex, index).call(),
+				fetchTradeLastUpdated(trader, pairIndex, index, TRADE_TYPE.MARKET)
 			]);
 
 			trade.tradeInfo = tradeInfo;
@@ -796,6 +855,7 @@ async function synchronizeOpenTrades(event){
 			};
 
 			const tradeKey = buildTradeIdentifier(trader, pairIndex, index, false);
+			tradesLastUpdated.set(tradeKey, lastUpdated);
 			currentKnownOpenTrades.set(tradeKey, trade);
 
 			appLogger.verbose(`Synchronize open trades from event ${eventName}: Updated trade ${tradeKey}`);
@@ -808,9 +868,10 @@ async function synchronizeOpenTrades(event){
 			// Make sure the trade is still actually active
 			if(parseInt(trade.leverage, 10) > 0) {
 				// Fetch all fresh trade information to update known open trades
-				const [tradeInfo, tradeInitialAccFees] = await Promise.all([
+				const [tradeInfo, tradeInitialAccFees, lastUpdated] = await Promise.all([
 					storageContract.methods.openTradesInfo(trader, pairIndex, index).call(),
-					pairInfosContract.methods.tradeInitialAccFees(trader, pairIndex, index).call()
+					pairInfosContract.methods.tradeInitialAccFees(trader, pairIndex, index).call(),
+					fetchTradeLastUpdated(trader, pairIndex, index, TRADE_TYPE.MARKET)
 				]);
 
 				trade.tradeInfo = tradeInfo;
@@ -820,8 +881,10 @@ async function synchronizeOpenTrades(event){
 					openedAfterUpdate: tradeInitialAccFees.openedAfterUpdate === true,
 				};
 
+				tradesLastUpdated.set(tradeKey, lastUpdated);
 				currentKnownOpenTrades.set(tradeKey, trade);
 			} else {
+				tradesLastUpdated.delete(tradeKey);
 				currentKnownOpenTrades.delete(tradeKey);
 			}
 
@@ -838,19 +901,22 @@ async function synchronizeOpenTrades(event){
 				if(currentKnownOpenTrades.has(openTradeKey)) {
 					appLogger.verbose(`Synchronize open trades from event ${eventName}: Removed open limit trade ${openTradeKey}.`);
 
+					tradesLastUpdated.delete(openTradeKey);
 					currentKnownOpenTrades.delete(openTradeKey);
 				} else {
 					appLogger.warn(`Synchronize open trades from event ${eventName}: Open limit trade ${openTradeKey} was not found? Unable to remove.`);
 				}
 			}
 
-			const [tradeInfo, tradeInitialAccFees] = await Promise.all([
+			const [tradeInfo, tradeInitialAccFees, lastUpdated] = await Promise.all([
 				storageContract.methods.openTradesInfo(trader, pairIndex, index).call(),
-				pairInfosContract.methods.tradeInitialAccFees(trader, pairIndex, index).call()
+				pairInfosContract.methods.tradeInitialAccFees(trader, pairIndex, index).call(),
+				fetchTradeLastUpdated(trader, pairIndex, index, TRADE_TYPE.MARKET)
 			]);
 
 			const tradeKey = buildTradeIdentifier(trader, pairIndex, index, false);
 
+			tradesLastUpdated.set(tradeKey, lastUpdated);
 			currentKnownOpenTrades.set(
 				tradeKey,
 				{
@@ -883,7 +949,7 @@ async function synchronizeOpenTrades(event){
 			// If this was a known open trade then we need to remove it now
 			if(existingKnownOpenTrade !== undefined) {
 				currentKnownOpenTrades.delete(tradeKey);
-
+				tradesLastUpdated.delete(tradeKey);
 				appLogger.debug(`Synchronize open trades from event ${eventName}: Removed ${tradeKey} from known open trades.`);
 			} else {
 				appLogger.debug(`Synchronize open trades from event ${eventName}: Trade ${tradeKey} was not found in known open trades; just ignoring.`);
@@ -983,7 +1049,7 @@ function watchPricingStream() {
 			return;
 		}
 
-		if(allowedLink === false) {
+		if(!allowedLink.storage || !allowedLink.rewards) {
 			appLogger.warn("LINK is not currently allowed for the configured account; unable to process any trades!");
 
 			return;
@@ -1120,6 +1186,18 @@ function watchPricingStream() {
 					return;
 				}
 
+				const lastUpdated = tradesLastUpdated.get(openTradeKey);
+
+				if(!lastUpdated && orderType !== 2) {
+					appLogger.warn(`Last updated information for ${openTradeKey} is not available`);
+					return;
+				}
+
+				if(!canExecute(lastUpdated, orderType)) {
+					appLogger.warn(`Can't execute trade ${openTradeKey}, timeout has not expired!`);
+					return;
+				}
+
 				const triggeredOrderTrackingInfoIdentifier = buildTriggerIdentifier(
 					trader,
 					pairIndex,
@@ -1240,6 +1318,7 @@ function watchPricingStream() {
 							case "NO_SL":
 							case "NO_TP":
 							case "SUCCESS_TIMELOCK":
+							case "IN_TIMEOUT":
 								appLogger.warn(`❗️ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${errorReason}" error; will remove order from triggered tracking.`);
 
 								// Wait a bit and then clean from triggered orders list so it might get tried again
@@ -1288,6 +1367,22 @@ function watchPricingStream() {
 				}
 			}));
 		}
+	}
+
+	function canExecute(lastUpdated, ot) {
+		// Liquidations can always execute
+		if(ot === ORDER_TYPE.LIQ)
+			return true;
+
+		const block = ot === ORDER_TYPE.LIMIT ?
+			lastUpdated.limit : ot === ORDER_TYPE.SL ?
+			lastUpdated.sl : lastUpdated.tp;
+
+		// We -1 the target block because the transaction we submit will be mined in latestBlock+1 (or later)
+		// eg. lastUpdated was @ 123455, current block 123456 and timeout of 2, making the valid execution block 123457:
+		// Then we can execute at currentBlock of 123456 because the transaction will be mined at block 123457 or
+		// later depending on congestions/gas settings.
+		return parseInt(block) + parseInt(canExecuteTimeout) - 1 <= latestL2Block;
 	}
 
 	function getTradeLiquidationPrice(tradeKey, trade) {
