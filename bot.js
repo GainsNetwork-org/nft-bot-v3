@@ -82,6 +82,7 @@ const MAX_FEE_PER_GAS_WEI_HEX = (process.env.MAX_GAS_PRICE_GWEI ?? '').length > 
 	  WEB3_STATUS_REPORT_INTERVAL_MS = (process.env.WEB3_STATUS_REPORT_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.WEB3_STATUS_REPORT_INTERVAL_SEC) * 1000 : 30 * 1000,
 	  // Concurrent message processing is now enabled by default. You can turn it off by setting ENABLE_CONCURRENT_PRICE_UPDATE_PROCESSING=false in your .env file
 	  ENABLE_CONCURRENT_PRICE_UPDATE_PROCESSING = process.env.ENABLE_CONCURRENT_PRICE_UPDATE_PROCESSING ? process.env.ENABLE_CONCURRENT_PRICE_UPDATE_PROCESSING === 'true' : true,
+	  USE_MULTICALL = process.env.USE_MULTICALL ? process.env.USE_MULTICALL === 'true' : true,
 	  l1BlockFetchIntervalMs = process.env.L1_BLOCK_FETCH_INTERVAL_MS ? +process.env.L1_BLOCK_FETCH_INTERVAL_MS : undefined;
 
 const CHAIN_ID = process.env.CHAIN_ID !== undefined ? parseInt(process.env.CHAIN_ID, 10) : CHAIN_IDS.POLYGON; // Polygon chain id
@@ -565,7 +566,7 @@ async function fetchOpenTrades(){
 			.concat(pairTrades)
 			.map(trade => [buildTradeIdentifier(trade.trader, trade.pairIndex, trade.index, trade.openPrice === undefined), trade]));
 
-		const newTradesLastUpdated = new Map(await populateTradesLastUpdated(openLimitOrders, pairTrades, true));
+		const newTradesLastUpdated = new Map(await populateTradesLastUpdated(openLimitOrders, pairTrades, USE_MULTICALL));
 
 		knownOpenTrades = newOpenTrades;
 		tradesLastUpdated = newTradesLastUpdated;
@@ -642,7 +643,7 @@ async function fetchOpenTrades(){
 				gnsPairInfosV6_1: ethersPairInfos,
 			},
 			{
-				useMulticall: true,
+				useMulticall: USE_MULTICALL,
 				pairBatchSize: 10, // This is a conservative batch size to accommodate high trade volumes and default RPC payload limits. Consider adjusting.
 			}
 		);
@@ -654,7 +655,7 @@ async function fetchOpenTrades(){
 		return allOpenPairTrades;
 	}
 
-	async function populateTradesLastUpdated(openLimitOrders, pairTrades, useMulticall = true) {
+	async function populateTradesLastUpdated(openLimitOrders, pairTrades, useMulticall) {
 		appLogger.info("Fetching last updated info...");
 
 		let olLastUpdated, tLastUpdated;
@@ -664,7 +665,7 @@ async function fetchOpenTrades(){
 			);
 			const multicallProvider = new Provider();
 			await multicallProvider.init(ethersProvider);
-	
+
 			const callbacksContractMulticall = new Contract(callbacksContract.options.address, abis.CALLBACKS);
 			olLastUpdated = await multicallProvider.all(
 				openLimitOrders.map(order =>
@@ -677,7 +678,7 @@ async function fetchOpenTrades(){
 				),
 				"latest"
 			);
-	
+
 			tLastUpdated = await multicallProvider.all(
 				pairTrades.map(order =>
 					callbacksContractMulticall.tradeLastUpdated(
@@ -703,7 +704,7 @@ async function fetchOpenTrades(){
 				tLastUpdated = tLastUpdated ? tLastUpdated.concat(batchLastUpdated) : batchLastUpdated;
 			}
 		}
-		
+
 
 		appLogger.info(`Fetched last updated info for ${tLastUpdated.length + olLastUpdated.length} trade(s).`);
 		return transformLastUpdated(openLimitOrders, olLastUpdated, pairTrades, tLastUpdated);
