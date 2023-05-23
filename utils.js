@@ -20,6 +20,11 @@ export const transformRawTrades = (rawTrades) =>
 			rollover: parseInt(initialAccFees.rollover.toString(), 10) / 1e18,
 			funding: parseInt(initialAccFees.funding.toString(), 10) / 1e18,
 			openedAfterUpdate: initialAccFees.openedAfterUpdate,
+			borrowing:  {
+				accPairFee:  initialAccFees.borrowing.accPairFee / 1e10,
+				accGroupFee: initialAccFees.borrowing.accGroupFee / 1e10,
+				block: initialAccFees.borrowing.block
+			}
 		},
 	}));
 
