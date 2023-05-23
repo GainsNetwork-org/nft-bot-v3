@@ -22,7 +22,13 @@ import { default as abis } from "./abis.js";
 import { NonceManager } from "./NonceManager.js";
 import { NFTManager } from "./NftManager.js";
 import { GAS_MODE, CHAIN_IDS, NETWORKS, isStocksGroup, isForexGroup, isIndicesGroup, isCommoditiesGroup } from "./constants.js";
-import { transformRawTrades, buildTradeIdentifier, transformLastUpdated } from "./utils.js";
+import {
+	transformRawTrades,
+	buildTradeIdentifier,
+	transformLastUpdated,
+	convertOpenInterest,
+	convertTrade, convertTradeInfo, convertTradeInitialAccFees
+} from "./utils.js";
 
 // Make errors JSON serializable
 Object.defineProperty(Error.prototype, 'toJSON', {
@@ -554,23 +560,23 @@ async function fetchTradingVariables(){
 			borrowingFeesContract.methods.getAllPairs().call()
 		])
 
-		borrowingFeesContext.accBlockWeightedMarketCap = accBlockWeightedMarketCap;
+		borrowingFeesContext.accBlockWeightedMarketCap = parseFloat(accBlockWeightedMarketCap) / 1e40;
 
 		const borrowingFeesPairs = borrowingFees.map((value) => ({
-			feePerBlock: value.feePerBlock,
-			accFeeLong: value.accFeeLong,
-			accFeeShort: value.accFeeShort,
-			accLastUpdatedBlock: value.accLastUpdatedBlock,
-			lastAccBlockWeightedMarketCap: value.lastAccBlockWeightedMarketCap,
+			feePerBlock: parseFloat(value.feePerBlock) / 1e10,
+			accFeeLong:  parseFloat(value.accFeeLong) / 1e10,
+			accFeeShort:  parseFloat(value.accFeeShort) / 1e10,
+			accLastUpdatedBlock: parseInt(value.accLastUpdatedBlock),
+			lastAccBlockWeightedMarketCap: parseFloat(value.lastAccBlockWeightedMarketCap) / 1e40,
 			groups: value.groups.map((value) => ({
-				groupIndex: value.groupIndex,
-				initialAccFeeLong: value.initialAccFeeLong,
-				initialAccFeeShort: value.initialAccFeeShort,
-				prevGroupAccFeeLong: value.prevGroupAccFeeLong,
-				prevGroupAccFeeShort: value.prevGroupAccFeeShort,
-				pairAccFeeLong: value.pairAccFeeLong,
-				pairAccFeeShort: value.pairAccFeeShort,
-				block: value.block,
+				groupIndex: parseInt(value.groupIndex),
+				initialAccFeeLong: parseFloat(value.initialAccFeeLong) / 1e10,
+				initialAccFeeShort: parseFloat(value.initialAccFeeShort) / 1e10,
+				prevGroupAccFeeLong: parseFloat(value.prevGroupAccFeeLong) / 1e10,
+				prevGroupAccFeeShort: parseFloat(value.prevGroupAccFeeShort) / 1e10,
+				pairAccFeeLong: parseFloat(value.pairAccFeeLong) / 1e10,
+				pairAccFeeShort: parseFloat(value.pairAccFeeShort) / 1e10,
+				block: parseInt(value.block),
 			})),
 		}));
 		const borrowingFeesGroupIds = [
@@ -587,11 +593,13 @@ async function fetchTradingVariables(){
 
 		borrowingFeesContext.pairs = borrowingFeesPairs;
 		borrowingFeesContext.group = borrowingFeesGroups.map((value) => ({
-			feePerBlock: value.feePerBlock,
-			accFeeLong: value.accFeeLong,
-			accFeeShort: value.accFeeShort,
-			accLastUpdatedBlock: value.accLastUpdatedBlock,
-			lastAccBlockWeightedMarketCap: value.lastAccBlockWeightedMarketCap,
+			oiLong: parseFloat(value.oiLong) / 1e10,
+			oiShort: parseFloat(value.oiShort) / 1e10,
+			feePerBlock: parseFloat(value.feePerBlock) / 1e10,
+			accFeeLong: parseFloat(value.accFeeLong) / 1e10,
+			accFeeShort: parseFloat(value.accFeeLong) / 1e10,
+			accLastUpdatedBlock: parseInt(value.accLastUpdatedBlock),
+			lastAccBlockWeightedMarketCap: parseFloat(value.lastAccBlockWeightedMarketCap) / 1e40,
 		}));
 	}
 }
@@ -864,10 +872,10 @@ function watchLiveTradingEvents(){
 
 				// If no confirmation delay, then execute immediately without timer
 				if(EVENT_CONFIRMATIONS_MS === 0) {
-					borrowingFeesContext.accBlockWeightedMarketCap = newAccValue;
+					borrowingFeesContext.accBlockWeightedMarketCap = parseFloat(newAccValue) / 1e40;
 				} else {
 					setTimeout(() => {
-						borrowingFeesContext.accBlockWeightedMarketCap = newAccValue;
+						borrowingFeesContext.accBlockWeightedMarketCap = parseFloat(newAccValue) / 1e40;
 					}, EVENT_CONFIRMATIONS_MS);
 				}
 			});
@@ -1151,10 +1159,10 @@ async function handleBorrowingFeesEvent(event) {
 			const pairBorrowingFees = borrowingFeesContext.pairs[pairIndex];
 
 			if (pairBorrowingFees) {
-				pairBorrowingFees.accFeeLong = accFeeLong;
-				pairBorrowingFees.accFeeShort = accFeeShort;
-				pairBorrowingFees.accLastUpdateBlock = event.blockNumber;
-				pairBorrowingFees.lastAccBlockWeightedMarketCap = accBlockWeightedMarketCap;
+				pairBorrowingFees.accFeeLong = parseFloat(accFeeLong) / 1e10;
+				pairBorrowingFees.accFeeShort = parseFloat(accFeeShort) / 1e10;
+				pairBorrowingFees.accLastUpdateBlock = parseInt(event.blockNumber);
+				pairBorrowingFees.lastAccBlockWeightedMarketCap = parseFloat(accBlockWeightedMarketCap) / 1e40;
 			}
 
 		} else if (event.event === 'GroupAccFeesUpdated') {
@@ -1164,10 +1172,10 @@ async function handleBorrowingFeesEvent(event) {
 			const groupBorrowingFees = borrowingFeesContext.groups[groupIndex];
 
 			if (groupBorrowingFees) {
-				groupBorrowingFees.accFeeLong = accFeeLong;
-				groupBorrowingFees.accFeeShort = accFeeShort;
-				groupBorrowingFees.accLastUpdateBlock = event.blockNumber;
-				groupBorrowingFees.lastAccBlockWeightedMarketCap = accBlockWeightedMarketCap;
+				groupBorrowingFees.accFeeLong = parseFloat(accFeeLong) / 1e10;
+				groupBorrowingFees.accFeeShort = parseFloat(accFeeShort) / 1e10;
+				groupBorrowingFees.accLastUpdateBlock = parseInt(event.blockNumber);
+				groupBorrowingFees.lastAccBlockWeightedMarketCap = parseFloat(accBlockWeightedMarketCap) / 1e40;
 			}
 
 		} else if (event.event === "GroupOiUpdated") {
@@ -1176,8 +1184,8 @@ async function handleBorrowingFeesEvent(event) {
 			const groupBorrowingFees = borrowingFeesContext.groups[groupIndex];
 
 			if (groupBorrowingFees) {
-				groupBorrowingFees.oiLong = oiLong;
-				groupBorrowingFees.oiShort = oiShort;
+				groupBorrowingFees.oiLong = parseFloat(oiLong) / 1e10;
+				groupBorrowingFees.oiShort = parseFloat(oiShort) / 1e10;
 			}
 		}
 
@@ -1281,11 +1289,11 @@ function watchPricingStream() {
 				}
 
 				let orderType = -1;
-
+				let liqPrice;
 				if(isPendingOpenLimitOrder === false) {
 					const tp = parseFloat(openTrade.tp)/1e10;
 					const sl = parseFloat(openTrade.sl)/1e10;
-					const liqPrice = getTradeLiquidationPrice(openTradeKey, openTrade);
+					liqPrice = getTradeLiquidationPrice(openTradeKey, openTrade);
 
 					if(tp !== 0 && ((buy && price >= tp) || (!buy && price <= tp))) {
 						orderType = 0;
@@ -1561,16 +1569,20 @@ function watchPricingStream() {
 	function getTradeLiquidationPrice(tradeKey, trade) {
 		const { tradeInfo, tradeInitialAccFees, pairIndex } = trade;
 
-		return getLiquidationPrice(trade, tradeInfo, tradeInitialAccFees, {
-			currentL1Block: latestL1Block ?? latestL2Block,
-			currentBlock: latestL2Block,
-			pairParams: pairParams[pairIndex],
-			pairFundingFees: pairFundingFees[pairIndex],
-			openInterest: openInterests[pairIndex],
-			pairRolloverFees: pairRolloverFees[pairIndex],
-			// Borrowing Fees
-			...borrowingFeesContext
-		}) / 1e10;
+		return getLiquidationPrice(
+			convertTrade(trade),
+			convertTradeInfo(tradeInfo),
+			convertTradeInitialAccFees(tradeInitialAccFees), {
+				currentL1Block: latestL1Block ?? latestL2Block,
+				currentBlock: latestL2Block,
+				pairParams: pairParams[pairIndex],
+				pairFundingFees: pairFundingFees[pairIndex],
+				openInterest: convertOpenInterest(openInterests[pairIndex]),
+				pairRolloverFees: pairRolloverFees[pairIndex],
+				// Borrowing Fees
+				...borrowingFeesContext
+			}
+		);
 	}
 
 	function isValidLeverage(pairIndex, wantedLeverage) {
