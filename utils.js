@@ -60,3 +60,43 @@ export const transformLastUpdated = (ol, olLastUpdated, t, tLastUpdated) => {
 		)
 	];
 }
+
+export const convertOpenInterest = (interest) => ({
+	long: parseFloat(interest.long) / 1e18,
+	short: parseFloat(interest.short) / 1e18,
+	max: parseFloat(interest.max) / 1e18,
+});
+
+export const convertTrade = (trade) => {
+	const { buy, trader } = trade;
+	return {
+		buy,
+		trader,
+		index: parseInt(trade.index),
+		initialPosToken: parseFloat(trade.initialPosToken) / 1e18,
+		leverage: parseInt(trade.leverage),
+		openPrice: parseFloat(trade.openPrice) / 1e10,
+		pairIndex: parseInt(trade.pairIndex),
+		sl: parseFloat(trade.sl) / 1e10,
+		tp: parseFloat(trade.tp) / 1e10,
+	};
+};
+
+
+export const convertTradeInfo = (tradeInfo) => ({
+	openInterestDai: parseFloat(tradeInfo.openInterestDai) / 1e18,
+	slLastUpdated: parseInt(tradeInfo.slLastUpdated),
+	tokenPriceDai: parseFloat(tradeInfo.tokenPriceDai) / 1e10,
+	tpLastUpdated: parseInt(tradeInfo.tpLastUpdated),
+});
+
+export const convertTradeInitialAccFees = (initialAccFees) => ({
+	rollover: parseFloat(initialAccFees.rollover) / 1e18,
+	funding: parseInt(initialAccFees.funding) / 1e18,
+	openedAfterUpdate: initialAccFees.openedAfterUpdate,
+	borrowing: {
+		accPairFee: parseFloat(initialAccFees.borrowing?.accPairFee || '0') / 1e10,
+		accGroupFee: parseFloat(initialAccFees.borrowing?.accGroupFee || '0') / 1e10,
+		block: parseInt(initialAccFees.borrowing?.block || '0'),
+	},
+});
