@@ -819,7 +819,7 @@ function watchLiveTradingEvents(){
 
 				if(eventName !== "MarketExecuted" && eventName !== "LimitExecuted"
 				&& eventName !== "MarketCloseCanceled" && eventName !== "SlUpdated"
-				&& eventName !== "SlCanceled"){
+				&& eventName !== "SlCanceled" && eventName !== "PairMaxLeverageUpdated"){
 					return;
 				}
 
@@ -848,6 +848,49 @@ function watchLiveTradingEvents(){
 					}
 				});
 		}
+
+		if(eventSubBorrowingFeesContext.vault !== null && eventSubBorrowingFeesContext.vault.id !== null){
+			eventSubBorrowingFeesContext.vault.unsubscribe();
+		}
+
+		eventSubBorrowingFeesContext.vault = vaultContract.events.allEvents({ fromBlock: 'latest' })
+			.on('data', (event) => {
+
+				if(event.event !== "AccBlockWeightedMarketCapStored"){
+					return;
+				}
+
+				const { newAccValue } = event.returnValues;
+
+				// If no confirmation delay, then execute immediately without timer
+				if(EVENT_CONFIRMATIONS_MS === 0) {
+					borrowingFeesContext.accBlockWeightedMarketCap = newAccValue;
+				} else {
+					setTimeout(() => {
+						borrowingFeesContext.accBlockWeightedMarketCap = newAccValue;
+					}, EVENT_CONFIRMATIONS_MS);
+				}
+			});
+
+		if(eventSubBorrowingFeesContext.borrowing !== null && eventSubBorrowingFeesContext.borrowing.id !== null){
+			eventSubBorrowingFeesContext.borrowing.unsubscribe();
+		}
+
+		eventSubBorrowingFeesContext.borrowing = borrowingFeesContract.events.allEvents({ fromBlock: 'latest' })
+			.on('data', (event) => {
+				const eventName = event.event;
+
+				if(eventName !== "PairAccFeesUpdated" && eventName !== "GroupAccFeesUpdated" && eventName !== "GroupOiUpdated" ){
+					return;
+				}
+				// If no confirmation delay, then execute immediately without timer
+				if(EVENT_CONFIRMATIONS_MS === 0) {
+					handleBorrowingFeesEvent(event);
+				} else {
+					setTimeout(() => handleBorrowingFeesEvent(event), EVENT_CONFIRMATIONS_MS);
+				}
+			});
+
 	} catch {
 		setTimeout(() => { watchLiveTradingEvents(); }, 2*1000);
 	}
@@ -1072,6 +1115,9 @@ async function synchronizeOpenTrades(event){
 			} else {
 				appLogger.debug(`Synchronize open trades from event ${eventName}: Order ${triggeredOrderTrackingInfoIdentifier} was not being tracked as triggered by us.`);
 			}
+		} else if (eventName === "PairMaxLeverageUpdated") {
+			pairMaxLeverage.set(eventReturnValues.pairIndex, parseFloat(eventReturnValues.maxLeverage));
+			appLogger.verbose(`${eventName}: Set pairMaxLeverage for pair ${eventReturnValues.pairIndex} to ${eventReturnValues.maxLeverage}.`);
 		}
 
 		executionStats = {
@@ -1096,6 +1142,49 @@ async function refreshPairFundingFees(event){
 	};
 }
 
+
+async function handleBorrowingFeesEvent(event) {
+	try {
+		if (event.event === 'PairAccFeesUpdated') {
+			const { pairIndex, accFeeLong, accFeeShort, accBlockWeightedMarketCap } =
+				event.returnValues;
+			const pairBorrowingFees = borrowingFeesContext.pairs[pairIndex];
+
+			if (pairBorrowingFees) {
+				pairBorrowingFees.accFeeLong = accFeeLong;
+				pairBorrowingFees.accFeeShort = accFeeShort;
+				pairBorrowingFees.accLastUpdateBlock = event.blockNumber;
+				pairBorrowingFees.lastAccBlockWeightedMarketCap = accBlockWeightedMarketCap;
+			}
+
+		} else if (event.event === 'GroupAccFeesUpdated') {
+			const { groupIndex, accFeeLong, accFeeShort, accBlockWeightedMarketCap } =
+				event.returnValues;
+
+			const groupBorrowingFees = borrowingFeesContext.groups[groupIndex];
+
+			if (groupBorrowingFees) {
+				groupBorrowingFees.accFeeLong = accFeeLong;
+				groupBorrowingFees.accFeeShort = accFeeShort;
+				groupBorrowingFees.accLastUpdateBlock = event.blockNumber;
+				groupBorrowingFees.lastAccBlockWeightedMarketCap = accBlockWeightedMarketCap;
+			}
+
+		} else if (event.event === "GroupOiUpdated") {
+			const { groupIndex, oiLong, oiShort } = event.returnValues;
+
+			const groupBorrowingFees = borrowingFeesContext.groups[groupIndex];
+
+			if (groupBorrowingFees) {
+				groupBorrowingFees.oiLong = oiLong;
+				groupBorrowingFees.oiShort = oiShort;
+			}
+		}
+
+	} catch(error) {
+		appLogger.error("Error occurred when handling BorrowingFees event.", error);
+	}
+}
 
 // ---------------------------------------------
 // 11. FETCH CURRENT PRICES & TRIGGER ORDERS
