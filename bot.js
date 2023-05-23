@@ -592,7 +592,7 @@ async function fetchTradingVariables(){
 			.call();
 
 		borrowingFeesContext.pairs = borrowingFeesPairs;
-		borrowingFeesContext.group = borrowingFeesGroups.map((value) => ({
+		borrowingFeesContext.groups = borrowingFeesGroups.map((value) => ({
 			oiLong: parseFloat(value.oiLong) / 1e10,
 			oiShort: parseFloat(value.oiShort) / 1e10,
 			feePerBlock: parseFloat(value.feePerBlock) / 1e10,
