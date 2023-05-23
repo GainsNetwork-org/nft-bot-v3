@@ -4,7 +4,14 @@
 
 import dotenv from "dotenv";
 import ethers from "ethers";
-import { isStocksOpen, isForexOpen, isIndicesOpen, isCommoditiesOpen, fetchOpenPairTradesRaw } from "@gainsnetwork/sdk";
+import {
+	isStocksOpen,
+	isForexOpen,
+	isIndicesOpen,
+	isCommoditiesOpen,
+	fetchOpenPairTradesRaw,
+	getLiquidationPrice
+} from "@gainsnetwork/sdk";
 import Web3 from "web3";
 import { WebSocket } from "ws";
 import { DateTime } from "luxon";
@@ -56,11 +63,11 @@ let executionStats = {
 // -----------------------------------------
 
 let allowedLink = {storage: false, rewards: false}, currentlySelectedWeb3ClientIndex = -1, currentlySelectedWeb3Client = null,
-	eventSubTrading = null, eventSubCallbacks = null, eventSubPairInfos = null,
+	eventSubTrading = null, eventSubCallbacks = null, eventSubPairInfos = null, eventSubBorrowingFeesContext = {vault: null, borrowing: null},
 	web3Clients = [], priorityTransactionMaxPriorityFeePerGas = 50, standardTransactionGasFees = { maxFee: 31, maxPriorityFee: 31 },
 	spreadsP = [], openInterests = [], collaterals = [], pairs = [], pairParams = [], pairRolloverFees = [], pairFundingFees = [], maxNegativePnlOnOpenP = 0,
-	canExecuteTimeout = 0, knownOpenTrades = null, tradesLastUpdated  = new Map(), triggeredOrders = new Map(),
-	storageContract, tradingContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract,
+	canExecuteTimeout = 0, knownOpenTrades = null, tradesLastUpdated  = new Map(), triggeredOrders = new Map(), pairMaxLeverage = new Map(),
+	storageContract, tradingContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract, borrowingFeesContract,
 	maxTradesPerPair = 0, linkContract, pairInfosContract, gasPriceBn = new Web3.utils.BN(0.1 * 1e9);
 
 // --------------------------------------------
@@ -93,6 +100,7 @@ const HARDFORK = process.env.HARDFORK ?? "london";
 const NETWORK = NETWORKS[CHAIN_ID];
 const TRADE_TYPE = {MARKET: 0, LIMIT: 1};
 const ORDER_TYPE = {INVALID: -1, TP: 0, SL: 1, LIQ: 2, LIMIT: 3};
+const borrowingFeesContext = { accBlockWeightedMarketCap: 1, groups: [], pairs: []}
 
 if (!NETWORK) {
 	throw new Error(`Invalid chain id: ${CHAIN_ID}`);
@@ -140,7 +148,7 @@ async function checkLinkAllowance(contract) {
 
 const WEB3_PROVIDER_URLS = process.env.WSS_URLS.split(",");
 let currentWeb3ClientBlocks = new Array(WEB3_PROVIDER_URLS.length).fill(0);
-let currentL1Blocks = new Array(WEB3_PROVIDER_URLS.length).fill(0), prevL1BlockFetchTimeMs = 0, latestL2Block = 0;
+let currentL1Blocks = new Array(WEB3_PROVIDER_URLS.length).fill(0), prevL1BlockFetchTimeMs = 0, latestL2Block = 0, latestL1Block = null;
 
 async function setCurrentWeb3Client(newWeb3ClientIndex){
 	appLogger.info("Switching web3 client to " + WEB3_PROVIDER_URLS[newWeb3ClientIndex] + " (#" + newWeb3ClientIndex + ")...");
@@ -175,12 +183,15 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 
 	const [
 		pairsStorageAddress,
-		nftRewardsAddress
+		nftRewardsAddress,
+		borrowingFeesAddress,
 	 ] = await Promise.all([
 		aggregatorContract.methods.pairsStorage().call(),
-		callbacksContract.methods.nftRewards().call()
+		callbacksContract.methods.nftRewards().call(),
+		tradingContract.methods.borrowingFees().call(),
 	 ]);
 
+	borrowingFeesContract = new newWeb3Client.eth.Contract(abis.BORROWING_FEES, borrowingFeesAddress);
 	pairsStorageContract = new newWeb3Client.eth.Contract(abis.PAIRS_STORAGE, pairsStorageAddress);
 	nftRewardsContract = new newWeb3Client.eth.Contract(abis.NFT_REWARDS, nftRewardsAddress);
 
@@ -270,7 +281,7 @@ function createWeb3Client(providerIndex, providerUrl) {
 			return;
 		}
 
-		if(newBlockNumber > latestL2Block) {
+		if (newBlockNumber > latestL2Block) {
 			latestL2Block = newBlockNumber;
 		}
 
@@ -281,6 +292,9 @@ function createWeb3Client(providerIndex, providerUrl) {
 			try {
 				const block = await web3Client.eth.getBlock(newBlockNumber);
 				const _currentL1BlockNumber = Web3.utils.hexToNumber(block.l1BlockNumber);
+
+				if (_currentL1BlockNumber > latestL1Block) latestL1Block = _currentL1BlockNumber;
+
 				if (currentL1Blocks[providerIndex] !== _currentL1BlockNumber) {
 					currentL1Blocks[providerIndex] = _currentL1BlockNumber;
 					appLogger.debug(`New L1 block received ${_currentL1BlockNumber} from provider ${providerUrl}...`);
@@ -438,6 +452,7 @@ async function fetchTradingVariables(){
 			fetchPairs(pairsCount),
 			fetchPairInfos(pairsCount),
 			fetchCanExecuteTimeout(),
+			fetchBorrowingFees()
 		]);
 
 		await currentTradingVariablesFetchPromise;
@@ -502,11 +517,15 @@ async function fetchTradingVariables(){
 	async function fetchPairInfos(pairsCount) {
 		const [
 			pairInfos,
-			newMaxNegativePnlOnOpenP
+			newMaxNegativePnlOnOpenP,
+			maxLeverage
 		 ] = await Promise.all([
 			pairInfosContract.methods.getPairInfos([...Array(parseInt(pairsCount)).keys()]).call(),
-			pairInfosContract.methods.maxNegativePnlOnOpenP().call()
+			pairInfosContract.methods.maxNegativePnlOnOpenP().call(),
+			callbacksContract.methods.getAllPairsMaxLeverage().call()
 		 ]);
+
+		pairMaxLeverage = new Map(maxLeverage.map((l, idx) => [idx, parseInt(l)]));
 
 		pairParams = pairInfos["0"].map((value) => ({
 			onePercentDepthAbove: parseFloat(value.onePercentDepthAbove),
@@ -527,6 +546,53 @@ async function fetchTradingVariables(){
 		}));
 
 		maxNegativePnlOnOpenP = parseFloat(newMaxNegativePnlOnOpenP) / 1e10;
+	}
+
+	async function fetchBorrowingFees() {
+		const [accBlockWeightedMarketCap, borrowingFees] = await Promise.all([
+			vaultContract.methods.accBlockWeightedMarketCap().call(),
+			borrowingFeesContract.methods.getAllPairs().call()
+		])
+
+		borrowingFeesContext.accBlockWeightedMarketCap = accBlockWeightedMarketCap;
+
+		const borrowingFeesPairs = borrowingFees.map((value) => ({
+			feePerBlock: value.feePerBlock,
+			accFeeLong: value.accFeeLong,
+			accFeeShort: value.accFeeShort,
+			accLastUpdatedBlock: value.accLastUpdatedBlock,
+			lastAccBlockWeightedMarketCap: value.lastAccBlockWeightedMarketCap,
+			groups: value.groups.map((value) => ({
+				groupIndex: value.groupIndex,
+				initialAccFeeLong: value.initialAccFeeLong,
+				initialAccFeeShort: value.initialAccFeeShort,
+				prevGroupAccFeeLong: value.prevGroupAccFeeLong,
+				prevGroupAccFeeShort: value.prevGroupAccFeeShort,
+				pairAccFeeLong: value.pairAccFeeLong,
+				pairAccFeeShort: value.pairAccFeeShort,
+				block: value.block,
+			})),
+		}));
+		const borrowingFeesGroupIds = [
+			...new Set(
+				borrowingFeesPairs
+					.map((value) => value.groups.map((value) => value.groupIndex))
+					.flat()
+			),
+		].sort();
+
+		const borrowingFeesGroups = await borrowingFeesContract.methods
+			.getGroups(borrowingFeesGroupIds)
+			.call();
+
+		borrowingFeesContext.pairs = borrowingFeesPairs;
+		borrowingFeesContext.group = borrowingFeesGroups.map((value) => ({
+			feePerBlock: value.feePerBlock,
+			accFeeLong: value.accFeeLong,
+			accFeeShort: value.accFeeShort,
+			accLastUpdatedBlock: value.accLastUpdatedBlock,
+			lastAccBlockWeightedMarketCap: value.lastAccBlockWeightedMarketCap,
+		}));
 	}
 }
 
@@ -630,9 +696,9 @@ async function fetchOpenTrades(){
 			storageContract.options.jsonInterface,
 			ethersProvider
 		);
-		const ethersPairInfos = new ethers.Contract(
-			pairInfosContract.options.address,
-			pairInfosContract.options.jsonInterface,
+		const ethersBorrowingFees = new ethers.Contract(
+			borrowingFeesContract.options.address,
+			borrowingFeesContract.options.jsonInterface,
 			ethersProvider
 		);
 
@@ -640,7 +706,7 @@ async function fetchOpenTrades(){
 			{
 				gnsPairsStorageV6: ethersPairsStorage,
 				gfarmTradingStorageV5: ethersStorage,
-				gnsPairInfosV6_1: ethersPairInfos,
+				gnsBorrowingFees: ethersBorrowingFees,
 			},
 			{
 				useMulticall: USE_MULTICALL,
@@ -1164,13 +1230,12 @@ function watchPricingStream() {
 					const minPrice = parseFloat(openTrade.minPrice)/1e10;
 					const maxPrice = parseFloat(openTrade.maxPrice)/1e10;
 
-					if(newInterestDai <= maxInterestDai
-							&&
-						newCollateralDai <= maxCollateralDai
-							&&
-						(onePercentDepth === 0
-								||
-							priceImpactP * openTrade.leverage <= maxNegativePnlOnOpenP)) {
+					if (
+						isValidLeverage(openTrade.pairIndex, parseFloat(openTrade.leverage)) &&
+						newInterestDai <= maxInterestDai &&
+						newCollateralDai <= maxCollateralDai &&
+						(onePercentDepth === 0 || priceImpactP * openTrade.leverage <= maxNegativePnlOnOpenP)
+					) {
 						const tradeType = openTrade.type;
 
 						if(tradeType === "0" && priceIncludingSpread >= minPrice && priceIncludingSpread <= maxPrice
@@ -1508,6 +1573,12 @@ function watchPricingStream() {
 
 			return fundingFee;
 		}
+	}
+
+	function isValidLeverage(pairIndex, wantedLeverage) {
+		const maxLev = pairMaxLeverage.get(pairIndex) ?? 0;
+		// if pairsMaxLeverage is 0 then it's not currently being restricted
+		return maxLev === 0 || maxLev >= wantedLeverage;
 	}
 }
 
