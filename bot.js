@@ -1559,109 +1559,18 @@ function watchPricingStream() {
 	}
 
 	function getTradeLiquidationPrice(tradeKey, trade) {
-		const { tradeInfo, tradeInitialAccFees } = trade;
-		const posDai = trade.initialPosToken / 1e18 * tradeInfo.tokenPriceDai / 1e10;
+		const { tradeInfo, tradeInitialAccFees, pairIndex } = trade;
 
-		const openPrice = parseFloat(trade.openPrice) / 1e10;
-		const buy = trade.buy === true;
-
-		const tradeOpenedAfterFundingFeesUpdate = trade.tradeInitialAccFees.openedAfterUpdate;
-
-		let rolloverFee;
-		let fundingFee;
-
-		if(tradeOpenedAfterFundingFeesUpdate === true) {
-			rolloverFee = getRolloverFee(
-				posDai,
-				trade.pairIndex,
-				tradeInitialAccFees.rollover,
-				tradeInitialAccFees.openedAfterUpdate);
-
-			fundingFee = getFundingFee(
-				posDai * trade.leverage,
-				trade.pairIndex,
-				tradeInitialAccFees.funding,
-				buy,
-				tradeInitialAccFees.openedAfterUpdate)
-
-			// appLogger.debug(`Trade ${tradeKey} was opened AFTER funding fees update; funding and roller fees will be used in calculations.`);
-		} else {
-			// appLogger.debug(`Trade ${tradeKey} was opened BEFORE funding fees update; no funding or rollover fees will be used in calculations.`);
-
-			rolloverFee = 0;
-			fundingFee = 0;
-		}
-
-		const liqPriceDistance =
-			(openPrice *
-				(posDai * 0.9 -
-					rolloverFee -
-					fundingFee)) /
-			posDai /
-			trade.leverage;
-
-		return buy === true ? openPrice - liqPriceDistance : openPrice + liqPriceDistance;
-
-		// Calculate liquidation price
-		function getRolloverFee (
-			posDai,
-			pairIndex,
-			initialAccRolloverFees,
-			openedAfterUpdate
-		) {
-			// If this is a legacy trade (e.g. before v6.1) there are no rollover fees applied
-			if(openedAfterUpdate === false) {
-				return 0;
-			}
-
-			const { accPerCollateral, lastUpdateBlock } = pairRolloverFees[pairIndex];
-			const { rolloverFeePerBlockP } = pairParams[pairIndex];
-
-			const currentBlock = l1BlockFetchIntervalMs !== undefined ? currentL1Blocks[currentlySelectedWeb3ClientIndex] : currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex];
-			const pendingAccRolloverFees = accPerCollateral + (currentBlock - lastUpdateBlock) * rolloverFeePerBlockP;
-
-			return posDai * (pendingAccRolloverFees - initialAccRolloverFees);
-		}
-
-		function getFundingFee(
-			leveragedPosDai,
-			pairIndex,
-			initialAccFundingFees,
-			buy,
-			openedAfterUpdate
-		) {
-			// If this is a legacy trade (e.g. before v6.1) there are no funding fees applied
-			if(openedAfterUpdate === false) {
-				return 0;
-			}
-
-			const { accPerOiLong, accPerOiShort, lastUpdateBlock } = pairFundingFees[pairIndex];
-			const { fundingFeePerBlockP } = pairParams[pairIndex];
-			const { long: longOi, short: shortOi } = openInterests[pairIndex];
-
-			const currentBlock = l1BlockFetchIntervalMs !== undefined ? currentL1Blocks[currentlySelectedWeb3ClientIndex] : currentWeb3ClientBlocks[currentlySelectedWeb3ClientIndex];
-			const fundingFeesPaidByLongs = (longOi - shortOi) * fundingFeePerBlockP * (currentBlock - lastUpdateBlock);
-
-			let pendingAccFundingFees = 0;
-
-			if(buy === true) {
-				pendingAccFundingFees = accPerOiLong;
-
-				if(longOi > 0) {
-					pendingAccFundingFees += fundingFeesPaidByLongs / longOi;
-				}
-			} else {
-				pendingAccFundingFees = accPerOiShort;
-
-				if(shortOi > 0) {
-					pendingAccFundingFees += (fundingFeesPaidByLongs * -1) / shortOi;
-				}
-			}
-
-			const fundingFee = leveragedPosDai * (pendingAccFundingFees - initialAccFundingFees);
-
-			return fundingFee;
-		}
+		return getLiquidationPrice(trade, tradeInfo, tradeInitialAccFees, {
+			currentL1Block: latestL1Block ?? latestL2Block,
+			currentBlock: latestL2Block,
+			pairParams: pairParams[pairIndex],
+			pairFundingFees: pairFundingFees[pairIndex],
+			openInterest: openInterests[pairIndex],
+			pairRolloverFees: pairRolloverFees[pairIndex],
+			// Borrowing Fees
+			...borrowingFeesContext
+		}) / 1e10;
 	}
 
 	function isValidLeverage(pairIndex, wantedLeverage) {
