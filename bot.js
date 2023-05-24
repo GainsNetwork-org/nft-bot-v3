@@ -1012,16 +1012,21 @@ async function synchronizeOpenTrades(event){
 			const [trade, tradeInfo, tradeInitialAccFees, lastUpdated] = await Promise.all([
 				storageContract.methods.openTrades(trader, pairIndex, index).call(),
 				storageContract.methods.openTradesInfo(trader, pairIndex, index).call(),
-				pairInfosContract.methods.tradeInitialAccFees(trader, pairIndex, index).call(),
+				borrowingFeesContract.methods.getTradeInitialAccFees(trader, pairIndex, index).call(),
 				fetchTradeLastUpdated(trader, pairIndex, index, TRADE_TYPE.MARKET)
 			]);
 
 			trade.tradeInfo = tradeInfo;
-			trade.tradeInitialAccFees = {
-				rollover: parseInt(tradeInitialAccFees.rollover, 10) / 1e18,
-				funding: parseInt(tradeInitialAccFees.funding, 10) / 1e18,
-				openedAfterUpdate: tradeInitialAccFees.openedAfterUpdate === true,
-			};
+			trade.tradeInitialAccFees = convertTradeInitialAccFees({
+				rollover: tradeInitialAccFees.otherFees[0],
+				funding: tradeInitialAccFees.otherFees[1],
+				openedAfterUpdate: tradeInitialAccFees.otherFees[2],
+				borrowing: {
+					accPairFee: tradeInitialAccFees.borrowingFees[0],
+					accGroupFee: tradeInitialAccFees.borrowingFees[1],
+					block: tradeInitialAccFees.borrowingFees[2]
+				}
+			});
 
 			const tradeKey = buildTradeIdentifier(trader, pairIndex, index, false);
 			tradesLastUpdated.set(tradeKey, lastUpdated);
@@ -1039,16 +1044,21 @@ async function synchronizeOpenTrades(event){
 				// Fetch all fresh trade information to update known open trades
 				const [tradeInfo, tradeInitialAccFees, lastUpdated] = await Promise.all([
 					storageContract.methods.openTradesInfo(trader, pairIndex, index).call(),
-					pairInfosContract.methods.tradeInitialAccFees(trader, pairIndex, index).call(),
+					borrowingFeesContract.methods.getTradeInitialAccFees(trader, pairIndex, index).call(),
 					fetchTradeLastUpdated(trader, pairIndex, index, TRADE_TYPE.MARKET)
 				]);
 
 				trade.tradeInfo = tradeInfo;
-				trade.tradeInitialAccFees = {
-					rollover: parseInt(tradeInitialAccFees.rollover, 10) / 1e18,
-					funding: parseInt(tradeInitialAccFees.funding, 10) / 1e18,
-					openedAfterUpdate: tradeInitialAccFees.openedAfterUpdate === true,
-				};
+				trade.tradeInitialAccFees = convertTradeInitialAccFees({
+					rollover: tradeInitialAccFees.otherFees[0],
+					funding: tradeInitialAccFees.otherFees[1],
+					openedAfterUpdate: tradeInitialAccFees.otherFees[2],
+					borrowing: {
+						accPairFee: tradeInitialAccFees.borrowingFees[0],
+						accGroupFee: tradeInitialAccFees.borrowingFees[1],
+						block: tradeInitialAccFees.borrowingFees[2]
+					}
+				});
 
 				tradesLastUpdated.set(tradeKey, lastUpdated);
 				currentKnownOpenTrades.set(tradeKey, trade);
@@ -1079,7 +1089,7 @@ async function synchronizeOpenTrades(event){
 
 			const [tradeInfo, tradeInitialAccFees, lastUpdated] = await Promise.all([
 				storageContract.methods.openTradesInfo(trader, pairIndex, index).call(),
-				pairInfosContract.methods.tradeInitialAccFees(trader, pairIndex, index).call(),
+				borrowingFeesContract.methods.getTradeInitialAccFees(trader, pairIndex, index).call(),
 				fetchTradeLastUpdated(trader, pairIndex, index, TRADE_TYPE.MARKET)
 			]);
 
@@ -1091,11 +1101,16 @@ async function synchronizeOpenTrades(event){
 				{
 					...trade,
 					tradeInfo,
-					tradeInitialAccFees: {
-						rollover: parseInt(tradeInitialAccFees.rollover, 10) / 1e18,
-						funding: parseInt(tradeInitialAccFees.funding, 10) / 1e18,
-						openedAfterUpdate: tradeInitialAccFees.openedAfterUpdate === true,
-					}
+					tradeInitialAccFees: convertTradeInitialAccFees({
+						rollover: tradeInitialAccFees.otherFees[0],
+						funding: tradeInitialAccFees.otherFees[1],
+						openedAfterUpdate: tradeInitialAccFees.otherFees[2],
+						borrowing: {
+							accPairFee: tradeInitialAccFees.borrowingFees[0],
+							accGroupFee: tradeInitialAccFees.borrowingFees[1],
+							block: tradeInitialAccFees.borrowingFees[2]
+						}
+					})
 				});
 
 			appLogger.info(`Synchronize open trades from event ${eventName}: Stored active trade ${tradeKey}`);
