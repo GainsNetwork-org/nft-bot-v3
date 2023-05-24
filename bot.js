@@ -1266,7 +1266,7 @@ function watchPricingStream() {
 	};
 	socket.onmessage = (msg) => {
 		const currentKnownOpenTrades = knownOpenTrades;
-		
+
 		if(currentKnownOpenTrades === null) {
 			appLogger.debug("Known open trades not yet loaded; unable to begin any processing yet!");
 
@@ -1475,114 +1475,114 @@ function watchPricingStream() {
 
 					appLogger.info(`🤞 Trying to trigger ${triggeredOrderTrackingInfoIdentifier} order with NFT ${availableNft.id}...`);
 
-					// try {
-					// 	const orderTransaction = createTransaction({
-					// 		to: tradingContract.options.address,
-					// 		data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
-					// 	}, true);
+					try {
+						const orderTransaction = createTransaction({
+							to: tradingContract.options.address,
+							data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
+						}, true);
 
-					// 	// NOTE: technically this should execute synchronously because we're supplying all necessary details on
-					// 	// the transaction object up front
-					// 	const signedTransaction = await currentlySelectedWeb3Client.eth.accounts.signTransaction(orderTransaction, process.env.PRIVATE_KEY);
+						// NOTE: technically this should execute synchronously because we're supplying all necessary details on
+						// the transaction object up front
+						const signedTransaction = await currentlySelectedWeb3Client.eth.accounts.signTransaction(orderTransaction, process.env.PRIVATE_KEY);
 
-					// 	if(DRY_RUN_MODE === false) {
-					// 		await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction);
-					// 	} else {
-					// 		appLogger.info(`DRY RUN MODE ACTIVE: skipping actually sending transaction for order: ${triggeredOrderTrackingInfoIdentifier}`, orderTransaction);
-					// 	}
+						if(DRY_RUN_MODE === false) {
+							await currentlySelectedWeb3Client.eth.sendSignedTransaction(signedTransaction.rawTransaction);
+						} else {
+							appLogger.info(`DRY RUN MODE ACTIVE: skipping actually sending transaction for order: ${triggeredOrderTrackingInfoIdentifier}`, orderTransaction);
+						}
 
-					// 	triggeredOrderDetails.transactionSent = true;
+						triggeredOrderDetails.transactionSent = true;
 
-					// 	// If we successfully send the transaction, we set up a timer to make sure we've heard about its
-					// 	// eventual completion and, if not, we clean up tracking and log that we didn't hear back
-					// 	triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
-					// 		if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-					// 			appLogger.warn(`❕ Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
+						// If we successfully send the transaction, we set up a timer to make sure we've heard about its
+						// eventual completion and, if not, we clean up tracking and log that we didn't hear back
+						triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
+							if(triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
+								appLogger.warn(`❕ Never heard back from the blockchain about triggered order ${triggeredOrderTrackingInfoIdentifier}; removed from tracking.`);
 
-					// 			executionStats = {
-					// 				...executionStats,
-					// 				missedTriggers: (executionStats.missedTriggers ?? 0) + 1
-					// 			}
-					// 		}
-					// 	}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
+								executionStats = {
+									...executionStats,
+									missedTriggers: (executionStats.missedTriggers ?? 0) + 1
+								}
+							}
+						}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
 
-					// 	appLogger.info(`⚡️ Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
-					// } catch(error) {
-					// 	const executionStatsTriggerErrors = executionStats.triggerErrors ?? {};
-					// 	const errorReason = error.reason ?? "UNKNOWN_TRANSACTION_ERROR";
+						appLogger.info(`⚡️ Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
+					} catch(error) {
+						const executionStatsTriggerErrors = executionStats.triggerErrors ?? {};
+						const errorReason = error.reason ?? "UNKNOWN_TRANSACTION_ERROR";
 
-					// 	executionStatsTriggerErrors[errorReason] = (executionStatsTriggerErrors[errorReason] ?? 0) + 1;
+						executionStatsTriggerErrors[errorReason] = (executionStatsTriggerErrors[errorReason] ?? 0) + 1;
 
-					// 	executionStats = {
-					// 		...executionStats,
-					// 		triggerErrors: executionStatsTriggerErrors,
-					// 	}
+						executionStats = {
+							...executionStats,
+							triggerErrors: executionStatsTriggerErrors,
+						}
 
-					// 	switch(errorReason) {
-					// 		case "SAME_BLOCK_LIMIT":
-					// 		case "TOO_LATE":
-					// 			// The trade has been triggered by others, delay removing it and maybe we'll have a
-					// 			// chance to try again if original trigger fails
-					// 			appLogger.warn(`⭕️ Order ${triggeredOrderTrackingInfoIdentifier} was already triggered and we got a "${errorReason}"; will remove from triggered tracking shortly and it may be tried again if original trigger didn't hit!`);
+						switch(errorReason) {
+							case "SAME_BLOCK_LIMIT":
+							case "TOO_LATE":
+								// The trade has been triggered by others, delay removing it and maybe we'll have a
+								// chance to try again if original trigger fails
+								appLogger.warn(`⭕️ Order ${triggeredOrderTrackingInfoIdentifier} was already triggered and we got a "${errorReason}"; will remove from triggered tracking shortly and it may be tried again if original trigger didn't hit!`);
 
-					// 			// Wait a bit and then clean from triggered orders list so it might get tried again
-					// 			triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
-					// 				if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-					// 					appLogger.debug(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed due to "${errorReason}", but it was already removed.`);
-					// 				}
+								// Wait a bit and then clean from triggered orders list so it might get tried again
+								triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
+									if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
+										appLogger.debug(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed due to "${errorReason}", but it was already removed.`);
+									}
 
-					// 			}, FAILED_ORDER_TRIGGER_TIMEOUT_MS / 2);
+								}, FAILED_ORDER_TRIGGER_TIMEOUT_MS / 2);
 
-					// 			break;
+								break;
 
-					// 		case "NO_TRADE":
-					// 			appLogger.warn(`❌ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${errorReason}" error; removing order from known trades and triggered tracking.`);
+							case "NO_TRADE":
+								appLogger.warn(`❌ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${errorReason}" error; removing order from known trades and triggered tracking.`);
 
-					// 			// The trade is gone, just remove it from known trades
-					// 			triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
-					// 			currentKnownOpenTrades.delete(openTradeKey);
+								// The trade is gone, just remove it from known trades
+								triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
+								currentKnownOpenTrades.delete(openTradeKey);
 
-					// 			break;
+								break;
 
-					// 		case "NO_SL":
-					// 		case "NO_TP":
-					// 		case "SUCCESS_TIMELOCK":
-					// 		case "IN_TIMEOUT":
-					// 			appLogger.warn(`❗️ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${errorReason}" error; will remove order from triggered tracking.`);
+							case "NO_SL":
+							case "NO_TP":
+							case "SUCCESS_TIMELOCK":
+							case "IN_TIMEOUT":
+								appLogger.warn(`❗️ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${errorReason}" error; will remove order from triggered tracking.`);
 
-					// 			// Wait a bit and then clean from triggered orders list so it might get tried again
-					// 			triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
-					// 				if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-					// 					appLogger.warn(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed due to "${errorReason}", but it was already removed.`);
-					// 				}
+								// Wait a bit and then clean from triggered orders list so it might get tried again
+								triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
+									if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
+										appLogger.warn(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed due to "${errorReason}", but it was already removed.`);
+									}
 
-					// 			}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
+								}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
 
-					// 			break;
+								break;
 
-					// 		default:
-					// 			const errorMessage = error.message?.toLowerCase();
+							default:
+								const errorMessage = error.message?.toLowerCase();
 
-					// 			if(errorMessage !== undefined && (errorMessage.includes("nonce too low") || errorMessage.includes("replacement transaction underpriced"))) {
-					// 				appLogger.error(`⁉️ Some how we ended up with a nonce that was too low; forcing a refresh now and the trade may be tried again if still available.`);
+								if(errorMessage !== undefined && (errorMessage.includes("nonce too low") || errorMessage.includes("replacement transaction underpriced"))) {
+									appLogger.error(`⁉️ Some how we ended up with a nonce that was too low; forcing a refresh now and the trade may be tried again if still available.`);
 
-					// 				await nonceManager.refreshNonceFromOnChainTransactionCount();
-					// 				triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
+									await nonceManager.refreshNonceFromOnChainTransactionCount();
+									triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 
-					// 				appLogger.info("Nonce refreshed and tracking of triggered order cleared so it can possibly be retried.");
-					// 			} else {
-					// 				appLogger.error(`🔥 Order ${triggeredOrderTrackingInfoIdentifier} transaction failed for unexpected reason "${errorReason}"; removing order from tracking.`, { error });
+									appLogger.info("Nonce refreshed and tracking of triggered order cleared so it can possibly be retried.");
+								} else {
+									appLogger.error(`🔥 Order ${triggeredOrderTrackingInfoIdentifier} transaction failed for unexpected reason "${errorReason}"; removing order from tracking.`, { error });
 
-					// 				// Wait a bit and then clean from triggered orders list so it might get tried again
-					// 				triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
-					// 					if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
-					// 						appLogger.debug(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
-					// 					}
+									// Wait a bit and then clean from triggered orders list so it might get tried again
+									triggeredOrderDetails.cleanupTimerId = setTimeout(() => {
+										if(!triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier)) {
+											appLogger.debug(`Tried to clean up triggered order ${triggeredOrderTrackingInfoIdentifier} which previously failed, but it was already removed?`);
+										}
 
-					// 				}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
-					// 			}
-					// 	}
-					// }
+									}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
+								}
+						}
+					}
 				} catch(error) {
 					appLogger.error(`Failed while trying to trigger order ${triggeredOrderTrackingInfoIdentifier}; removing from triggered tracking so it can be tried again ASAP.`);
 
