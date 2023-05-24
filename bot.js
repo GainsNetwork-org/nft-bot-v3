@@ -579,14 +579,14 @@ async function fetchTradingVariables(){
 	}
 
 	async function fetchBorrowingFees() {
-		const [accBlockWeightedMarketCap, borrowingFees, _vaultMarketCap, accBlockWeightedMarketCapLastStored] = await Promise.all([
+		const [accBlockWeightedMarketCap, borrowingFees, vaultMarketCap, accBlockWeightedMarketCapLastStored] = await Promise.all([
 			vaultContract.methods.accBlockWeightedMarketCap().call(),
 			borrowingFeesContract.methods.getAllPairs().call(),
 			vaultContract.methods.marketCap().call(),
 			vaultContract.methods.accBlockWeightedMarketCapLastStored().call()
 		])
 
-		borrowingFeesContext.vaultMarketCap = parseFloat(_vaultMarketCap) / 1e18;
+		borrowingFeesContext.vaultMarketCap = parseFloat(vaultMarketCap) / 1e18;
 		borrowingFeesContext.accBlockWeightedMarketCap = parseFloat(accBlockWeightedMarketCap) / 1e40;
 		borrowingFeesContext.accBlockWeightedMarketCapLastStored = parseInt(accBlockWeightedMarketCapLastStored);
 
