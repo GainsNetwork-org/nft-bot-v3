@@ -312,8 +312,6 @@ function createWeb3Client(providerIndex, providerUrl) {
 						accBlockWeightedMarketCapLastStored:
 							borrowingFeesContext.accBlockWeightedMarketCapLastStored,
 					});
-
-				console.log(borrowingFeesContext.realizedAccBlockWeightedMarketCap);
 			}
 		}
 
@@ -1607,7 +1605,7 @@ function watchPricingStream() {
 		return getLiquidationPrice(
 			convertTrade(trade),
 			convertTradeInfo(tradeInfo),
-			convertTradeInitialAccFees(tradeInitialAccFees), {
+			tradeInitialAccFees, {
 				currentL1Block: latestL1Block ?? latestL2Block,
 				currentBlock: latestL2Block,
 				pairParams: pairParams[pairIndex],
