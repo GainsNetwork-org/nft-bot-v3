@@ -625,7 +625,7 @@ async function fetchTradingVariables(){
 			oiShort: parseFloat(value.oiShort) / 1e10,
 			feePerBlock: parseFloat(value.feePerBlock) / 1e10,
 			accFeeLong: parseFloat(value.accFeeLong) / 1e10,
-			accFeeShort: parseFloat(value.accFeeLong) / 1e10,
+			accFeeShort: parseFloat(value.accFeeShort) / 1e10,
 			accLastUpdatedBlock: parseInt(value.accLastUpdatedBlock),
 			lastAccBlockWeightedMarketCap: parseFloat(value.lastAccBlockWeightedMarketCap) / 1e40,
 		}));
