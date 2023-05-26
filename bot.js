@@ -202,7 +202,7 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	 ] = await Promise.all([
 		aggregatorContract.methods.pairsStorage().call(),
 		callbacksContract.methods.nftRewards().call(),
-		tradingContract.methods.borrowingFees().call(),
+		callbacksContract.methods.borrowingFees().call(),
 	 ]);
 
 	borrowingFeesContract = new newWeb3Client.eth.Contract(abis.BORROWING_FEES, borrowingFeesAddress);
@@ -634,7 +634,7 @@ async function fetchTradingVariables(){
 
 // -----------------------------------------
 // 8. LOAD OPEN TRADES
-// ----------------------------------------- 
+// -----------------------------------------
 
 function buildTriggerIdentifier(trader, pairIndex, index, limitType) {
 	return `trigger://${trader}/${pairIndex}/${index}[lt=${limitType}]`;
