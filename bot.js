@@ -629,6 +629,7 @@ async function fetchTradingVariables(){
 			accFeeShort: parseFloat(value.accFeeShort) / 1e10,
 			accLastUpdatedBlock: parseInt(value.accLastUpdatedBlock),
 			lastAccBlockWeightedMarketCap: parseFloat(value.lastAccBlockWeightedMarketCap) / 1e40,
+			maxOi: parseFloat(value.maxOi) / 1e10,
 		}));
 	}
 }
