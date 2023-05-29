@@ -616,9 +616,9 @@ async function fetchTradingVariables(){
 			),
 		].sort();
 
-		const borrowingFeesGroups = await borrowingFeesContract.methods
-			.getGroups(borrowingFeesGroupIds)
-			.call();
+		const borrowingFeesGroups = borrowingFeesGroupIds.length > 0 ? await borrowingFeesContract.methods
+			.getGroups(Array.from(Array(+borrowingFeesGroupIds[borrowingFeesGroupIds.length - 1] + 1).keys()))
+			.call() : [];
 
 		borrowingFeesContext.pairs = borrowingFeesPairs;
 		borrowingFeesContext.groups = borrowingFeesGroups.map((value) => ({
