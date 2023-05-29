@@ -11,7 +11,8 @@ import {
 	isCommoditiesOpen,
 	fetchOpenPairTradesRaw,
 	getLiquidationPrice,
-	getPendingAccBlockWeightedMarketCap
+	getPendingAccBlockWeightedMarketCap,
+	withinMaxGroupOi
 } from "@gainsnetwork/sdk";
 import Web3 from "web3";
 import { WebSocket } from "ws";
@@ -1379,7 +1380,8 @@ function watchPricingStream() {
 						isValidLeverage(openTrade.pairIndex, parseFloat(openTrade.leverage)) &&
 						newInterestDai <= maxInterestDai &&
 						newCollateralDai <= maxCollateralDai &&
-						(onePercentDepth === 0 || priceImpactP * openTrade.leverage <= maxNegativePnlOnOpenP)
+						(onePercentDepth === 0 || priceImpactP * openTrade.leverage <= maxNegativePnlOnOpenP) &&
+						withinMaxGroupOi(openTrade.pairIndex, buy, posDai, borrowingFeesContext)
 					) {
 						const tradeType = openTrade.type;
 
