@@ -11,7 +11,8 @@ import {
 	isCommoditiesOpen,
 	fetchOpenPairTradesRaw,
 	getLiquidationPrice,
-	getPendingAccBlockWeightedMarketCap
+	getPendingAccBlockWeightedMarketCap,
+	withinMaxGroupOi
 } from "@gainsnetwork/sdk";
 import Web3 from "web3";
 import { WebSocket } from "ws";
@@ -615,9 +616,9 @@ async function fetchTradingVariables(){
 			),
 		].sort();
 
-		const borrowingFeesGroups = await borrowingFeesContract.methods
-			.getGroups(borrowingFeesGroupIds)
-			.call();
+		const borrowingFeesGroups = borrowingFeesGroupIds.length > 0 ? await borrowingFeesContract.methods
+			.getGroups(Array.from(Array(+borrowingFeesGroupIds[borrowingFeesGroupIds.length - 1] + 1).keys()))
+			.call() : [];
 
 		borrowingFeesContext.pairs = borrowingFeesPairs;
 		borrowingFeesContext.groups = borrowingFeesGroups.map((value) => ({
@@ -628,6 +629,7 @@ async function fetchTradingVariables(){
 			accFeeShort: parseFloat(value.accFeeShort) / 1e10,
 			accLastUpdatedBlock: parseInt(value.accLastUpdatedBlock),
 			lastAccBlockWeightedMarketCap: parseFloat(value.lastAccBlockWeightedMarketCap) / 1e40,
+			maxOi: parseFloat(value.maxOi) / 1e10,
 		}));
 	}
 }
@@ -1379,7 +1381,8 @@ function watchPricingStream() {
 						isValidLeverage(openTrade.pairIndex, parseFloat(openTrade.leverage)) &&
 						newInterestDai <= maxInterestDai &&
 						newCollateralDai <= maxCollateralDai &&
-						(onePercentDepth === 0 || priceImpactP * openTrade.leverage <= maxNegativePnlOnOpenP)
+						(onePercentDepth === 0 || priceImpactP * openTrade.leverage <= maxNegativePnlOnOpenP) &&
+						withinMaxGroupOi(openTrade.pairIndex, buy, posDai, borrowingFeesContext)
 					) {
 						const tradeType = openTrade.type;
 
