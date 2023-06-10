@@ -614,7 +614,7 @@ async function fetchTradingVariables(){
 					.map((value) => value.groups.map((value) => value.groupIndex))
 					.flat()
 			),
-		].sort();
+		].sort((a,b) => a - b);
 
 		const borrowingFeesGroups = borrowingFeesGroupIds.length > 0 ? await borrowingFeesContract.methods
 			.getGroups(Array.from(Array(+borrowingFeesGroupIds[borrowingFeesGroupIds.length - 1] + 1).keys()))
