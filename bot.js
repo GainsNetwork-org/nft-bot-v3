@@ -11,7 +11,6 @@ import {
 	isCommoditiesOpen,
 	fetchOpenPairTradesRaw,
 	getLiquidationPrice,
-	getPendingAccBlockWeightedMarketCap,
 	withinMaxGroupOi
 } from "@gainsnetwork/sdk";
 import Web3 from "web3";
@@ -29,7 +28,8 @@ import {
 	buildTradeIdentifier,
 	transformLastUpdated,
 	convertOpenInterest,
-	convertTrade, convertTradeInfo, convertTradeInitialAccFees
+	convertTrade, convertTradeInfo, convertTradeInitialAccFees,
+	packNft
 } from "./utils.js";
 
 // Make errors JSON serializable
@@ -109,12 +109,8 @@ const NETWORK = NETWORKS[CHAIN_ID];
 const TRADE_TYPE = {MARKET: 0, LIMIT: 1};
 const ORDER_TYPE = {INVALID: -1, TP: 0, SL: 1, LIQ: 2, LIMIT: 3};
 const borrowingFeesContext = {
-	accBlockWeightedMarketCap: 1,
 	groups: [],
 	pairs: [],
-	vaultMarketCap: undefined,
-	accBlockWeightedMarketCapLastStored: undefined,
-	realizedAccBlockWeightedMarketCap: undefined,
 };
 
 if (!NETWORK) {
@@ -298,22 +294,6 @@ function createWeb3Client(providerIndex, providerUrl) {
 
 		if (newBlockNumber > latestL2Block) {
 			latestL2Block = newBlockNumber;
-
-			// Update borrowing fee accs
-			if (
-				borrowingFeesContext.accBlockWeightedMarketCapLastStored !== undefined &&
-				borrowingFeesContext.vaultMarketCap !== undefined &&
-				borrowingFeesContext.accBlockWeightedMarketCap !== undefined
-			) {
-				borrowingFeesContext.realizedAccBlockWeightedMarketCap =
-					getPendingAccBlockWeightedMarketCap(latestL2Block, {
-						marketCap: borrowingFeesContext.vaultMarketCap,
-						accBlockWeightedMarketCap:
-							borrowingFeesContext.accBlockWeightedMarketCap,
-						accBlockWeightedMarketCapLastStored:
-							borrowingFeesContext.accBlockWeightedMarketCapLastStored,
-					});
-			}
 		}
 
 		currentWeb3ClientBlocks[providerIndex] = newBlockNumber;
@@ -528,7 +508,7 @@ async function fetchTradingVariables(){
 			] = await Promise.all([
 				storageContract.methods.openInterestDai(pairIndex, 0).call(),
 				storageContract.methods.openInterestDai(pairIndex, 1).call(),
-				storageContract.methods.openInterestDai(pairIndex, 2).call(),
+				borrowingFeesContract.methods.getPairMaxOi(pairIndex).call(),
 				pairsStorageContract.methods.groupCollateral(pairIndex, true).call(),
 				pairsStorageContract.methods.groupCollateral(pairIndex, false).call(),
 				pairsStorageContract.methods.groupMaxCollateral(pairIndex).call()
@@ -580,23 +560,22 @@ async function fetchTradingVariables(){
 	}
 
 	async function fetchBorrowingFees() {
-		const [accBlockWeightedMarketCap, borrowingFees, vaultMarketCap, accBlockWeightedMarketCapLastStored] = await Promise.all([
-			vaultContract.methods.accBlockWeightedMarketCap().call(),
+		const [borrowingFeesInfo, vaultMarketCap] = await Promise.all([
 			borrowingFeesContract.methods.getAllPairs().call(),
 			vaultContract.methods.marketCap().call(),
-			vaultContract.methods.accBlockWeightedMarketCapLastStored().call()
 		])
 
-		borrowingFeesContext.vaultMarketCap = parseFloat(vaultMarketCap) / 1e18;
-		borrowingFeesContext.accBlockWeightedMarketCap = parseFloat(accBlockWeightedMarketCap) / 1e40;
-		borrowingFeesContext.accBlockWeightedMarketCapLastStored = parseInt(accBlockWeightedMarketCapLastStored);
+		const [borrowingFees, maxOis] = [borrowingFeesInfo["0"], borrowingFeesInfo["1"]];
 
-		const borrowingFeesPairs = borrowingFees.map((value) => ({
+		borrowingFeesContext.vaultMarketCap = parseFloat(vaultMarketCap) / 1e18;
+
+		const borrowingFeesPairs = borrowingFees.map((value, idx) => ({
 			feePerBlock: parseFloat(value.feePerBlock) / 1e10,
 			accFeeLong:  parseFloat(value.accFeeLong) / 1e10,
 			accFeeShort:  parseFloat(value.accFeeShort) / 1e10,
 			accLastUpdatedBlock: parseInt(value.accLastUpdatedBlock),
-			lastAccBlockWeightedMarketCap: parseFloat(value.lastAccBlockWeightedMarketCap) / 1e40,
+			feeExponent: value.feeExponent,
+			maxOi: parseFloat(maxOis[idx].max) / 1e10 || 0,
 			groups: value.groups.map((value) => ({
 				groupIndex: parseInt(value.groupIndex),
 				initialAccFeeLong: parseFloat(value.initialAccFeeLong) / 1e10,
@@ -616,20 +595,21 @@ async function fetchTradingVariables(){
 			),
 		].sort((a,b) => a - b);
 
-		const borrowingFeesGroups = borrowingFeesGroupIds.length > 0 ? await borrowingFeesContract.methods
+		const borrowingFeesGroupsInfo = borrowingFeesGroupIds.length > 0 ? await borrowingFeesContract.methods
 			.getGroups(Array.from(Array(+borrowingFeesGroupIds[borrowingFeesGroupIds.length - 1] + 1).keys()))
 			.call() : [];
 
+		const [borrowingFeesGroups, groupExponents] = [borrowingFeesGroupsInfo["0"], borrowingFeesGroupsInfo["1"]]
 		borrowingFeesContext.pairs = borrowingFeesPairs;
-		borrowingFeesContext.groups = borrowingFeesGroups.map((value) => ({
+		borrowingFeesContext.groups = borrowingFeesGroups.map((value, idx) => ({
 			oiLong: parseFloat(value.oiLong) / 1e10,
 			oiShort: parseFloat(value.oiShort) / 1e10,
 			feePerBlock: parseFloat(value.feePerBlock) / 1e10,
 			accFeeLong: parseFloat(value.accFeeLong) / 1e10,
 			accFeeShort: parseFloat(value.accFeeShort) / 1e10,
 			accLastUpdatedBlock: parseInt(value.accLastUpdatedBlock),
-			lastAccBlockWeightedMarketCap: parseFloat(value.lastAccBlockWeightedMarketCap) / 1e40,
 			maxOi: parseFloat(value.maxOi) / 1e10,
+			feeExponent: parseInt(groupExponents[idx]) || 1
 		}));
 	}
 }
@@ -707,9 +687,13 @@ async function fetchOpenTrades(){
 		const openLimitOrders = await storageContract.methods.getOpenLimitOrders().call();
 
 		const openLimitOrdersWithTypes = await Promise.all(openLimitOrders.map(async olo => {
-			const type = await nftRewardsContract.methods.openLimitOrderTypes(olo.trader, olo.pairIndex, olo.index).call();
+			const [type, tradeData] =
+				await Promise.all([
+					nftRewardsContract.methods.openLimitOrderTypes(olo.trader, olo.pairIndex, olo.index).call(),
+					callbacksContract.methods.tradeData(olo.trader, olo.pairIndex, olo.index, 1).call()
+				]);
 
-			return { ...olo, type };
+			return { ...olo, type, maxSlippageP: parseFloat(tradeData.maxSlippageP.toString()) / 1e10 };
 		}));
 
 		appLogger.info(`Fetched ${openLimitOrdersWithTypes.length} open limit order(s).`);
@@ -887,34 +871,6 @@ function watchLiveTradingEvents(){
 				});
 		}
 
-		if(eventSubBorrowingFeesContext.vault !== null && eventSubBorrowingFeesContext.vault.id !== null){
-			eventSubBorrowingFeesContext.vault.unsubscribe();
-		}
-
-		eventSubBorrowingFeesContext.vault = vaultContract.events.allEvents({ fromBlock: 'latest' })
-			.on('data', async (event) => {
-
-				if(event.event !== "AccBlockWeightedMarketCapStored"){
-					return;
-				}
-
-				const { newAccValue } = event.returnValues;
-
-				// If no confirmation delay, then execute immediately without timer
-				if(EVENT_CONFIRMATIONS_MS === 0) {
-					borrowingFeesContext.accBlockWeightedMarketCap = parseFloat(newAccValue) / 1e40;
-
-				} else {
-					setTimeout(() => {
-						borrowingFeesContext.accBlockWeightedMarketCap = parseFloat(newAccValue) / 1e40;
-					}, EVENT_CONFIRMATIONS_MS);
-				}
-
-				// TODO: use sdk function and compare
-				borrowingFeesContext.vaultMarketCap = parseFloat(await vaultContract.methods.marketCap().call()) / 1e18;
-				borrowingFeesContext.accBlockWeightedMarketCapLastStored = parseInt(event.blockNumber);
-			});
-
 		if(eventSubBorrowingFeesContext.borrowing !== null && eventSubBorrowingFeesContext.borrowing.id !== null){
 			eventSubBorrowingFeesContext.borrowing.unsubscribe();
 		}
@@ -923,7 +879,7 @@ function watchLiveTradingEvents(){
 			.on('data', (event) => {
 				const eventName = event.event;
 
-				if(eventName !== "PairAccFeesUpdated" && eventName !== "GroupAccFeesUpdated" && eventName !== "GroupOiUpdated" ){
+				if(eventName !== "PairAccFeesUpdated" && eventName !== "GroupAccFeesUpdated" && eventName !== "GroupOiUpdated" && eventName !== "PairMaxOiUpdated"){
 					return;
 				}
 				// If no confirmation delay, then execute immediately without timer
@@ -1204,7 +1160,7 @@ async function refreshPairFundingFees(event){
 async function handleBorrowingFeesEvent(event) {
 	try {
 		if (event.event === 'PairAccFeesUpdated') {
-			const { pairIndex, accFeeLong, accFeeShort, accBlockWeightedMarketCap } =
+			const { pairIndex, accFeeLong, accFeeShort } =
 				event.returnValues;
 			const pairBorrowingFees = borrowingFeesContext.pairs[pairIndex];
 
@@ -1212,11 +1168,10 @@ async function handleBorrowingFeesEvent(event) {
 				pairBorrowingFees.accFeeLong = parseFloat(accFeeLong) / 1e10;
 				pairBorrowingFees.accFeeShort = parseFloat(accFeeShort) / 1e10;
 				pairBorrowingFees.accLastUpdateBlock = parseInt(event.blockNumber);
-				pairBorrowingFees.lastAccBlockWeightedMarketCap = parseFloat(accBlockWeightedMarketCap) / 1e40;
 			}
 
 		} else if (event.event === 'GroupAccFeesUpdated') {
-			const { groupIndex, accFeeLong, accFeeShort, accBlockWeightedMarketCap } =
+			const { groupIndex, accFeeLong, accFeeShort } =
 				event.returnValues;
 
 			const groupBorrowingFees = borrowingFeesContext.groups[groupIndex];
@@ -1225,7 +1180,6 @@ async function handleBorrowingFeesEvent(event) {
 				groupBorrowingFees.accFeeLong = parseFloat(accFeeLong) / 1e10;
 				groupBorrowingFees.accFeeShort = parseFloat(accFeeShort) / 1e10;
 				groupBorrowingFees.accLastUpdateBlock = parseInt(event.blockNumber);
-				groupBorrowingFees.lastAccBlockWeightedMarketCap = parseFloat(accBlockWeightedMarketCap) / 1e40;
 			}
 
 		} else if (event.event === "GroupOiUpdated") {
@@ -1237,6 +1191,11 @@ async function handleBorrowingFeesEvent(event) {
 				groupBorrowingFees.oiLong = parseFloat(oiLong) / 1e10;
 				groupBorrowingFees.oiShort = parseFloat(oiShort) / 1e10;
 			}
+		} else if (event.event === "PairMaxOiUpdated") {
+			const { pairIndex, maxOi } = event.returnValues;
+
+			openInterests[pairIndex].max = maxOi;
+			borrowingFeesContext.pairs[pairIndex].maxOi = parseFloat(maxOi) / 1e10;
 		}
 
 	} catch(error) {
@@ -1481,7 +1440,7 @@ function watchPricingStream() {
 					try {
 						const orderTransaction = createTransaction({
 							to: tradingContract.options.address,
-							data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
+							data : tradingContract.methods.executeNftOrder(packNft(orderType, trader, pairIndex, index, availableNft.id, availableNft.type)).encodeABI(),
 						}, true);
 
 						// NOTE: technically this should execute synchronously because we're supplying all necessary details on
@@ -1631,7 +1590,6 @@ function watchPricingStream() {
 				openInterest: convertOpenInterest(openInterests[pairIndex]),
 				pairRolloverFees: pairRolloverFees[pairIndex],
 				// Borrowing Fees
-				accBlockWeightedMarketCap: borrowingFeesContext.realizedAccBlockWeightedMarketCap || borrowingFeesContext.accBlockWeightedMarketCap,
 				pairs: borrowingFeesContext.pairs,
 				groups: borrowingFeesContext.groups,
 			}
