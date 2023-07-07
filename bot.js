@@ -1316,14 +1316,10 @@ function watchPricingStream() {
 				} else {
 					const posDai = parseFloat(openTrade.leverage) * parseFloat(openTrade.positionSize);
 
-					const baseSpreadP = spreadsP[openTrade.pairIndex]/1e10*(100-openTrade.spreadReductionP)/100;
-
 					const onePercentDepth = buy ? pairParams[openTrade.pairIndex].onePercentDepthAbove : pairParams[openTrade.pairIndex].onePercentDepthBelow;
 					const interestDai = buy ? parseFloat(openInterests[openTrade.pairIndex].long) : parseFloat(openInterests[openTrade.pairIndex].short);
 
    					const priceImpactP = (interestDai / 1e18 + (posDai / 1e18) / 2) / onePercentDepth;
-   					const spreadP = onePercentDepth > 0 ? baseSpreadP + priceImpactP : baseSpreadP;
-					const priceIncludingSpread = !buy ? price * (1 - spreadP / 100) : price * (1 + spreadP/100);
 
 					const collateralDai = buy ? parseFloat(collaterals[openTrade.pairIndex].long) : parseFloat(collaterals[openTrade.pairIndex].short);
 
@@ -1345,9 +1341,9 @@ function watchPricingStream() {
 					) {
 						const tradeType = openTrade.type;
 
-						if(tradeType === "0" && priceIncludingSpread >= minPrice && priceIncludingSpread <= maxPrice
-							|| tradeType === "1" && (buy ? priceIncludingSpread <= maxPrice : priceIncludingSpread >= minPrice)
-							|| tradeType === "2" && (buy ? priceIncludingSpread >= minPrice : priceIncludingSpread <= maxPrice)) {
+						if(tradeType === "0" && price >= minPrice && price <= maxPrice
+							|| tradeType === "1" && (buy ? price <= maxPrice : price >= minPrice)
+							|| tradeType === "2" && (buy ? price >= minPrice : price <= maxPrice)) {
 							orderType = 3;
 						} else {
 							//appLogger.debug(`Limit trade ${openTradeKey} is not ready for us to act on yet.`);
