@@ -514,7 +514,7 @@ async function fetchTradingVariables(){
 				pairsStorageContract.methods.groupMaxCollateral(pairIndex).call()
 			]);
 
-			newOpenInterests[pairIndex] = {long: openInterestLong, short: openInterestShort, max: openInterestMax};
+			newOpenInterests[pairIndex] = {long: openInterestLong, short: openInterestShort, max: parseFloat(openInterestMax) * 1e8 + ''};
 			newCollaterals[pairIndex] = {long: collateralLong, short: collateralShort, max: collateralMax};
 			newSpreadsP[pairIndex] = pair["0"].spreadP;
 		}));
@@ -1194,7 +1194,7 @@ async function handleBorrowingFeesEvent(event) {
 		} else if (event.event === "PairMaxOiUpdated") {
 			const { pairIndex, maxOi } = event.returnValues;
 
-			openInterests[pairIndex].max = maxOi;
+			openInterests[pairIndex].max = parseFloat(maxOi) * 1e8 + '';
 			borrowingFeesContext.pairs[pairIndex].maxOi = parseFloat(maxOi) / 1e10;
 		}
 
@@ -1340,7 +1340,6 @@ function watchPricingStream() {
 						withinMaxGroupOi(openTrade.pairIndex, buy, posDai, borrowingFeesContext)
 					) {
 						const tradeType = openTrade.type;
-
 						if(tradeType === "0" && price >= minPrice && price <= maxPrice
 							|| tradeType === "1" && (buy ? price <= maxPrice : price >= minPrice)
 							|| tradeType === "2" && (buy ? price >= minPrice : price <= maxPrice)) {

@@ -65,7 +65,7 @@ export const transformLastUpdated = (ol, olLastUpdated, t, tLastUpdated) => {
 export const convertOpenInterest = (interest) => ({
 	long: parseFloat(interest.long) / 1e18,
 	short: parseFloat(interest.short) / 1e18,
-	max: parseFloat(interest.max) / 1e10,
+	max: parseFloat(interest.max) / 1e18,
 });
 
 export const convertTrade = (trade) => {
