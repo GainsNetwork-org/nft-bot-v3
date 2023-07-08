@@ -1300,6 +1300,9 @@ function watchPricingStream() {
 				let orderType = -1;
 				let liqPrice;
 				if(isPendingOpenLimitOrder === false) {
+					// Hotfix openPrice of 0
+					if (parseInt(openTrade.openPrice) === 0) return;
+					
 					const tp = parseFloat(openTrade.tp)/1e10;
 					const sl = parseFloat(openTrade.sl)/1e10;
 					liqPrice = getTradeLiquidationPrice(openTradeKey, openTrade);
