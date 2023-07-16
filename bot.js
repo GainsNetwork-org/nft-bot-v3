@@ -1036,7 +1036,7 @@ async function synchronizeOpenTrades(event){
 
 			appLogger.verbose(`Synchronize open trades from event ${eventName}: Updated trade ${tradeKey}`);
 		} else if(eventName === "MarketCloseCanceled") {
-			const { trader, pairIndex, index } = eventReturnValues.t;
+			const { trader, pairIndex, index } = eventReturnValues;
 			const tradeKey = buildTradeIdentifier(trader, pairIndex, index, false);
 
 			const trade = await storageContract.methods.openTrades(trader, pairIndex, index).call();
