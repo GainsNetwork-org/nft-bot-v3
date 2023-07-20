@@ -12,6 +12,8 @@ import {
 	fetchOpenPairTradesRaw,
 	getLiquidationPrice,
 	withinMaxGroupOi,
+	getBaseSpreadP,
+	getSpreadWithPriceImpactP,
 } from "@gainsnetwork/sdk";
 import Web3 from "web3";
 import { WebSocket } from "ws";
@@ -1319,11 +1321,21 @@ function watchPricingStream() {
 				} else {
 					const posDai = parseFloat(openTrade.leverage) * parseFloat(openTrade.positionSize);
 
-					const onePercentDepth = buy ? pairParams[openTrade.pairIndex].onePercentDepthAbove : pairParams[openTrade.pairIndex].onePercentDepthBelow;
+					const baseSpreadP = getBaseSpreadP(
+						parseFloat(spreadsP[pairIndex]) / 1e10 / 100,
+						parseInt(openTrade.spreadReductionP) / 100
+					);
+					appLogger.info("baseSpreadP: " + baseSpreadP);
+					const spreadWithPriceImpactP = getSpreadWithPriceImpactP(
+						baseSpreadP,
+						openTrade.buy,
+						openTrade.positionSize,
+						openTrade.leverage,
+						pairParams[openTrade.pairIndex],
+						convertOpenInterest(openInterests[pairIndex])
+					);
+					
 					const interestDai = buy ? parseFloat(openInterests[openTrade.pairIndex].long) : parseFloat(openInterests[openTrade.pairIndex].short);
-
-   					const priceImpactP = (interestDai / 1e18 + (posDai / 1e18) / 2) / onePercentDepth;
-
 					const collateralDai = buy ? parseFloat(collaterals[openTrade.pairIndex].long) : parseFloat(collaterals[openTrade.pairIndex].short);
 
 					const newInterestDai = (interestDai + posDai);
@@ -1339,8 +1351,9 @@ function watchPricingStream() {
 						isValidLeverage(openTrade.pairIndex, parseFloat(openTrade.leverage)) &&
 						newInterestDai <= maxInterestDai &&
 						newCollateralDai <= maxCollateralDai &&
-						(onePercentDepth === 0 || priceImpactP * openTrade.leverage <= maxNegativePnlOnOpenP) &&
-						withinMaxGroupOi(openTrade.pairIndex, buy, posDai / 1e18, borrowingFeesContext)
+						(spreadWithPriceImpactP <= maxNegativePnlOnOpenP / 100) &&
+						withinMaxGroupOi(openTrade.pairIndex, buy, posDai / 1e18, borrowingFeesContext) &&
+						spreadWithPriceImpactP <= openTrade.maxSlippageP
 					) {
 						const tradeType = openTrade.type;
 						if(tradeType === "0" && price >= minPrice && price <= maxPrice
