@@ -695,7 +695,7 @@ async function fetchOpenTrades(){
 					callbacksContract.methods.tradeData(olo.trader, olo.pairIndex, olo.index, 1).call()
 				]);
 
-			return { ...olo, type, maxSlippageP: parseFloat(tradeData.maxSlippageP.toString()) / 1e10 };
+			return { ...olo, type, maxSlippageP: (parseFloat(tradeData.maxSlippageP.toString()) / 1e10) || 1 };
 		}));
 
 		appLogger.info(`Fetched ${openLimitOrdersWithTypes.length} open limit order(s).`);
@@ -955,7 +955,7 @@ async function synchronizeOpenTrades(event){
 					]);
 
 				limitOrder.type = type;
-				limitOrder.maxSlippageP = parseFloat(tradeData.maxSlippageP.toString()) / 1e10
+				limitOrder.maxSlippageP = (parseFloat(tradeData.maxSlippageP.toString()) / 1e10) || 1;
 
 				const tradeKey = buildTradeIdentifier(trader, pairIndex, index, true);
 
@@ -1332,11 +1332,11 @@ function watchPricingStream() {
 					const spreadWithPriceImpactP = getSpreadWithPriceImpactP(
 						baseSpreadP,
 						openTrade.buy,
-						openTrade.positionSize,
+						openTrade.positionSize / 1e18,
 						openTrade.leverage,
 						pairParams[openTrade.pairIndex],
 						convertOpenInterest(openInterests[pairIndex])
-					);
+					) * 100;
 					
 					const interestDai = buy ? parseFloat(openInterests[openTrade.pairIndex].long) : parseFloat(openInterests[openTrade.pairIndex].short);
 					const collateralDai = buy ? parseFloat(collaterals[openTrade.pairIndex].long) : parseFloat(collaterals[openTrade.pairIndex].short);
@@ -1354,7 +1354,7 @@ function watchPricingStream() {
 						isValidLeverage(openTrade.pairIndex, parseFloat(openTrade.leverage)) &&
 						newInterestDai <= maxInterestDai &&
 						newCollateralDai <= maxCollateralDai &&
-						(spreadWithPriceImpactP <= maxNegativePnlOnOpenP / 100) &&
+						(spreadWithPriceImpactP * openTrade.leverage <= maxNegativePnlOnOpenP) &&
 						withinMaxGroupOi(openTrade.pairIndex, buy, posDai / 1e18, borrowingFeesContext) &&
 						spreadWithPriceImpactP <= openTrade.maxSlippageP
 					) {
