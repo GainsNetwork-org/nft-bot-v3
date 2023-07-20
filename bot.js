@@ -944,15 +944,18 @@ async function synchronizeOpenTrades(event){
 				const [
 					limitOrder,
 					type,
-					lastUpdated
+					lastUpdated,
+					tradeData
 				] = await Promise.all(
 					[
 						storageContract.methods.openLimitOrders(openLimitOrderId).call(),
 						nftRewardsContract.methods.openLimitOrderTypes(trader, pairIndex, index).call(),
-						fetchTradeLastUpdated(trader, pairIndex, index, TRADE_TYPE.LIMIT)
+						fetchTradeLastUpdated(trader, pairIndex, index, TRADE_TYPE.LIMIT),
+						callbacksContract.methods.tradeData(trader, pairIndex, index, 1).call()
 					]);
 
 				limitOrder.type = type;
+				limitOrder.maxSlippageP = parseFloat(tradeData.maxSlippageP.toString()) / 1e10
 
 				const tradeKey = buildTradeIdentifier(trader, pairIndex, index, true);
 
@@ -1325,7 +1328,7 @@ function watchPricingStream() {
 						parseFloat(spreadsP[pairIndex]) / 1e10 / 100,
 						parseInt(openTrade.spreadReductionP) / 100
 					);
-					appLogger.info("baseSpreadP: " + baseSpreadP);
+
 					const spreadWithPriceImpactP = getSpreadWithPriceImpactP(
 						baseSpreadP,
 						openTrade.buy,
