@@ -78,7 +78,7 @@ let allowedLink = {storage: false, rewards: false}, currentlySelectedWeb3ClientI
 	spreadsP = [], openInterests = [], collaterals = [], pairs = [], pairParams = [], pairRolloverFees = [], pairFundingFees = [], maxNegativePnlOnOpenP = 0,
 	canExecuteTimeout = 0, knownOpenTrades = null, tradesLastUpdated  = new Map(), triggeredOrders = new Map(), pairMaxLeverage = new Map(),
 	storageContract, tradingContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract, borrowingFeesContract,
-	maxTradesPerPair = 0, linkContract, pairInfosContract, gasPriceBn = new Web3.utils.BN(0.1 * 1e9);
+	maxTradesPerPair = 0, linkContract, pairInfosContract, gasPriceBn = new Web3.utils.BN(0.1 * 1e9), triggerRetries = new Map();
 
 // --------------------------------------------
 // 3. INIT ENV VARS & CHECK LINK ALLOWANCE
@@ -100,7 +100,8 @@ const MAX_FEE_PER_GAS_WEI_HEX = (process.env.MAX_GAS_PRICE_GWEI ?? '').length > 
 	  // Concurrent message processing is now enabled by default. You can turn it off by setting ENABLE_CONCURRENT_PRICE_UPDATE_PROCESSING=false in your .env file
 	  ENABLE_CONCURRENT_PRICE_UPDATE_PROCESSING = process.env.ENABLE_CONCURRENT_PRICE_UPDATE_PROCESSING ? process.env.ENABLE_CONCURRENT_PRICE_UPDATE_PROCESSING === 'true' : true,
 	  USE_MULTICALL = process.env.USE_MULTICALL ? process.env.USE_MULTICALL === 'true' : true,
-	  l1BlockFetchIntervalMs = process.env.L1_BLOCK_FETCH_INTERVAL_MS ? +process.env.L1_BLOCK_FETCH_INTERVAL_MS : undefined;
+	  l1BlockFetchIntervalMs = process.env.L1_BLOCK_FETCH_INTERVAL_MS ? +process.env.L1_BLOCK_FETCH_INTERVAL_MS : undefined,
+	  MAX_RETRIES = process.env.MAX_RETRIES && !isNaN(+process.env.MAX_RETRIES) ? parseInt(process.env.MAX_RETRIES) : -1;
 
 const CHAIN_ID = process.env.CHAIN_ID !== undefined ? parseInt(process.env.CHAIN_ID, 10) : CHAIN_IDS.POLYGON; // Polygon chain id
 const NETWORK_ID = process.env.NETWORK_ID !== undefined ? parseInt(process.env.NETWORK_ID, 10) : CHAIN_ID;
@@ -1048,6 +1049,8 @@ async function synchronizeOpenTrades(event){
 				} else {
 					appLogger.warn(`Synchronize open trades from event ${eventName}: Open limit trade ${openTradeKey} was not found? Unable to remove.`);
 				}
+
+				resetRetryCounter(buildTriggerIdentifier(trader, pairIndex, limitIndex, 3));
 			}
 
 			const [tradeInfo, tradeInitialAccFees, lastUpdated] = await Promise.all([
@@ -1077,6 +1080,12 @@ async function synchronizeOpenTrades(event){
 				});
 
 			appLogger.info(`Synchronize open trades from event ${eventName}: Stored active trade ${tradeKey}`);
+
+			// reset any known SL/TP/LIQ counters
+			resetRetryCounter(buildTriggerIdentifier(trader, pairIndex, index, 0));
+			resetRetryCounter(buildTriggerIdentifier(trader, pairIndex, index, 1));
+			resetRetryCounter(buildTriggerIdentifier(trader, pairIndex, index, 2));
+
 		} else if((eventName === "MarketExecuted" && eventReturnValues.open === false)
 						||
 					(eventName === "LimitExecuted" && eventReturnValues.orderType !== "3")){
@@ -1134,6 +1143,9 @@ async function synchronizeOpenTrades(event){
 			} else {
 				appLogger.debug(`Synchronize open trades from event ${eventName}: Order ${triggeredOrderTrackingInfoIdentifier} was not being tracked as triggered by us.`);
 			}
+
+			resetRetryCounter(triggeredOrderTrackingInfoIdentifier);
+
 		} else if (eventName === "PairMaxLeverageUpdated") {
 			pairMaxLeverage.set(eventReturnValues.pairIndex, parseFloat(eventReturnValues.maxLeverage));
 			appLogger.verbose(`${eventName}: Set pairMaxLeverage for pair ${eventReturnValues.pairIndex} to ${eventReturnValues.maxLeverage}.`);
@@ -1206,6 +1218,10 @@ async function handleBorrowingFeesEvent(event) {
 	} catch(error) {
 		appLogger.error("Error occurred when handling BorrowingFees event.", error);
 	}
+}
+
+function resetRetryCounter(triggerId) {
+	triggerRetries.delete(triggerId);
 }
 
 // ---------------------------------------------
@@ -1307,7 +1323,7 @@ function watchPricingStream() {
 				if(isPendingOpenLimitOrder === false) {
 					// Hotfix openPrice of 0
 					if (parseInt(openTrade.openPrice) === 0) return;
-					
+
 					const tp = parseFloat(openTrade.tp)/1e10;
 					const sl = parseFloat(openTrade.sl)/1e10;
 					liqPrice = getTradeLiquidationPrice(openTradeKey, openTrade);
@@ -1337,7 +1353,7 @@ function watchPricingStream() {
 						pairParams[openTrade.pairIndex],
 						convertOpenInterest(openInterests[pairIndex])
 					) * 100;
-					
+
 					const interestDai = buy ? parseFloat(openInterests[openTrade.pairIndex].long) : parseFloat(openInterests[openTrade.pairIndex].short);
 					const collateralDai = buy ? parseFloat(collaterals[openTrade.pairIndex].long) : parseFloat(collaterals[openTrade.pairIndex].short);
 
@@ -1416,6 +1432,8 @@ function watchPricingStream() {
 					return;
 				}
 
+				if(!canRetry(triggeredOrderTrackingInfoIdentifier)) return;
+
 				const triggeredOrderDetails = {
 					cleanupTimerId: null,
 					transactionSent: false,
@@ -1435,6 +1453,7 @@ function watchPricingStream() {
 
 					// Clear tracking of this trade because we weren't able to actually progress without an NFT
 					triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
+					resetRetryCounter(triggeredOrderTrackingInfoIdentifier);
 
 					return;
 				}
@@ -1517,6 +1536,7 @@ function watchPricingStream() {
 								// The trade is gone, just remove it from known trades
 								triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 								currentKnownOpenTrades.delete(openTradeKey);
+								resetRetryCounter(triggeredOrderTrackingInfoIdentifier);
 
 								break;
 
@@ -1614,6 +1634,20 @@ function watchPricingStream() {
 		const maxLev = pairMaxLeverage.get(pairIndex) ?? 0;
 		// if pairsMaxLeverage is 0 then it's not currently being restricted
 		return maxLev === 0 || maxLev >= wantedLeverage;
+	}
+
+	function canRetry(triggerId) {
+		if (MAX_RETRIES === -1) return true;
+
+		const retries = (triggerRetries.get(triggerId) || 0);
+		const canRetry = retries < MAX_RETRIES;
+
+		if(canRetry) {
+			// to prevent incrementing at every price message. Only
+			triggerRetries.set(triggerId, retries + 1);
+		}
+
+		return canRetry;
 	}
 }
 
