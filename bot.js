@@ -11,8 +11,9 @@ import {
 	isCommoditiesOpen,
 	fetchOpenPairTradesRaw,
 	getLiquidationPrice,
-	getPendingAccBlockWeightedMarketCap,
-	withinMaxGroupOi
+	withinMaxGroupOi,
+	getBaseSpreadP,
+	getSpreadWithPriceImpactP,
 } from "@gainsnetwork/sdk";
 import Web3 from "web3";
 import { WebSocket } from "ws";
@@ -29,7 +30,8 @@ import {
 	buildTradeIdentifier,
 	transformLastUpdated,
 	convertOpenInterest,
-	convertTrade, convertTradeInfo, convertTradeInitialAccFees
+	convertTrade, convertTradeInfo, convertTradeInitialAccFees,
+	packNft
 } from "./utils.js";
 
 // Make errors JSON serializable
@@ -76,7 +78,7 @@ let allowedLink = {storage: false, rewards: false}, currentlySelectedWeb3ClientI
 	spreadsP = [], openInterests = [], collaterals = [], pairs = [], pairParams = [], pairRolloverFees = [], pairFundingFees = [], maxNegativePnlOnOpenP = 0,
 	canExecuteTimeout = 0, knownOpenTrades = null, tradesLastUpdated  = new Map(), triggeredOrders = new Map(), pairMaxLeverage = new Map(),
 	storageContract, tradingContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract, borrowingFeesContract,
-	maxTradesPerPair = 0, linkContract, pairInfosContract, gasPriceBn = new Web3.utils.BN(0.1 * 1e9);
+	maxTradesPerPair = 0, linkContract, pairInfosContract, gasPriceBn = new Web3.utils.BN(0.1 * 1e9), triggerRetries = new Map();
 
 // --------------------------------------------
 // 3. INIT ENV VARS & CHECK LINK ALLOWANCE
@@ -98,7 +100,8 @@ const MAX_FEE_PER_GAS_WEI_HEX = (process.env.MAX_GAS_PRICE_GWEI ?? '').length > 
 	  // Concurrent message processing is now enabled by default. You can turn it off by setting ENABLE_CONCURRENT_PRICE_UPDATE_PROCESSING=false in your .env file
 	  ENABLE_CONCURRENT_PRICE_UPDATE_PROCESSING = process.env.ENABLE_CONCURRENT_PRICE_UPDATE_PROCESSING ? process.env.ENABLE_CONCURRENT_PRICE_UPDATE_PROCESSING === 'true' : true,
 	  USE_MULTICALL = process.env.USE_MULTICALL ? process.env.USE_MULTICALL === 'true' : true,
-	  l1BlockFetchIntervalMs = process.env.L1_BLOCK_FETCH_INTERVAL_MS ? +process.env.L1_BLOCK_FETCH_INTERVAL_MS : undefined;
+	  l1BlockFetchIntervalMs = process.env.L1_BLOCK_FETCH_INTERVAL_MS ? +process.env.L1_BLOCK_FETCH_INTERVAL_MS : undefined,
+	  MAX_RETRIES = process.env.MAX_RETRIES && !isNaN(+process.env.MAX_RETRIES) ? parseInt(process.env.MAX_RETRIES) : -1;
 
 const CHAIN_ID = process.env.CHAIN_ID !== undefined ? parseInt(process.env.CHAIN_ID, 10) : CHAIN_IDS.POLYGON; // Polygon chain id
 const NETWORK_ID = process.env.NETWORK_ID !== undefined ? parseInt(process.env.NETWORK_ID, 10) : CHAIN_ID;
@@ -109,12 +112,8 @@ const NETWORK = NETWORKS[CHAIN_ID];
 const TRADE_TYPE = {MARKET: 0, LIMIT: 1};
 const ORDER_TYPE = {INVALID: -1, TP: 0, SL: 1, LIQ: 2, LIMIT: 3};
 const borrowingFeesContext = {
-	accBlockWeightedMarketCap: 1,
 	groups: [],
 	pairs: [],
-	vaultMarketCap: undefined,
-	accBlockWeightedMarketCapLastStored: undefined,
-	realizedAccBlockWeightedMarketCap: undefined,
 };
 
 if (!NETWORK) {
@@ -298,22 +297,6 @@ function createWeb3Client(providerIndex, providerUrl) {
 
 		if (newBlockNumber > latestL2Block) {
 			latestL2Block = newBlockNumber;
-
-			// Update borrowing fee accs
-			if (
-				borrowingFeesContext.accBlockWeightedMarketCapLastStored !== undefined &&
-				borrowingFeesContext.vaultMarketCap !== undefined &&
-				borrowingFeesContext.accBlockWeightedMarketCap !== undefined
-			) {
-				borrowingFeesContext.realizedAccBlockWeightedMarketCap =
-					getPendingAccBlockWeightedMarketCap(latestL2Block, {
-						marketCap: borrowingFeesContext.vaultMarketCap,
-						accBlockWeightedMarketCap:
-							borrowingFeesContext.accBlockWeightedMarketCap,
-						accBlockWeightedMarketCapLastStored:
-							borrowingFeesContext.accBlockWeightedMarketCapLastStored,
-					});
-			}
 		}
 
 		currentWeb3ClientBlocks[providerIndex] = newBlockNumber;
@@ -528,13 +511,13 @@ async function fetchTradingVariables(){
 			] = await Promise.all([
 				storageContract.methods.openInterestDai(pairIndex, 0).call(),
 				storageContract.methods.openInterestDai(pairIndex, 1).call(),
-				storageContract.methods.openInterestDai(pairIndex, 2).call(),
+				borrowingFeesContract.methods.getPairMaxOi(pairIndex).call(),
 				pairsStorageContract.methods.groupCollateral(pairIndex, true).call(),
 				pairsStorageContract.methods.groupCollateral(pairIndex, false).call(),
 				pairsStorageContract.methods.groupMaxCollateral(pairIndex).call()
 			]);
 
-			newOpenInterests[pairIndex] = {long: openInterestLong, short: openInterestShort, max: openInterestMax};
+			newOpenInterests[pairIndex] = {long: openInterestLong, short: openInterestShort, max: parseFloat(openInterestMax) * 1e8 + ''};
 			newCollaterals[pairIndex] = {long: collateralLong, short: collateralShort, max: collateralMax};
 			newSpreadsP[pairIndex] = pair["0"].spreadP;
 		}));
@@ -580,23 +563,22 @@ async function fetchTradingVariables(){
 	}
 
 	async function fetchBorrowingFees() {
-		const [accBlockWeightedMarketCap, borrowingFees, vaultMarketCap, accBlockWeightedMarketCapLastStored] = await Promise.all([
-			vaultContract.methods.accBlockWeightedMarketCap().call(),
+		const [borrowingFeesInfo, vaultMarketCap] = await Promise.all([
 			borrowingFeesContract.methods.getAllPairs().call(),
 			vaultContract.methods.marketCap().call(),
-			vaultContract.methods.accBlockWeightedMarketCapLastStored().call()
 		])
 
-		borrowingFeesContext.vaultMarketCap = parseFloat(vaultMarketCap) / 1e18;
-		borrowingFeesContext.accBlockWeightedMarketCap = parseFloat(accBlockWeightedMarketCap) / 1e40;
-		borrowingFeesContext.accBlockWeightedMarketCapLastStored = parseInt(accBlockWeightedMarketCapLastStored);
+		const [borrowingFees, maxOis] = [borrowingFeesInfo["0"], borrowingFeesInfo["1"]];
 
-		const borrowingFeesPairs = borrowingFees.map((value) => ({
+		borrowingFeesContext.vaultMarketCap = parseFloat(vaultMarketCap) / 1e18;
+
+		const borrowingFeesPairs = borrowingFees.map((value, idx) => ({
 			feePerBlock: parseFloat(value.feePerBlock) / 1e10,
 			accFeeLong:  parseFloat(value.accFeeLong) / 1e10,
 			accFeeShort:  parseFloat(value.accFeeShort) / 1e10,
 			accLastUpdatedBlock: parseInt(value.accLastUpdatedBlock),
-			lastAccBlockWeightedMarketCap: parseFloat(value.lastAccBlockWeightedMarketCap) / 1e40,
+			feeExponent: value.feeExponent,
+			maxOi: parseFloat(maxOis[idx].max) / 1e10 || 0,
 			groups: value.groups.map((value) => ({
 				groupIndex: parseInt(value.groupIndex),
 				initialAccFeeLong: parseFloat(value.initialAccFeeLong) / 1e10,
@@ -616,20 +598,21 @@ async function fetchTradingVariables(){
 			),
 		].sort((a,b) => a - b);
 
-		const borrowingFeesGroups = borrowingFeesGroupIds.length > 0 ? await borrowingFeesContract.methods
+		const borrowingFeesGroupsInfo = borrowingFeesGroupIds.length > 0 ? await borrowingFeesContract.methods
 			.getGroups(Array.from(Array(+borrowingFeesGroupIds[borrowingFeesGroupIds.length - 1] + 1).keys()))
 			.call() : [];
 
+		const [borrowingFeesGroups, groupExponents] = [borrowingFeesGroupsInfo["0"], borrowingFeesGroupsInfo["1"]]
 		borrowingFeesContext.pairs = borrowingFeesPairs;
-		borrowingFeesContext.groups = borrowingFeesGroups.map((value) => ({
+		borrowingFeesContext.groups = borrowingFeesGroups.map((value, idx) => ({
 			oiLong: parseFloat(value.oiLong) / 1e10,
 			oiShort: parseFloat(value.oiShort) / 1e10,
 			feePerBlock: parseFloat(value.feePerBlock) / 1e10,
 			accFeeLong: parseFloat(value.accFeeLong) / 1e10,
 			accFeeShort: parseFloat(value.accFeeShort) / 1e10,
 			accLastUpdatedBlock: parseInt(value.accLastUpdatedBlock),
-			lastAccBlockWeightedMarketCap: parseFloat(value.lastAccBlockWeightedMarketCap) / 1e40,
 			maxOi: parseFloat(value.maxOi) / 1e10,
+			feeExponent: parseInt(groupExponents[idx]) || 1
 		}));
 	}
 }
@@ -707,9 +690,13 @@ async function fetchOpenTrades(){
 		const openLimitOrders = await storageContract.methods.getOpenLimitOrders().call();
 
 		const openLimitOrdersWithTypes = await Promise.all(openLimitOrders.map(async olo => {
-			const type = await nftRewardsContract.methods.openLimitOrderTypes(olo.trader, olo.pairIndex, olo.index).call();
+			const [type, tradeData] =
+				await Promise.all([
+					nftRewardsContract.methods.openLimitOrderTypes(olo.trader, olo.pairIndex, olo.index).call(),
+					callbacksContract.methods.tradeData(olo.trader, olo.pairIndex, olo.index, 1).call()
+				]);
 
-			return { ...olo, type };
+			return { ...olo, type, maxSlippageP: (parseFloat(tradeData.maxSlippageP.toString()) / 1e10) || 1 };
 		}));
 
 		appLogger.info(`Fetched ${openLimitOrdersWithTypes.length} open limit order(s).`);
@@ -887,34 +874,6 @@ function watchLiveTradingEvents(){
 				});
 		}
 
-		if(eventSubBorrowingFeesContext.vault !== null && eventSubBorrowingFeesContext.vault.id !== null){
-			eventSubBorrowingFeesContext.vault.unsubscribe();
-		}
-
-		eventSubBorrowingFeesContext.vault = vaultContract.events.allEvents({ fromBlock: 'latest' })
-			.on('data', async (event) => {
-
-				if(event.event !== "AccBlockWeightedMarketCapStored"){
-					return;
-				}
-
-				const { newAccValue } = event.returnValues;
-
-				// If no confirmation delay, then execute immediately without timer
-				if(EVENT_CONFIRMATIONS_MS === 0) {
-					borrowingFeesContext.accBlockWeightedMarketCap = parseFloat(newAccValue) / 1e40;
-
-				} else {
-					setTimeout(() => {
-						borrowingFeesContext.accBlockWeightedMarketCap = parseFloat(newAccValue) / 1e40;
-					}, EVENT_CONFIRMATIONS_MS);
-				}
-
-				// TODO: use sdk function and compare
-				borrowingFeesContext.vaultMarketCap = parseFloat(await vaultContract.methods.marketCap().call()) / 1e18;
-				borrowingFeesContext.accBlockWeightedMarketCapLastStored = parseInt(event.blockNumber);
-			});
-
 		if(eventSubBorrowingFeesContext.borrowing !== null && eventSubBorrowingFeesContext.borrowing.id !== null){
 			eventSubBorrowingFeesContext.borrowing.unsubscribe();
 		}
@@ -923,7 +882,7 @@ function watchLiveTradingEvents(){
 			.on('data', (event) => {
 				const eventName = event.event;
 
-				if(eventName !== "PairAccFeesUpdated" && eventName !== "GroupAccFeesUpdated" && eventName !== "GroupOiUpdated" ){
+				if(eventName !== "PairAccFeesUpdated" && eventName !== "GroupAccFeesUpdated" && eventName !== "GroupOiUpdated" && eventName !== "PairMaxOiUpdated"){
 					return;
 				}
 				// If no confirmation delay, then execute immediately without timer
@@ -986,15 +945,18 @@ async function synchronizeOpenTrades(event){
 				const [
 					limitOrder,
 					type,
-					lastUpdated
+					lastUpdated,
+					tradeData
 				] = await Promise.all(
 					[
 						storageContract.methods.openLimitOrders(openLimitOrderId).call(),
 						nftRewardsContract.methods.openLimitOrderTypes(trader, pairIndex, index).call(),
-						fetchTradeLastUpdated(trader, pairIndex, index, TRADE_TYPE.LIMIT)
+						fetchTradeLastUpdated(trader, pairIndex, index, TRADE_TYPE.LIMIT),
+						callbacksContract.methods.tradeData(trader, pairIndex, index, 1).call()
 					]);
 
 				limitOrder.type = type;
+				limitOrder.maxSlippageP = (parseFloat(tradeData.maxSlippageP.toString()) / 1e10) || 1;
 
 				const tradeKey = buildTradeIdentifier(trader, pairIndex, index, true);
 
@@ -1087,6 +1049,8 @@ async function synchronizeOpenTrades(event){
 				} else {
 					appLogger.warn(`Synchronize open trades from event ${eventName}: Open limit trade ${openTradeKey} was not found? Unable to remove.`);
 				}
+
+				resetRetryCounter(buildTriggerIdentifier(trader, pairIndex, limitIndex, 3));
 			}
 
 			const [tradeInfo, tradeInitialAccFees, lastUpdated] = await Promise.all([
@@ -1116,6 +1080,12 @@ async function synchronizeOpenTrades(event){
 				});
 
 			appLogger.info(`Synchronize open trades from event ${eventName}: Stored active trade ${tradeKey}`);
+
+			// reset any known SL/TP/LIQ counters
+			resetRetryCounter(buildTriggerIdentifier(trader, pairIndex, index, 0));
+			resetRetryCounter(buildTriggerIdentifier(trader, pairIndex, index, 1));
+			resetRetryCounter(buildTriggerIdentifier(trader, pairIndex, index, 2));
+
 		} else if((eventName === "MarketExecuted" && eventReturnValues.open === false)
 						||
 					(eventName === "LimitExecuted" && eventReturnValues.orderType !== "3")){
@@ -1173,6 +1143,9 @@ async function synchronizeOpenTrades(event){
 			} else {
 				appLogger.debug(`Synchronize open trades from event ${eventName}: Order ${triggeredOrderTrackingInfoIdentifier} was not being tracked as triggered by us.`);
 			}
+
+			resetRetryCounter(triggeredOrderTrackingInfoIdentifier);
+
 		} else if (eventName === "PairMaxLeverageUpdated") {
 			pairMaxLeverage.set(eventReturnValues.pairIndex, parseFloat(eventReturnValues.maxLeverage));
 			appLogger.verbose(`${eventName}: Set pairMaxLeverage for pair ${eventReturnValues.pairIndex} to ${eventReturnValues.maxLeverage}.`);
@@ -1204,7 +1177,7 @@ async function refreshPairFundingFees(event){
 async function handleBorrowingFeesEvent(event) {
 	try {
 		if (event.event === 'PairAccFeesUpdated') {
-			const { pairIndex, accFeeLong, accFeeShort, accBlockWeightedMarketCap } =
+			const { pairIndex, accFeeLong, accFeeShort } =
 				event.returnValues;
 			const pairBorrowingFees = borrowingFeesContext.pairs[pairIndex];
 
@@ -1212,11 +1185,10 @@ async function handleBorrowingFeesEvent(event) {
 				pairBorrowingFees.accFeeLong = parseFloat(accFeeLong) / 1e10;
 				pairBorrowingFees.accFeeShort = parseFloat(accFeeShort) / 1e10;
 				pairBorrowingFees.accLastUpdateBlock = parseInt(event.blockNumber);
-				pairBorrowingFees.lastAccBlockWeightedMarketCap = parseFloat(accBlockWeightedMarketCap) / 1e40;
 			}
 
 		} else if (event.event === 'GroupAccFeesUpdated') {
-			const { groupIndex, accFeeLong, accFeeShort, accBlockWeightedMarketCap } =
+			const { groupIndex, accFeeLong, accFeeShort } =
 				event.returnValues;
 
 			const groupBorrowingFees = borrowingFeesContext.groups[groupIndex];
@@ -1225,7 +1197,6 @@ async function handleBorrowingFeesEvent(event) {
 				groupBorrowingFees.accFeeLong = parseFloat(accFeeLong) / 1e10;
 				groupBorrowingFees.accFeeShort = parseFloat(accFeeShort) / 1e10;
 				groupBorrowingFees.accLastUpdateBlock = parseInt(event.blockNumber);
-				groupBorrowingFees.lastAccBlockWeightedMarketCap = parseFloat(accBlockWeightedMarketCap) / 1e40;
 			}
 
 		} else if (event.event === "GroupOiUpdated") {
@@ -1237,11 +1208,20 @@ async function handleBorrowingFeesEvent(event) {
 				groupBorrowingFees.oiLong = parseFloat(oiLong) / 1e10;
 				groupBorrowingFees.oiShort = parseFloat(oiShort) / 1e10;
 			}
+		} else if (event.event === "PairMaxOiUpdated") {
+			const { pairIndex, maxOi } = event.returnValues;
+
+			openInterests[pairIndex].max = parseFloat(maxOi) * 1e8 + '';
+			borrowingFeesContext.pairs[pairIndex].maxOi = parseFloat(maxOi) / 1e10;
 		}
 
 	} catch(error) {
 		appLogger.error("Error occurred when handling BorrowingFees event.", error);
 	}
+}
+
+function resetRetryCounter(triggerId) {
+	triggerRetries.delete(triggerId);
 }
 
 // ---------------------------------------------
@@ -1343,7 +1323,7 @@ function watchPricingStream() {
 				if(isPendingOpenLimitOrder === false) {
 					// Hotfix openPrice of 0
 					if (parseInt(openTrade.openPrice) === 0) return;
-					
+
 					const tp = parseFloat(openTrade.tp)/1e10;
 					const sl = parseFloat(openTrade.sl)/1e10;
 					liqPrice = getTradeLiquidationPrice(openTradeKey, openTrade);
@@ -1360,15 +1340,21 @@ function watchPricingStream() {
 				} else {
 					const posDai = parseFloat(openTrade.leverage) * parseFloat(openTrade.positionSize);
 
-					const baseSpreadP = spreadsP[openTrade.pairIndex]/1e10*(100-openTrade.spreadReductionP)/100;
+					const baseSpreadP = getBaseSpreadP(
+						parseFloat(spreadsP[pairIndex]) / 1e10 / 100,
+						parseInt(openTrade.spreadReductionP) / 100
+					);
 
-					const onePercentDepth = buy ? pairParams[openTrade.pairIndex].onePercentDepthAbove : pairParams[openTrade.pairIndex].onePercentDepthBelow;
+					const spreadWithPriceImpactP = getSpreadWithPriceImpactP(
+						baseSpreadP,
+						openTrade.buy,
+						openTrade.positionSize / 1e18,
+						openTrade.leverage,
+						pairParams[openTrade.pairIndex],
+						convertOpenInterest(openInterests[pairIndex])
+					) * 100;
+
 					const interestDai = buy ? parseFloat(openInterests[openTrade.pairIndex].long) : parseFloat(openInterests[openTrade.pairIndex].short);
-
-   					const priceImpactP = (interestDai / 1e18 + (posDai / 1e18) / 2) / onePercentDepth;
-   					const spreadP = onePercentDepth > 0 ? baseSpreadP + priceImpactP : baseSpreadP;
-					const priceIncludingSpread = !buy ? price * (1 - spreadP / 100) : price * (1 + spreadP/100);
-
 					const collateralDai = buy ? parseFloat(collaterals[openTrade.pairIndex].long) : parseFloat(collaterals[openTrade.pairIndex].short);
 
 					const newInterestDai = (interestDai + posDai);
@@ -1384,14 +1370,14 @@ function watchPricingStream() {
 						isValidLeverage(openTrade.pairIndex, parseFloat(openTrade.leverage)) &&
 						newInterestDai <= maxInterestDai &&
 						newCollateralDai <= maxCollateralDai &&
-						(onePercentDepth === 0 || priceImpactP * openTrade.leverage <= maxNegativePnlOnOpenP) &&
-						withinMaxGroupOi(openTrade.pairIndex, buy, posDai, borrowingFeesContext)
+						(spreadWithPriceImpactP * openTrade.leverage <= maxNegativePnlOnOpenP) &&
+						withinMaxGroupOi(openTrade.pairIndex, buy, posDai / 1e18, borrowingFeesContext) &&
+						spreadWithPriceImpactP <= openTrade.maxSlippageP
 					) {
 						const tradeType = openTrade.type;
-
-						if(tradeType === "0" && priceIncludingSpread >= minPrice && priceIncludingSpread <= maxPrice
-							|| tradeType === "1" && (buy ? priceIncludingSpread <= maxPrice : priceIncludingSpread >= minPrice)
-							|| tradeType === "2" && (buy ? priceIncludingSpread >= minPrice : priceIncludingSpread <= maxPrice)) {
+						if(tradeType === "0" && price >= minPrice && price <= maxPrice
+							|| tradeType === "1" && (buy ? price <= maxPrice : price >= minPrice)
+							|| tradeType === "2" && (buy ? price >= minPrice : price <= maxPrice)) {
 							orderType = 3;
 						} else {
 							//appLogger.debug(`Limit trade ${openTradeKey} is not ready for us to act on yet.`);
@@ -1446,6 +1432,8 @@ function watchPricingStream() {
 					return;
 				}
 
+				if(!canRetry(triggeredOrderTrackingInfoIdentifier)) return;
+
 				const triggeredOrderDetails = {
 					cleanupTimerId: null,
 					transactionSent: false,
@@ -1465,6 +1453,7 @@ function watchPricingStream() {
 
 					// Clear tracking of this trade because we weren't able to actually progress without an NFT
 					triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
+					resetRetryCounter(triggeredOrderTrackingInfoIdentifier);
 
 					return;
 				}
@@ -1484,7 +1473,7 @@ function watchPricingStream() {
 					try {
 						const orderTransaction = createTransaction({
 							to: tradingContract.options.address,
-							data : tradingContract.methods.executeNftOrder(orderType, trader, pairIndex, index, availableNft.id, availableNft.type).encodeABI(),
+							data : tradingContract.methods.executeNftOrder(packNft(orderType, trader, pairIndex, index, availableNft.id, availableNft.type)).encodeABI(),
 						}, true);
 
 						// NOTE: technically this should execute synchronously because we're supplying all necessary details on
@@ -1547,6 +1536,7 @@ function watchPricingStream() {
 								// The trade is gone, just remove it from known trades
 								triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
 								currentKnownOpenTrades.delete(openTradeKey);
+								resetRetryCounter(triggeredOrderTrackingInfoIdentifier);
 
 								break;
 
@@ -1634,7 +1624,6 @@ function watchPricingStream() {
 				openInterest: convertOpenInterest(openInterests[pairIndex]),
 				pairRolloverFees: pairRolloverFees[pairIndex],
 				// Borrowing Fees
-				accBlockWeightedMarketCap: borrowingFeesContext.realizedAccBlockWeightedMarketCap || borrowingFeesContext.accBlockWeightedMarketCap,
 				pairs: borrowingFeesContext.pairs,
 				groups: borrowingFeesContext.groups,
 			}
@@ -1645,6 +1634,20 @@ function watchPricingStream() {
 		const maxLev = pairMaxLeverage.get(pairIndex) ?? 0;
 		// if pairsMaxLeverage is 0 then it's not currently being restricted
 		return maxLev === 0 || maxLev >= wantedLeverage;
+	}
+
+	function canRetry(triggerId) {
+		if (MAX_RETRIES === -1) return true;
+
+		const retries = (triggerRetries.get(triggerId) || 0);
+		const canRetry = retries < MAX_RETRIES;
+
+		if(canRetry) {
+			// to prevent incrementing at every price message. Only
+			triggerRetries.set(triggerId, retries + 1);
+		}
+
+		return canRetry;
 	}
 }
 

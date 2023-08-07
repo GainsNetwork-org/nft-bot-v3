@@ -14,13 +14,13 @@ export const NETWORKS = {
         chainName: 'polygon',
         chainId: 137,
         gasMode: GAS_MODE.EIP1559,
-        gasStationUrl: 'https://gasstation-mainnet.matic.network/v2/',
+        gasStationUrl: 'https://gasstation-mainnet.polygon.technology/v2',
     },
     80001: {
         chainName: 'mumbai',
         chainId: 80001,
         gasMode: GAS_MODE.EIP1559,
-        gasStationUrl: 'https://gasstation-mumbai.matic.today/v2/',
+        gasStationUrl: 'https://gasstation-testnet.polygon.technology/v2',
     },
     42161: {
         chainName: 'arbitrum',

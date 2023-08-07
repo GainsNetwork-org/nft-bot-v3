@@ -1,3 +1,4 @@
+import {pack} from '@gainsnetwork/sdk'
 export const transformRawTrades = (rawTrades) =>
 	rawTrades?.map(({ trade, tradeInfo, initialAccFees }) => ({
 		trader: trade.trader,
@@ -100,3 +101,7 @@ export const convertTradeInitialAccFees = (initialAccFees) => ({
 		block: parseInt(initialAccFees.borrowing?.block || '0'),
 	},
 });
+
+export const packNft = (a, b, c, d, e, f) => {
+	return pack([a, b, c, d, e, f].map(BigInt), [8, 160, 16, 16, 16, 16].map(BigInt));
+};
