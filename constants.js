@@ -14,7 +14,7 @@ export const NETWORKS = {
         chainName: 'polygon',
         chainId: 137,
         gasMode: GAS_MODE.EIP1559,
-        gasStationUrl: 'https://gasstation-mainnet.polygon.technology/v2',
+        gasStationUrl: 'https://gasstation.polygon.technology/v2',
     },
     80001: {
         chainName: 'mumbai',
