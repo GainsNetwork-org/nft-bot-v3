@@ -27,7 +27,13 @@ export const NETWORKS = {
         chainId: 42161,
         gasMode: GAS_MODE.LEGACY,
         gasStationUrl: undefined,
-    }
+    },
+	421613: {
+		chainName: 'arbitrum_goerli',
+		chainId: 421613,
+		gasMode: GAS_MODE.LEGACY,
+		gasStationUrl: undefined,
+	}
 }
 
 const GROUP_IDS = {
