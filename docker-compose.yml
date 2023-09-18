@@ -10,17 +10,17 @@ services:
     cpus: 1
     mem_limit: 1G
     command: node bot.js
-#  bot-polygon:
-#    environment:
-#      - NODE_ENV=polygon
-#    image: nft_bot
-#    cpus: 1
-#    mem_limit: 1G
-#    command: node bot.js
-#  bot-arbitrum:
-#    environment:
-#      - NODE_ENV=arbitrum
-#    image: nft_bot
-#    cpus: 1
-#    mem_limit: 1G
-#    command: node bot.js
+  bot-polygon:
+    environment:
+      - NODE_ENV=polygon
+    image: nft_bot
+    cpus: 1
+    mem_limit: 1G
+    command: node bot.js
+  bot-arbitrum:
+    environment:
+      - NODE_ENV=arbitrum
+    image: nft_bot
+    cpus: 1
+    mem_limit: 1G
+    command: node bot.js
