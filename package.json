@@ -12,7 +12,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@gainsnetwork/sdk": "^0.0.30-rc7",
+    "@gainsnetwork/sdk": "^0.0.33",
     "dotenv": "^16.0.1",
     "ethcall": "^4.8.13",
     "ethers": "^5.7.2",
@@ -21,8 +21,5 @@
     "web3": "^1.7.5",
     "winston": "^3.8.1",
     "ws": "^8.8.1"
-  },
-  "devDependencies": {
-    "cross-env": "^7.0.3"
   }
 }
