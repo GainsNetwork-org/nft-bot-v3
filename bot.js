@@ -14,24 +14,25 @@ import {
 	withinMaxGroupOi,
 	getBaseSpreadP,
 	getSpreadWithPriceImpactP,
+	pairs as pairsList
 } from "@gainsnetwork/sdk";
 import Web3 from "web3";
 import { WebSocket } from "ws";
 import { DateTime } from "luxon";
 import fetch from "node-fetch";
 import { Contract, Provider } from "ethcall";
-import { createLogger } from "./logger.js";
-import { default as abis } from "./abis.js";
-import { NonceManager } from "./NonceManager.js";
-import { GAS_MODE, CHAIN_IDS, NETWORKS, isStocksGroup, isForexGroup, isIndicesGroup, isCommoditiesGroup } from "./constants.js";
+import { createLogger } from "./requires/logger.js";
+import { default as abis } from "./requires/abis.js";
+import { NonceManager } from "./requires/NonceManager.js";
+import { GAS_MODE, CHAIN_IDS, NETWORKS, isStocksGroup, isForexGroup, isIndicesGroup, isCommoditiesGroup } from "./requires/constants.js";
 import {
 	transformRawTrades,
 	buildTradeIdentifier,
 	transformLastUpdated,
 	convertOpenInterest,
 	convertTrade, convertTradeInfo, convertTradeInitialAccFees,
-	packNft
-} from "./utils.js";
+	packNft, processPairs, getPriceChanges
+} from "./requires/utils.js";
 
 // Make errors JSON serializable
 Object.defineProperty(Error.prototype, 'toJSON', {
@@ -66,7 +67,6 @@ const appLogger = createLogger('BOT', process.env.LOG_LEVEL);
 let executionStats = {
 	startTime: new Date()
 };
-
 // -----------------------------------------
 // 2. GLOBAL VARIABLES
 // -----------------------------------------
@@ -77,7 +77,7 @@ let allowedLink = {storage: false, rewards: false}, currentlySelectedWeb3ClientI
 	spreadsP = [], openInterests = [], collaterals = [], pairs = [], pairParams = [], pairRolloverFees = [], pairFundingFees = [], maxNegativePnlOnOpenP = 0,
 	canExecuteTimeout = 0, knownOpenTrades = null, tradesLastUpdated  = new Map(), triggeredOrders = new Map(), pairMaxLeverage = new Map(),
 	storageContract, tradingContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract, borrowingFeesContract,
-	maxTradesPerPair = 0, linkContract, pairInfosContract, gasPriceBn = new Web3.utils.BN(0.1 * 1e9), triggerRetries = new Map();
+	maxTradesPerPair = 0, linkContract, pairInfosContract, gasPriceBn = new Web3.utils.BN(0.1 * 1e9), triggerRetries = new Map(), pairsToIndex = processPairs(pairsList), lastPrices = {};
 
 // --------------------------------------------
 // 3. INIT ENV VARS & CHECK LINK ALLOWANCE
@@ -1267,18 +1267,30 @@ function watchPricingStream() {
 			return;
 		}
 
+		const pairPrices = new Map();
 		const messageData = JSON.parse(msg.data.toString());
 
-		// If there's only one element in the array then it's a timestamp
-		if (messageData.length === 1) {
-			// Checkpoint ts at index 0
-			// const checkpoint = messageData[0]
-			return;
-		}
 
-		const pairPrices = new Map();
-		for (let i = 0; i < messageData.length; i += 2) {
-			pairPrices.set(messageData[i], messageData[i + 1]);
+		// Default pricing	feed
+		if (Array.isArray(messageData)) {
+
+			// If there's only one element in the array then it's a timestamp
+			if (messageData.length === 1) {
+				// Checkpoint ts at index 0
+				// const checkpoint = messageData[0]
+				return;
+			}
+
+			for (let i = 0; i < messageData.length; i += 2) {
+				pairPrices.set(messageData[i], messageData[i + 1]);
+			}
+		} else {
+			// Oracle medianizer feed
+			getPriceChanges(lastPrices, pairsToIndex, messageData, pairPrices);
+			lastPrices = {...lastPrices, ...messageData}
+
+			if(pairPrices.size === 0)
+				return;
 		}
 
 		pricingUpdatesMessageProcessingCount++;
