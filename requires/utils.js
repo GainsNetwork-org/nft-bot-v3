@@ -105,3 +105,24 @@ export const convertTradeInitialAccFees = (initialAccFees) => ({
 export const packNft = (a, b, c, d, e, f) => {
 	return pack([a, b, c, d, e, f].map(BigInt), [8, 160, 16, 16, 16, 16].map(BigInt));
 };
+
+
+export const processPairs = (pairList) => {
+	const pairsToIndex = new Map();
+	Object.keys(pairList).forEach((pair, index) => {
+		pairsToIndex.set(pair, index);
+	});
+
+	return pairsToIndex;
+}
+
+
+export const getPriceChanges = (lastPrices, pairsToIndex, data, pairPrices) => {
+	for (const [pair, price] of Object.entries(data)) {
+		if (lastPrices[pair] !== price) {
+			const pIndex = pairsToIndex.get(pair);
+			if(pIndex)
+				pairPrices.set(pIndex, price);
+		}
+	}
+}
