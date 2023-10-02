@@ -23,7 +23,6 @@ import { Contract, Provider } from "ethcall";
 import { createLogger } from "./logger.js";
 import { default as abis } from "./abis.js";
 import { NonceManager } from "./NonceManager.js";
-import { NFTManager } from "./NftManager.js";
 import { GAS_MODE, CHAIN_IDS, NETWORKS, isStocksGroup, isForexGroup, isIndicesGroup, isCommoditiesGroup } from "./constants.js";
 import {
 	transformRawTrades,
@@ -76,7 +75,7 @@ let allowedLink = {storage: false, rewards: false}, currentlySelectedWeb3ClientI
 	eventSubTrading = null, eventSubCallbacks = null, eventSubPairInfos = null, eventSubBorrowingFeesContext = {vault: null, borrowing: null},
 	web3Clients = [], priorityTransactionMaxPriorityFeePerGas = 50, standardTransactionGasFees = { maxFee: 31, maxPriorityFee: 31 },
 	spreadsP = [], openInterests = [], collaterals = [], pairs = [], pairParams = [], pairRolloverFees = [], pairFundingFees = [], maxNegativePnlOnOpenP = 0,
-	canExecuteTimeout = 0, knownOpenTrades = null, tradesLastUpdated  = new Map(), triggeredOrders = new Map(), pairMaxLeverage = new Map(),
+	knownOpenTrades = null, tradesLastUpdated  = new Map(), triggeredOrders = new Map(), pairMaxLeverage = new Map(),
 	storageContract, tradingContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract, borrowingFeesContract,
 	maxTradesPerPair = 0, linkContract, pairInfosContract, gasPriceBn = new Web3.utils.BN(0.1 * 1e9), triggerRetries = new Map();
 
@@ -228,7 +227,6 @@ async function setCurrentWeb3Client(newWeb3ClientIndex){
 	}
 
 	await Promise.all([
-		nftManager.loadNfts(),
 		nonceManager.initialize(),
 		startFetchingLatestGasPricesPromise,
 	]);
@@ -343,11 +341,6 @@ const nonceManager = new NonceManager(
 	() => currentlySelectedWeb3Client,
 	createLogger('NONCE_MANAGER', process.env.LOG_LEVEL));
 
-const nftManager = new NFTManager(
-	process.env.STORAGE_ADDRESS,
-	() => currentlySelectedWeb3Client,
-	createLogger('NFT_MANAGER', process.env.LOG_LEVEL));
-
 for(var web3ProviderUrlIndex = 0; web3ProviderUrlIndex < WEB3_PROVIDER_URLS.length; web3ProviderUrlIndex++){
 	web3Clients.push(createWeb3Client(web3ProviderUrlIndex, WEB3_PROVIDER_URLS[web3ProviderUrlIndex]));
 }
@@ -432,7 +425,7 @@ async function startFetchingLatestGasPrices() {
 }
 
 // -----------------------------------------
-// 6. FETCH PAIRS, NFTS, AND NFT TIMELOCK
+// 6. FETCH PAIRS
 // -----------------------------------------
 
 const FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS = (process.env.FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_SEC ?? '').length > 0 ? parseFloat(process.env.FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_SEC) * 1000 : 60 * 1000;
@@ -465,7 +458,6 @@ async function fetchTradingVariables(){
 		currentTradingVariablesFetchPromise = Promise.all([
 			fetchPairs(pairsCount),
 			fetchPairInfos(pairsCount),
-			fetchCanExecuteTimeout(),
 			fetchBorrowingFees()
 		]);
 
@@ -481,10 +473,6 @@ async function fetchTradingVariables(){
 		fetchTradingVariablesTimerId = setTimeout(() => { fetchTradingVariablesTimerId = null; fetchTradingVariables(); }, 2*1000);
 	} finally {
 		currentTradingVariablesFetchPromise = null;
-	}
-
-	async function fetchCanExecuteTimeout() {
-		canExecuteTimeout = await callbacksContract.methods.canExecuteTimeout().call();
 	}
 
 	async function fetchPairs(pairsCount) {
@@ -1414,11 +1402,6 @@ function watchPricingStream() {
 					return;
 				}
 
-				if(!canExecute(lastUpdated, orderType)) {
-					appLogger.warn(`Can't execute trade ${openTradeKey}, timeout has not expired!`);
-					return;
-				}
-
 				const triggeredOrderTrackingInfoIdentifier = buildTriggerIdentifier(
 					trader,
 					pairIndex,
@@ -1444,19 +1427,6 @@ function watchPricingStream() {
 				// it at the same time
 				triggeredOrders.set(triggeredOrderTrackingInfoIdentifier, triggeredOrderDetails);
 
-				// Attempt to lease an available NFT to process this order
-				const availableNft = await nftManager.leaseAvailableNft(currentlySelectedWeb3Client);
-
-				// If there are no more NFTs available, we can stop trying to trigger any other trades
-				if(availableNft === null) {
-					appLogger.warn("No NFTS available; unable to trigger any other trades at this time!");
-
-					// Clear tracking of this trade because we weren't able to actually progress without an NFT
-					triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
-					resetRetryCounter(triggeredOrderTrackingInfoIdentifier);
-
-					return;
-				}
 
 				try {
 					// Make sure the trade is still known to us at this point because it's possible that the trade was
@@ -1468,12 +1438,12 @@ function watchPricingStream() {
 						return;
 					}
 
-					appLogger.info(`🤞 Trying to trigger ${triggeredOrderTrackingInfoIdentifier} order with NFT ${availableNft.id}...`);
+					appLogger.info(`🤞 Trying to trigger ${triggeredOrderTrackingInfoIdentifier}...`);
 
 					try {
 						const orderTransaction = createTransaction({
 							to: tradingContract.options.address,
-							data : tradingContract.methods.executeNftOrder(packNft(orderType, trader, pairIndex, index, availableNft.id, availableNft.type)).encodeABI(),
+							data : tradingContract.methods.executeNftOrder(packNft(orderType, trader, pairIndex, index, 0, 0)).encodeABI(),
 						}, true);
 
 						// NOTE: technically this should execute synchronously because we're supplying all necessary details on
@@ -1501,7 +1471,7 @@ function watchPricingStream() {
 							}
 						}, FAILED_ORDER_TRIGGER_TIMEOUT_MS);
 
-						appLogger.info(`⚡️ Triggered order for ${triggeredOrderTrackingInfoIdentifier} with NFT ${availableNft.id}.`);
+						appLogger.info(`⚡️ Triggered order for ${triggeredOrderTrackingInfoIdentifier}.`);
 					} catch(error) {
 						const executionStatsTriggerErrors = executionStats.triggerErrors ?? {};
 						const errorReason = error.reason ?? "UNKNOWN_TRANSACTION_ERROR";
@@ -1586,28 +1556,8 @@ function watchPricingStream() {
 
 					throw error;
 				}
-				finally {
-					// Always release the NFT back to the NFT manager
-					nftManager.releaseNft(availableNft);
-				}
 			}));
 		}
-	}
-
-	function canExecute(lastUpdated, ot) {
-		// Liquidations can always execute
-		if(ot === ORDER_TYPE.LIQ)
-			return true;
-
-		const block = ot === ORDER_TYPE.LIMIT ?
-			lastUpdated.limit : ot === ORDER_TYPE.SL ?
-			lastUpdated.sl : lastUpdated.tp;
-
-		// We -1 the target block because the transaction we submit will be mined in latestBlock+1 (or later)
-		// eg. lastUpdated was @ 123455, current block 123456 and timeout of 2, making the valid execution block 123457:
-		// Then we can execute at currentBlock of 123456 because the transaction will be mined at block 123457 or
-		// later depending on congestions/gas settings.
-		return parseInt(block) + parseInt(canExecuteTimeout) - 1 <= latestL2Block;
 	}
 
 	function getTradeLiquidationPrice(tradeKey, trade) {
@@ -1658,10 +1608,13 @@ watchPricingStream();
 // ------------------------------------------
 
 if(AUTO_HARVEST_MS > 0){
-	async function claimTokens(){
+	async function claimRewards(){
+		if(!process.env.ORACLE_ADDRESS)
+			return;
+
 		const tx = createTransaction({
 			to : nftRewardsContract.options.address,
-			data : nftRewardsContract.methods.claimTokens().encodeABI(),
+			data : nftRewardsContract.methods.claimRewards(process.env.ORACLE_ADDRESS).encodeABI(),
 		});
 
 
@@ -1676,46 +1629,13 @@ if(AUTO_HARVEST_MS > 0){
 		};
 	}
 
-	async function claimPoolTokens(){
-		let currentRound = await nftRewardsContract.methods.currentRound().call();
-		currentRound = parseFloat(currentRound.toString());
-
-		if(currentRound === 0) {
-			appLogger.info("Current round is 0, skipping claimPoolTokens for now.");
-
-			return;
-		}
-
-		const fromRound = currentRound < 101 ? 0 : currentRound-101;
-		const toRound =  currentRound - 1;
-
-		const tx = createTransaction({
-			to : nftRewardsContract.options.address,
-			data : nftRewardsContract.methods.claimPoolTokens(fromRound, toRound).encodeABI(),
-		});
-
-
-		try {
-			const signed = await currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
-
-			await currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction)
-
-			appLogger.info("Pool Tokens claimed.");
-		} catch (error) {
-			appLogger.error("Claim pool tokens transaction failed!", error);
-		}
-	}
 
 	setInterval(async () => {
 		appLogger.info("Harvesting rewards...");
 
 		try
 		{
-			await Promise.all(
-				[
-					claimTokens(),
-					claimPoolTokens()
-				]);
+			await claimRewards();
 		} catch (error) {
 			appLogger.error("Harvesting rewards failed unexpectedly!", error);
 		}
@@ -1756,7 +1676,7 @@ function getTransactionGasFees(network, isPriority = false) {
 			maxFeePerGas: isPriority ? MAX_FEE_PER_GAS_WEI_HEX: Web3.utils.toHex(standardTransactionGasFees.maxFee*1e9),
 		};
 	} else if (network.gasMode === GAS_MODE.LEGACY) {
-		const priorityMultiplier = isPriority ? 125 : 120;
+		const priorityMultiplier = 400;
 
 		return {
 			gasPrice: Web3.utils.toHex(gasPriceBn.mul(Web3.utils.toBN(priorityMultiplier)).div(Web3.utils.toBN(100)))

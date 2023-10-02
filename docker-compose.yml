@@ -1,0 +1,29 @@
+version: '2.4'
+services:
+  bot-mumbai:
+    environment:
+      - NODE_ENV=mumbai
+    image: nft_bot
+    build:
+      context: .
+      dockerfile: Dockerfile
+    cpus: 1
+    mem_limit: 1G
+    command: node bot.js
+    restart: unless-stopped
+  bot-polygon:
+    environment:
+      - NODE_ENV=polygon
+    image: nft_bot
+    cpus: 1
+    mem_limit: 1G
+    command: node bot.js
+    restart: unless-stopped
+  bot-arbitrum:
+    environment:
+      - NODE_ENV=arbitrum
+    image: nft_bot
+    cpus: 1
+    mem_limit: 1G
+    command: node bot.js
+    restart: unless-stopped
