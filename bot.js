@@ -75,7 +75,7 @@ let allowedLink = {storage: false, rewards: false}, currentlySelectedWeb3ClientI
 	eventSubTrading = null, eventSubCallbacks = null, eventSubPairInfos = null, eventSubBorrowingFeesContext = {vault: null, borrowing: null},
 	web3Clients = [], priorityTransactionMaxPriorityFeePerGas = 50, standardTransactionGasFees = { maxFee: 31, maxPriorityFee: 31 },
 	spreadsP = [], openInterests = [], collaterals = [], pairs = [], pairParams = [], pairRolloverFees = [], pairFundingFees = [], maxNegativePnlOnOpenP = 0,
-	canExecuteTimeout = 0, knownOpenTrades = null, tradesLastUpdated  = new Map(), triggeredOrders = new Map(), pairMaxLeverage = new Map(),
+	knownOpenTrades = null, tradesLastUpdated  = new Map(), triggeredOrders = new Map(), pairMaxLeverage = new Map(),
 	storageContract, tradingContract, callbacksContract, vaultContract, pairsStorageContract, nftRewardsContract, borrowingFeesContract,
 	maxTradesPerPair = 0, linkContract, pairInfosContract, gasPriceBn = new Web3.utils.BN(0.1 * 1e9), triggerRetries = new Map();
 
@@ -458,7 +458,6 @@ async function fetchTradingVariables(){
 		currentTradingVariablesFetchPromise = Promise.all([
 			fetchPairs(pairsCount),
 			fetchPairInfos(pairsCount),
-			fetchCanExecuteTimeout(),
 			fetchBorrowingFees()
 		]);
 
@@ -474,10 +473,6 @@ async function fetchTradingVariables(){
 		fetchTradingVariablesTimerId = setTimeout(() => { fetchTradingVariablesTimerId = null; fetchTradingVariables(); }, 2*1000);
 	} finally {
 		currentTradingVariablesFetchPromise = null;
-	}
-
-	async function fetchCanExecuteTimeout() {
-		canExecuteTimeout = await callbacksContract.methods.canExecuteTimeout().call();
 	}
 
 	async function fetchPairs(pairsCount) {
@@ -1407,11 +1402,6 @@ function watchPricingStream() {
 					return;
 				}
 
-				if(!canExecute(lastUpdated, orderType)) {
-					appLogger.warn(`Can't execute trade ${openTradeKey}, timeout has not expired!`);
-					return;
-				}
-
 				const triggeredOrderTrackingInfoIdentifier = buildTriggerIdentifier(
 					trader,
 					pairIndex,
@@ -1570,22 +1560,6 @@ function watchPricingStream() {
 		}
 	}
 
-	function canExecute(lastUpdated, ot) {
-		// Liquidations can always execute
-		if(ot === ORDER_TYPE.LIQ)
-			return true;
-
-		const block = ot === ORDER_TYPE.LIMIT ?
-			lastUpdated.limit : ot === ORDER_TYPE.SL ?
-			lastUpdated.sl : lastUpdated.tp;
-
-		// We -1 the target block because the transaction we submit will be mined in latestBlock+1 (or later)
-		// eg. lastUpdated was @ 123455, current block 123456 and timeout of 2, making the valid execution block 123457:
-		// Then we can execute at currentBlock of 123456 because the transaction will be mined at block 123457 or
-		// later depending on congestions/gas settings.
-		return parseInt(block) + parseInt(canExecuteTimeout) - 1 <= latestL2Block;
-	}
-
 	function getTradeLiquidationPrice(tradeKey, trade) {
 		const { tradeInfo, tradeInitialAccFees, pairIndex } = trade;
 
@@ -1702,7 +1676,7 @@ function getTransactionGasFees(network, isPriority = false) {
 			maxFeePerGas: isPriority ? MAX_FEE_PER_GAS_WEI_HEX: Web3.utils.toHex(standardTransactionGasFees.maxFee*1e9),
 		};
 	} else if (network.gasMode === GAS_MODE.LEGACY) {
-		const priorityMultiplier = isPriority ? 125 : 120;
+		const priorityMultiplier = 400;
 
 		return {
 			gasPrice: Web3.utils.toHex(gasPriceBn.mul(Web3.utils.toBN(priorityMultiplier)).div(Web3.utils.toBN(100)))
