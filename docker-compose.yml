@@ -11,19 +11,49 @@ services:
     mem_limit: 1G
     command: node bot.js
     restart: unless-stopped
+    ports:
+      - '4101:4000'
+    healthcheck:
+      test: [ 'CMD', 'curl', '-f', 'http://localhost:4000/health' ]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
   bot-polygon:
     environment:
       - NODE_ENV=polygon
     image: nft_bot
+    build:
+      context: .
+      dockerfile: Dockerfile
     cpus: 1
     mem_limit: 1G
     command: node bot.js
     restart: unless-stopped
+    ports:
+      - '4102:4000'
+    healthcheck:
+      test: [ 'CMD', 'curl', '-f', 'http://localhost:4000/health' ]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
   bot-arbitrum:
     environment:
       - NODE_ENV=arbitrum
     image: nft_bot
+    build:
+      context: .
+      dockerfile: Dockerfile
     cpus: 1
     mem_limit: 1G
     command: node bot.js
     restart: unless-stopped
+    ports:
+      - '4103:4000'
+    healthcheck:
+      test: [ 'CMD', 'curl', '-f', 'http://localhost:4000/health' ]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

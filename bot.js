@@ -1979,7 +1979,11 @@ function getTransactionGasFees(network, isPriority = false) {
 }
 
 app.get('/health', async (req, res) => {
-  if (!currentlySelectedWeb3Client || !(await currentlySelectedWeb3Client.eth.getGasPrice()))
+  if (
+    currentlySelectedWeb3ClientIndex === -1 ||
+    !currentlySelectedWeb3Client ||
+    !(await currentlySelectedWeb3Client.eth.getGasPrice())
+  )
     res.status(500).send('not ok');
   else res.status(200).send('ok');
 });
