@@ -79,7 +79,7 @@ let executionStats = {
 };
 
 const app = express();
-const port = process.env.PORT || 8000;
+const port = process.env.PORT || 4000;
 // -----------------------------------------
 // 2. GLOBAL VARIABLES
 // -----------------------------------------
