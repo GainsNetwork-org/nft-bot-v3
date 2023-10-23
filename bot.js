@@ -117,7 +117,9 @@ let allowedLink = { storage: false, rewards: false },
   linkContract,
   pairInfosContract,
   gasPriceBn = new Web3.utils.BN(0.1 * 1e9),
-  triggerRetries = new Map();
+  triggerRetries = new Map(),
+  lastPricingMsg = Date.now(),
+  pricingUpdatesMessageProcessingCount = 0;
 
 // --------------------------------------------
 // 3. INIT ENV VARS & CHECK LINK ALLOWANCE
@@ -463,6 +465,8 @@ setInterval(() => {
 
   executionStats = {
     ...executionStats,
+    lastPricingMsg,
+    pricingUpdatesMessageProcessingCount,
     uptime: DateTime.now()
       .diff(DateTime.fromJSDate(executionStats.startTime), ['days', 'hours', 'minutes', 'seconds'])
       .toFormat("d'd'h'h'm'm's's'"),
@@ -1438,7 +1442,7 @@ function watchPricingStream() {
   appLogger.info('Connecting to pricing stream...');
 
   let socket = new WebSocket(process.env.PRICES_URL);
-  let pricingUpdatesMessageProcessingCount = 0;
+  pricingUpdatesMessageProcessingCount = 0;
 
   socket.onopen = () => {
     appLogger.info('Pricing stream connected.');
@@ -1502,6 +1506,7 @@ function watchPricingStream() {
     }
 
     pricingUpdatesMessageProcessingCount++;
+    lastPricingMsg = Date.now();
 
     handleOnMessageAsync()
       .catch((error) => {
