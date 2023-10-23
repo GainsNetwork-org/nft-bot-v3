@@ -1496,7 +1496,8 @@ function watchPricingStream() {
     // If there's only one element in the array then it's a timestamp
     if (messageData.length === 1) {
       // Checkpoint ts at index 0
-      // const checkpoint = messageData[0]
+      const checkpoint = messageData[0];
+      appLogger.debug(`Pricing checkpoint is ${checkpoint}; local ${Date.now()}`);
       return;
     }
 
