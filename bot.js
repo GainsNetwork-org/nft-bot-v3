@@ -12,7 +12,6 @@ import {
   fetchOpenPairTradesRaw,
   getLiquidationPrice,
   withinMaxGroupOi,
-  getBaseSpreadP,
   getSpreadWithPriceImpactP,
   getCurrentOiWindowId,
 } from '@gainsnetwork/sdk';
@@ -24,7 +23,18 @@ import { Contract, Provider } from 'ethcall';
 import { createLogger } from './logger.js';
 import { default as abis } from './abis.js';
 import { NonceManager } from './NonceManager.js';
-import { GAS_MODE, CHAIN_IDS, NETWORKS, isStocksGroup, isForexGroup, isIndicesGroup, isCommoditiesGroup } from './constants.js';
+import {
+  GAS_MODE,
+  CHAIN_IDS,
+  NETWORKS,
+  isStocksGroup,
+  isForexGroup,
+  isIndicesGroup,
+  isCommoditiesGroup,
+  MAX_OPEN_NEGATIVE_PNL_P,
+  COLLATERAL_CONFIG,
+  COLLATERAL,
+} from './constants.js';
 import {
   transformRawTrades,
   buildTradeIdentifier,
@@ -80,38 +90,38 @@ let executionStats = {
 // 2. GLOBAL VARIABLES
 // -----------------------------------------
 
+const TEST_COLLAT_KEY = 'tDAI';
+
 let allowedLink = { storage: false, rewards: false },
   currentlySelectedWeb3ClientIndex = -1,
   currentlySelectedWeb3Client = null,
   eventSubTrading = null,
   eventSubCallbacks = null,
-  eventSubPairInfos = null,
   eventSubBorrowingFeesContext = { vault: null, borrowing: null },
   web3Clients = [],
   priorityTransactionMaxPriorityFeePerGas = 50,
   standardTransactionGasFees = { maxFee: 31, maxPriorityFee: 31 },
   spreadsP = [],
   openInterests = [],
-  collaterals = [],
   pairs = [],
-  pairParams = [],
-  pairRolloverFees = [],
-  pairFundingFees = [],
-  maxNegativePnlOnOpenP = 0,
+  pairDepths = [],
   knownOpenTrades = null,
   tradesLastUpdated = new Map(),
   triggeredOrders = new Map(),
   pairMaxLeverage = new Map(),
+  multiCollatContract, // skipping diamond name for sake of brevity
+  collateralContracts = {
+    DAI: { storage: null, trading: null, callbacks: null, vault: null, nftRewards: null, borrowingFees: null, aggregator: null },
+  },
   storageContract,
+  aggregatorContract, // for token price
   tradingContract,
   callbacksContract,
   vaultContract,
-  pairsStorageContract,
   nftRewardsContract,
   borrowingFeesContract,
   maxTradesPerPair = 0,
   linkContract,
-  pairInfosContract,
   gasPriceBn = new Web3.utils.BN(0.1 * 1e9),
   triggerRetries = new Map(),
   oiWindows = {},
@@ -153,10 +163,10 @@ const MAX_FEE_PER_GAS_WEI_HEX =
   MAX_RETRIES = process.env.MAX_RETRIES && !isNaN(+process.env.MAX_RETRIES) ? parseInt(process.env.MAX_RETRIES) : -1;
 
 const CHAIN_ID = process.env.CHAIN_ID !== undefined ? parseInt(process.env.CHAIN_ID, 10) : CHAIN_IDS.POLYGON; // Polygon chain id
-const NETWORK_ID = process.env.NETWORK_ID !== undefined ? parseInt(process.env.NETWORK_ID, 10) : CHAIN_ID;
 const CHAIN = process.env.CHAIN ?? 'mainnet';
 const NETWORK = NETWORKS[CHAIN_ID];
 const TRADE_TYPE = { MARKET: 0, LIMIT: 1 };
+
 const borrowingFeesContext = {
   groups: [],
   pairs: [],
@@ -223,6 +233,7 @@ async function setCurrentWeb3Client(newWeb3ClientIndex) {
   const executionStartTime = performance.now();
   const newWeb3Client = web3Clients[newWeb3ClientIndex];
 
+  multiCollatContract = new newWeb3Client.eth.Contract(abis.MULTI_COLLAT_DIAMOND, process.env.MULTI_COLLAT_DIAMOND_ADDRESS);
   storageContract = new newWeb3Client.eth.Contract(abis.STORAGE, process.env.STORAGE_ADDRESS);
 
   // Retrieve all necessary details from the storage contract
@@ -237,18 +248,17 @@ async function setCurrentWeb3Client(newWeb3ClientIndex) {
   callbacksContract = new newWeb3Client.eth.Contract(abis.CALLBACKS, callbacksAddress);
   tradingContract = new newWeb3Client.eth.Contract(abis.TRADING, tradingAddress);
   vaultContract = new newWeb3Client.eth.Contract(abis.VAULT, vaultAddress);
-  pairInfosContract = new newWeb3Client.eth.Contract(abis.PAIR_INFOS, process.env.PAIR_INFOS_ADDRESS);
+  // pairInfosContract = new newWeb3Client.eth.Contract(abis.PAIR_INFOS, process.env.PAIR_INFOS_ADDRESS);  @todo remove
 
-  const aggregatorContract = new newWeb3Client.eth.Contract(abis.AGGREGATOR, aggregatorAddress);
+  aggregatorContract = new newWeb3Client.eth.Contract(abis.AGGREGATOR, aggregatorAddress);
 
-  const [pairsStorageAddress, nftRewardsAddress, borrowingFeesAddress] = await Promise.all([
-    aggregatorContract.methods.pairsStorage().call(),
+  const [nftRewardsAddress, borrowingFeesAddress] = await Promise.all([
     callbacksContract.methods.nftRewards().call(),
     callbacksContract.methods.borrowingFees().call(),
   ]);
 
   borrowingFeesContract = new newWeb3Client.eth.Contract(abis.BORROWING_FEES, borrowingFeesAddress);
-  pairsStorageContract = new newWeb3Client.eth.Contract(abis.PAIRS_STORAGE, pairsStorageAddress);
+  // pairsStorageContract = new newWeb3Client.eth.Contract(abis.PAIRS_STORAGE, pairsStorageAddress);   @todo remove
   nftRewardsContract = new newWeb3Client.eth.Contract(abis.NFT_REWARDS, nftRewardsAddress);
 
   linkContract = new newWeb3Client.eth.Contract(abis.LINK, linkAddress);
@@ -497,7 +507,7 @@ async function fetchTradingVariables() {
 
   const executionStart = performance.now();
 
-  const pairsCount = await pairsStorageContract.methods.pairsCount().call();
+  const pairsCount = await multiCollatContract.methods.pairsCount().call();
 
   if (currentTradingVariablesFetchPromise !== null) {
     appLogger.warn(`A current fetchTradingVariables call was already in progress, just awaiting that...`);
@@ -538,34 +548,25 @@ async function fetchTradingVariables() {
     let pairsPromises = new Array(pairsCount);
 
     for (var i = 0; i < pairsCount; i++) {
-      pairsPromises[i] = pairsStorageContract.methods.pairsBackend(i).call();
+      pairsPromises[i] = multiCollatContract.methods.pairsBackend(i).call();
     }
 
     pairs = await Promise.all(pairsPromises);
     const newSpreadsP = new Array(pairs.length);
     const newOpenInterests = new Array(pairs.length);
-    const newCollaterals = new Array(pairs.length);
 
     await Promise.all(
       pairs.map(async (pair, pairIndex) => {
-        const [openInterestLong, openInterestShort, openInterestMax, collateralLong, collateralShort, collateralMax] = await Promise.all([
+        const [openInterestLong, openInterestShort, openInterestMax] = await Promise.all([
           storageContract.methods.openInterestDai(pairIndex, 0).call(),
           storageContract.methods.openInterestDai(pairIndex, 1).call(),
-          borrowingFeesContract.methods.getPairMaxOi(pairIndex).call(),
-          pairsStorageContract.methods.groupCollateral(pairIndex, true).call(),
-          pairsStorageContract.methods.groupCollateral(pairIndex, false).call(),
-          pairsStorageContract.methods.groupMaxCollateral(pairIndex).call(),
+          borrowingFeesContract.methods.getCollateralPairMaxOi(pairIndex).call(),
         ]);
 
         newOpenInterests[pairIndex] = {
           long: openInterestLong,
           short: openInterestShort,
-          max: parseFloat(openInterestMax) * 1e8 + '',
-        };
-        newCollaterals[pairIndex] = {
-          long: collateralLong,
-          short: collateralShort,
-          max: collateralMax,
+          max: parseFloat(openInterestMax) + '', // already normalized
         };
         newSpreadsP[pairIndex] = pair['0'].spreadP;
       })
@@ -574,48 +575,25 @@ async function fetchTradingVariables() {
     maxTradesPerPair = maxPerPair;
     spreadsP = newSpreadsP;
     openInterests = newOpenInterests;
-    collaterals = newCollaterals;
   }
 
   async function fetchPairInfos(pairsCount) {
-    const [pairInfos, newMaxNegativePnlOnOpenP, maxLeverage] = await Promise.all([
-      pairInfosContract.methods.getPairInfos([...Array(parseInt(pairsCount)).keys()]).call(),
-      pairInfosContract.methods.maxNegativePnlOnOpenP().call(),
-      callbacksContract.methods.getAllPairsMaxLeverage().call(),
+    const [depths, maxLeverage] = await Promise.all([
+      multiCollatContract.methods.getPairDepths([...Array(parseInt(pairsCount)).keys()]).call(), // todo
+      multiCollatContract.methods.getAllPairsRestrictedMaxLeverage().call(),
     ]);
 
     pairMaxLeverage = new Map(maxLeverage.map((l, idx) => [idx, parseInt(l)]));
-
-    pairParams = pairInfos['0'].map((value) => ({
-      onePercentDepthAbove: parseFloat(value.onePercentDepthAbove),
-      onePercentDepthBelow: parseFloat(value.onePercentDepthBelow),
-      rolloverFeePerBlockP: parseFloat(value.rolloverFeePerBlockP) / 1e12,
-      fundingFeePerBlockP: parseFloat(value.fundingFeePerBlockP) / 1e12,
+    pairDepths = depths.map((value) => ({
+      onePercentDepthAboveUsd: value.onePercentDepthAboveUsd,
+      onePercentDepthBelowUsd: value.onePercentDepthBelowUsd,
     }));
-
-    pairRolloverFees = pairInfos['1'].map((value) => ({
-      accPerCollateral: parseFloat(value.accPerCollateral) / 1e18,
-      lastUpdateBlock: parseInt(value.lastUpdateBlock),
-    }));
-
-    pairFundingFees = pairInfos['2'].map((value) => ({
-      accPerOiLong: parseFloat(value.accPerOiLong) / 1e18,
-      accPerOiShort: parseFloat(value.accPerOiShort) / 1e18,
-      lastUpdateBlock: parseInt(value.lastUpdateBlock),
-    }));
-
-    maxNegativePnlOnOpenP = parseFloat(newMaxNegativePnlOnOpenP) / 1e10;
   }
 
   async function fetchBorrowingFees() {
-    const [borrowingFeesInfo, vaultMarketCap] = await Promise.all([
-      borrowingFeesContract.methods.getAllPairs().call(),
-      vaultContract.methods.marketCap().call(),
-    ]);
+    const borrowingFeesInfo = await borrowingFeesContract.methods.getAllPairs().call();
 
     const [borrowingFees, maxOis] = [borrowingFeesInfo['0'], borrowingFeesInfo['1']];
-
-    borrowingFeesContext.vaultMarketCap = parseFloat(vaultMarketCap) / 1e18;
 
     const borrowingFeesPairs = borrowingFees.map((value, idx) => ({
       feePerBlock: parseFloat(value.feePerBlock) / 1e10,
@@ -660,7 +638,7 @@ async function fetchTradingVariables() {
     }));
   }
   async function fetchOiWindows(pairLength) {
-    const { startTs, windowsDuration, windowsCount } = await borrowingFeesContract.methods.getOiWindowsSettings().call();
+    const { startTs, windowsDuration, windowsCount } = await multiCollatContract.methods.getOiWindowsSettings().call();
 
     oiWindowsSettings = {
       startTs: parseFloat(startTs),
@@ -676,10 +654,10 @@ async function fetchTradingVariables() {
     const oiWindowsTemp = (
       await Promise.all(
         [...Array(parseInt(pairLength)).keys()].map((_, pairIndex) =>
-          borrowingFeesContract.methods
+          multiCollatContract.methods
             .getOiWindows(oiWindowsSettings.windowsDuration, pairIndex, windowsToCheck)
             .call()
-            .then((r) => r.map((w) => ({ long: w.long, short: w.short })))
+            .then((r) => r.map((w) => ({ oiLongUsd: w.oiLongUsd, oiShortUsd: w.oiShortUsd })))
         )
       )
     ).map((pairWindows) => pairWindows.reduce((acc, curr, i) => ({ ...acc, [windowsToCheck[i]]: curr }), {}));
@@ -692,8 +670,8 @@ async function fetchTradingVariables() {
 // 8. LOAD OPEN TRADES
 // -----------------------------------------
 
-function buildTriggerIdentifier(trader, pairIndex, index, limitType) {
-  return `trigger://${trader}/${pairIndex}/${index}[lt=${limitType}]`;
+function buildTriggerIdentifier(collateral, trader, pairIndex, index, limitType) {
+  return `trigger://${collateral}/${trader}/${pairIndex}/${index}[lt=${limitType}]`;
 }
 
 let fetchOpenTradesRetryTimerId = null;
@@ -716,7 +694,10 @@ async function fetchOpenTrades() {
     const newOpenTrades = new Map(
       openLimitOrders
         .concat(pairTrades)
-        .map((trade) => [buildTradeIdentifier(trade.trader, trade.pairIndex, trade.index, trade.openPrice === undefined), trade])
+        .map((trade) => [
+          buildTradeIdentifier(TEST_COLLAT_KEY, trade.trader, trade.pairIndex, trade.index, trade.openPrice === undefined),
+          trade,
+        ])
     );
 
     const newTradesLastUpdated = new Map(await populateTradesLastUpdated(openLimitOrders, pairTrades, USE_MULTICALL));
@@ -785,9 +766,9 @@ async function fetchOpenTrades() {
 
     const ethersProvider = new ethers.providers.WebSocketProvider(currentlySelectedWeb3Client.currentProvider.connection._url);
 
-    const ethersPairsStorage = new ethers.Contract(
-      pairsStorageContract.options.address,
-      pairsStorageContract.options.jsonInterface,
+    const ethersMultiCollat = new ethers.Contract(
+      multiCollatContract.options.address,
+      multiCollatContract.options.jsonInterface,
       ethersProvider
     );
     const ethersStorage = new ethers.Contract(storageContract.options.address, storageContract.options.jsonInterface, ethersProvider);
@@ -796,12 +777,14 @@ async function fetchOpenTrades() {
       borrowingFeesContract.options.jsonInterface,
       ethersProvider
     );
+    const ethersCallbacks = new ethers.Contract(callbacksContract.options.address, callbacksContract.options.jsonInterface, ethersProvider);
 
     const openTradesRaw = await fetchOpenPairTradesRaw(
       {
-        gnsPairsStorageV6: ethersPairsStorage,
+        gnsMultiCollatDiamond: ethersMultiCollat,
         gfarmTradingStorageV5: ethersStorage,
         gnsBorrowingFees: ethersBorrowingFees,
+        gnsTradingCallbacks: ethersCallbacks,
       },
       {
         useMulticall: USE_MULTICALL,
@@ -809,7 +792,7 @@ async function fetchOpenTrades() {
       }
     );
 
-    const allOpenPairTrades = transformRawTrades(openTradesRaw);
+    const allOpenPairTrades = transformRawTrades(openTradesRaw); // @todo handle the transform, include tradeData?
 
     appLogger.info(`Fetched ${allOpenPairTrades.length} new open pair trade(s).`);
 
@@ -859,7 +842,7 @@ async function fetchOpenTrades() {
     }
 
     appLogger.info(`Fetched last updated info for ${tLastUpdated.length + olLastUpdated.length} trade(s).`);
-    return transformLastUpdated(openLimitOrders, olLastUpdated, pairTrades, tLastUpdated);
+    return transformLastUpdated(TEST_COLLAT_KEY, openLimitOrders, olLastUpdated, pairTrades, tLastUpdated);
   }
 }
 
@@ -928,23 +911,6 @@ function watchLiveTradingEvents() {
       }
     });
 
-    if (eventSubPairInfos === null) {
-      eventSubPairInfos = pairInfosContract.events.allEvents({ fromBlock: 'latest' }).on('data', (event) => {
-        const eventName = event.event;
-
-        if (eventName !== 'AccFundingFeesStored') {
-          return;
-        }
-
-        // If no confirmation delay, then execute immediately without timer
-        if (EVENT_CONFIRMATIONS_MS === 0) {
-          refreshPairFundingFees(event);
-        } else {
-          setTimeout(() => refreshPairFundingFees(event));
-        }
-      });
-    }
-
     if (eventSubBorrowingFeesContext.borrowing !== null && eventSubBorrowingFeesContext.borrowing.id !== null) {
       eventSubBorrowingFeesContext.borrowing.unsubscribe();
     }
@@ -1001,7 +967,7 @@ async function synchronizeOpenTrades(event) {
     if (eventName === 'OpenLimitCanceled') {
       const { trader, pairIndex, index } = eventReturnValues;
 
-      const tradeKey = buildTradeIdentifier(trader, pairIndex, index, true);
+      const tradeKey = buildTradeIdentifier(TEST_COLLAT_KEY, trader, pairIndex, index, true);
       const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
 
       if (existingKnownOpenTrade !== undefined) {
@@ -1032,7 +998,7 @@ async function synchronizeOpenTrades(event) {
         limitOrder.type = type;
         limitOrder.maxSlippageP = parseFloat(tradeData.maxSlippageP.toString()) / 1e10 || 1;
 
-        const tradeKey = buildTradeIdentifier(trader, pairIndex, index, true);
+        const tradeKey = buildTradeIdentifier(TEST_COLLAT_KEY, trader, pairIndex, index, true);
 
         if (currentKnownOpenTrades.has(tradeKey)) {
           appLogger.verbose(`Synchronize open trades from event ${eventName}: Updating open limit order for ${tradeKey}`);
@@ -1050,30 +1016,27 @@ async function synchronizeOpenTrades(event) {
       const [trade, tradeInfo, tradeInitialAccFees, lastUpdated] = await Promise.all([
         storageContract.methods.openTrades(trader, pairIndex, index).call(),
         storageContract.methods.openTradesInfo(trader, pairIndex, index).call(),
-        borrowingFeesContract.methods.getTradeInitialAccFees(trader, pairIndex, index).call(),
+        borrowingFeesContract.methods.initialAccFees(trader, pairIndex, index).call(),
         fetchTradeLastUpdated(trader, pairIndex, index, TRADE_TYPE.MARKET),
       ]);
 
       trade.tradeInfo = tradeInfo;
       trade.tradeInitialAccFees = convertTradeInitialAccFees({
-        rollover: tradeInitialAccFees.otherFees[0],
-        funding: tradeInitialAccFees.otherFees[1],
-        openedAfterUpdate: tradeInitialAccFees.otherFees[2],
         borrowing: {
-          accPairFee: tradeInitialAccFees.borrowingFees[0],
-          accGroupFee: tradeInitialAccFees.borrowingFees[1],
-          block: tradeInitialAccFees.borrowingFees[2],
+          accPairFee: tradeInitialAccFees.accPairFee,
+          accGroupFee: tradeInitialAccFees.accGroupFee,
+          block: tradeInitialAccFees.block,
         },
       });
 
-      const tradeKey = buildTradeIdentifier(trader, pairIndex, index, false);
+      const tradeKey = buildTradeIdentifier(TEST_COLLAT_KEY, trader, pairIndex, index, false);
       tradesLastUpdated.set(tradeKey, lastUpdated);
       currentKnownOpenTrades.set(tradeKey, trade);
 
       appLogger.verbose(`Synchronize open trades from event ${eventName}: Updated trade ${tradeKey}`);
     } else if (eventName === 'MarketCloseCanceled') {
       const { trader, pairIndex, index } = eventReturnValues;
-      const tradeKey = buildTradeIdentifier(trader, pairIndex, index, false);
+      const tradeKey = buildTradeIdentifier(TEST_COLLAT_KEY, trader, pairIndex, index, false);
 
       const trade = await storageContract.methods.openTrades(trader, pairIndex, index).call();
 
@@ -1082,19 +1045,16 @@ async function synchronizeOpenTrades(event) {
         // Fetch all fresh trade information to update known open trades
         const [tradeInfo, tradeInitialAccFees, lastUpdated] = await Promise.all([
           storageContract.methods.openTradesInfo(trader, pairIndex, index).call(),
-          borrowingFeesContract.methods.getTradeInitialAccFees(trader, pairIndex, index).call(),
+          borrowingFeesContract.methods.initialAccFees(trader, pairIndex, index).call(),
           fetchTradeLastUpdated(trader, pairIndex, index, TRADE_TYPE.MARKET),
         ]);
 
         trade.tradeInfo = tradeInfo;
         trade.tradeInitialAccFees = convertTradeInitialAccFees({
-          rollover: tradeInitialAccFees.otherFees[0],
-          funding: tradeInitialAccFees.otherFees[1],
-          openedAfterUpdate: tradeInitialAccFees.otherFees[2],
           borrowing: {
-            accPairFee: tradeInitialAccFees.borrowingFees[0],
-            accGroupFee: tradeInitialAccFees.borrowingFees[1],
-            block: tradeInitialAccFees.borrowingFees[2],
+            accPairFee: tradeInitialAccFees.accPairFee,
+            accGroupFee: tradeInitialAccFees.accGroupFee,
+            block: tradeInitialAccFees.block,
           },
         });
 
@@ -1114,7 +1074,7 @@ async function synchronizeOpenTrades(event) {
       const { trader, pairIndex, index } = trade;
 
       if (eventName === 'LimitExecuted') {
-        const openTradeKey = buildTradeIdentifier(trader, pairIndex, limitIndex, true);
+        const openTradeKey = buildTradeIdentifier(TEST_COLLAT_KEY, trader, pairIndex, limitIndex, true);
 
         if (currentKnownOpenTrades.has(openTradeKey)) {
           appLogger.verbose(`Synchronize open trades from event ${eventName}: Removed open limit trade ${openTradeKey}.`);
@@ -1127,29 +1087,26 @@ async function synchronizeOpenTrades(event) {
           );
         }
 
-        resetRetryCounter(buildTriggerIdentifier(trader, pairIndex, limitIndex, 3));
+        resetRetryCounter(buildTriggerIdentifier(TEST_COLLAT_KEY, trader, pairIndex, limitIndex, 3));
       }
 
       const [tradeInfo, tradeInitialAccFees, lastUpdated] = await Promise.all([
         storageContract.methods.openTradesInfo(trader, pairIndex, index).call(),
-        borrowingFeesContract.methods.getTradeInitialAccFees(trader, pairIndex, index).call(),
+        borrowingFeesContract.methods.initialAccFees(trader, pairIndex, index).call(),
         fetchTradeLastUpdated(trader, pairIndex, index, TRADE_TYPE.MARKET),
       ]);
 
-      const tradeKey = buildTradeIdentifier(trader, pairIndex, index, false);
+      const tradeKey = buildTradeIdentifier(TEST_COLLAT_KEY, trader, pairIndex, index, false);
 
       tradesLastUpdated.set(tradeKey, lastUpdated);
       currentKnownOpenTrades.set(tradeKey, {
         ...trade,
         tradeInfo,
         tradeInitialAccFees: convertTradeInitialAccFees({
-          rollover: tradeInitialAccFees.otherFees[0],
-          funding: tradeInitialAccFees.otherFees[1],
-          openedAfterUpdate: tradeInitialAccFees.otherFees[2],
           borrowing: {
-            accPairFee: tradeInitialAccFees.borrowingFees[0],
-            accGroupFee: tradeInitialAccFees.borrowingFees[1],
-            block: tradeInitialAccFees.borrowingFees[2],
+            accPairFee: tradeInitialAccFees.accPairFee,
+            accGroupFee: tradeInitialAccFees.accGroupFee,
+            block: tradeInitialAccFees.block,
           },
         }),
       });
@@ -1157,17 +1114,23 @@ async function synchronizeOpenTrades(event) {
       appLogger.info(`Synchronize open trades from event ${eventName}: Stored active trade ${tradeKey}`);
 
       // reset any known SL/TP/LIQ counters
-      resetRetryCounter(buildTriggerIdentifier(trader, pairIndex, index, 0));
-      resetRetryCounter(buildTriggerIdentifier(trader, pairIndex, index, 1));
-      resetRetryCounter(buildTriggerIdentifier(trader, pairIndex, index, 2));
+      resetRetryCounter(buildTriggerIdentifier(TEST_COLLAT_KEY, trader, pairIndex, index, 0));
+      resetRetryCounter(buildTriggerIdentifier(TEST_COLLAT_KEY, trader, pairIndex, index, 1));
+      resetRetryCounter(buildTriggerIdentifier(TEST_COLLAT_KEY, trader, pairIndex, index, 2));
     } else if (
       (eventName === 'MarketExecuted' && eventReturnValues.open === false) ||
       (eventName === 'LimitExecuted' && eventReturnValues.orderType !== '3')
     ) {
       const { trader, pairIndex, index } = eventReturnValues.t;
-      const tradeKey = buildTradeIdentifier(trader, pairIndex, index, false);
+      const tradeKey = buildTradeIdentifier(TEST_COLLAT_KEY, trader, pairIndex, index, false);
 
-      const triggeredOrderTrackingInfoIdentifier = buildTriggerIdentifier(trader, pairIndex, index, eventReturnValues.orderType ?? 'N/A');
+      const triggeredOrderTrackingInfoIdentifier = buildTriggerIdentifier(
+        TEST_COLLAT_KEY,
+        trader,
+        pairIndex,
+        index,
+        eventReturnValues.orderType ?? 'N/A'
+      );
 
       appLogger.info(`Synchronize open trades from event ${eventName}: event received for ${triggeredOrderTrackingInfoIdentifier}...`);
 
@@ -1238,17 +1201,6 @@ async function synchronizeOpenTrades(event) {
   }
 }
 
-async function refreshPairFundingFees(event) {
-  const pairIndex = parseInt(event.returnValues.pairIndex, 10);
-  const newPairFundingFees = await pairInfosContract.methods.pairFundingFees(pairIndex).call();
-
-  pairFundingFees[pairIndex] = {
-    accPerOiLong: newPairFundingFees.accPerOiLong / 1e18,
-    accPerOiShort: newPairFundingFees.accPerOiShort / 1e18,
-    lastUpdateBlock: parseInt(newPairFundingFees.lastUpdateBlock),
-  };
-}
-
 async function handleBorrowingFeesEvent(event) {
   try {
     if (event.event === 'PairAccFeesUpdated') {
@@ -1279,15 +1231,16 @@ async function handleBorrowingFeesEvent(event) {
         groupBorrowingFees.oiLong = parseFloat(oiLong) / 1e10;
         groupBorrowingFees.oiShort = parseFloat(oiShort) / 1e10;
       }
-    } else if (event.event === 'PairMaxOiUpdated') {
+    } else if (event.event === 'PairParamsUpdated') {
       const { pairIndex, maxOi } = event.returnValues;
 
-      openInterests[pairIndex].max = parseFloat(maxOi) * 1e8 + '';
+      openInterests[pairIndex].max = parseFloat(maxOi) * 1e8 + ''; // @todo normalize this, mul by precision delta etc
       borrowingFeesContext.pairs[pairIndex].maxOi = parseFloat(maxOi) / 1e10;
     } else if (event.event === 'PriceImpactOpenInterestAdded') {
-      const { pairIndex, windowId, long, openInterest } = event.returnValues.oiWindowUpdate;
+      // @todo Edit OIWindows events
+      const { pairIndex, windowId, long, openInterestUsd } = event.returnValues.oiWindowUpdate;
 
-      increaseWindowOi(oiWindows, pairIndex, windowId, long, openInterest);
+      increaseWindowOi(oiWindows, pairIndex, windowId, long, openInterestUsd);
     } else if (event.event === 'PriceImpactOpenInterestRemoved') {
       const { oiWindowUpdate, notOutdated } = event.returnValues;
       decreaseWindowOi(
@@ -1295,7 +1248,7 @@ async function handleBorrowingFeesEvent(event) {
         oiWindowUpdate.pairIndex,
         oiWindowUpdate.windowId,
         oiWindowUpdate.long,
-        oiWindowUpdate.openInterest,
+        oiWindowUpdate.openInterestUsd,
         notOutdated
       );
     } else if (event.event === 'PriceImpactOiTransferredPairs') {
@@ -1406,7 +1359,7 @@ function watchPricingStream() {
           if (price === undefined) return;
 
           const isPendingOpenLimitOrder = openTrade.openPrice === undefined;
-          const openTradeKey = buildTradeIdentifier(trader, pairIndex, index, isPendingOpenLimitOrder);
+          const openTradeKey = buildTradeIdentifier(TEST_COLLAT_KEY, trader, pairIndex, index, isPendingOpenLimitOrder);
 
           // Under certain conditions (forex/stock market just opened, server restart, etc) the price is not
           // available, so we need to make sure we skip any processing in that case
@@ -1424,7 +1377,7 @@ function watchPricingStream() {
 
             const tp = parseFloat(openTrade.tp) / 1e10;
             const sl = parseFloat(openTrade.sl) / 1e10;
-            liqPrice = getTradeLiquidationPrice(openTradeKey, openTrade);
+            liqPrice = getTradeLiquidationPrice(openTrade);
 
             if (tp !== 0 && ((buy && price >= tp) || (!buy && price <= tp))) {
               orderType = 0;
@@ -1438,16 +1391,13 @@ function watchPricingStream() {
           } else {
             const posDai = parseFloat(openTrade.leverage) * parseFloat(openTrade.positionSize);
 
-            const baseSpreadP = getBaseSpreadP(parseFloat(spreadsP[pairIndex]) / 1e10 / 100, parseInt(openTrade.spreadReductionP) / 100);
-
             const spreadWithPriceImpactP =
               getSpreadWithPriceImpactP(
-                baseSpreadP,
+                parseFloat(spreadsP[pairIndex]) / 1e10 / 100,
                 openTrade.buy,
-                openTrade.positionSize / 1e18,
+                openTrade.positionSize / 1e18, // @todo, div by collat precision, multiply by collat price
                 openTrade.leverage,
-                pairParams[openTrade.pairIndex],
-                convertOpenInterest(openInterests[pairIndex]),
+                pairDepths[openTrade.pairIndex],
                 oiWindowsSettings,
                 oiWindows[openTrade.pairIndex]
               ) * 100;
@@ -1455,15 +1405,10 @@ function watchPricingStream() {
             const interestDai = buy
               ? parseFloat(openInterests[openTrade.pairIndex].long)
               : parseFloat(openInterests[openTrade.pairIndex].short);
-            const collateralDai = buy
-              ? parseFloat(collaterals[openTrade.pairIndex].long)
-              : parseFloat(collaterals[openTrade.pairIndex].short);
 
             const newInterestDai = interestDai + posDai;
-            const newCollateralDai = collateralDai + parseFloat(openTrade.positionSize);
 
             const maxInterestDai = parseFloat(openInterests[openTrade.pairIndex].max);
-            const maxCollateralDai = parseFloat(collaterals[openTrade.pairIndex].max);
 
             const minPrice = parseFloat(openTrade.minPrice) / 1e10;
             const maxPrice = parseFloat(openTrade.maxPrice) / 1e10;
@@ -1471,9 +1416,8 @@ function watchPricingStream() {
             if (
               isValidLeverage(openTrade.pairIndex, parseFloat(openTrade.leverage)) &&
               newInterestDai <= maxInterestDai &&
-              newCollateralDai <= maxCollateralDai &&
-              spreadWithPriceImpactP * openTrade.leverage <= maxNegativePnlOnOpenP &&
-              withinMaxGroupOi(openTrade.pairIndex, buy, posDai / 1e18, borrowingFeesContext) &&
+              spreadWithPriceImpactP * openTrade.leverage <= MAX_OPEN_NEGATIVE_PNL_P &&
+              withinMaxGroupOi(openTrade.pairIndex, buy, posDai / 1e18, borrowingFeesContext) && // @todo div by precision
               spreadWithPriceImpactP <= openTrade.maxSlippageP
             ) {
               const tradeType = openTrade.type;
@@ -1518,7 +1462,7 @@ function watchPricingStream() {
             return;
           }
 
-          const triggeredOrderTrackingInfoIdentifier = buildTriggerIdentifier(trader, pairIndex, index, orderType);
+          const triggeredOrderTrackingInfoIdentifier = buildTriggerIdentifier(TEST_COLLAT_KEY, trader, pairIndex, index, orderType);
 
           // Make sure this order hasn't already been triggered
           if (triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
@@ -1702,15 +1646,12 @@ function watchPricingStream() {
     }
   };
 
-  function getTradeLiquidationPrice(tradeKey, trade) {
+  function getTradeLiquidationPrice(trade) {
     const { tradeInfo, tradeInitialAccFees, pairIndex } = trade;
 
     return getLiquidationPrice(convertTrade(trade), convertTradeInfo(tradeInfo), tradeInitialAccFees, {
       currentBlock: latestL2Block,
-      pairParams: pairParams[pairIndex],
-      pairFundingFees: pairFundingFees[pairIndex],
       openInterest: convertOpenInterest(openInterests[pairIndex]),
-      pairRolloverFees: pairRolloverFees[pairIndex],
       // Borrowing Fees
       pairs: borrowingFeesContext.pairs,
       groups: borrowingFeesContext.groups,
