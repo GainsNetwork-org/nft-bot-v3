@@ -1,6 +1,9 @@
 import { pack } from '@gainsnetwork/sdk';
-export const transformRawTrades = (rawTrades) =>
+import Web3 from 'web3';
+import { CHAIN_IDS, NETWORKS } from '../constants/index.js';
+export const transformRawTrades = (rawTrades, collateral) =>
   rawTrades?.map(({ trade, tradeInfo, initialAccFees }) => ({
+    collateral,
     trader: trade.trader,
     pairIndex: trade.pairIndex.toString(),
     index: trade.index.toString(),
@@ -17,7 +20,7 @@ export const transformRawTrades = (rawTrades) =>
       tpLastUpdated: tradeInfo.tpLastUpdated.toString(),
       slLastUpdated: tradeInfo.slLastUpdated.toString(),
     },
-    tradeData: {},
+    tradeData: {}, // not needed for anything
     tradeInitialAccFees: {
       borrowing: {
         accPairFee: initialAccFees.borrowing.accPairFee / 1e10,
@@ -27,7 +30,7 @@ export const transformRawTrades = (rawTrades) =>
     },
   }));
 
-export const buildTradeIdentifier = (collateral, trader, pairIndex, index, isPendingOpenLimitOrder) => {
+export const buildTradeIdentifier = (collateral, trader, pairIndex, index, isPendingOpenLimitOrder, log = true) => {
   if (isPendingOpenLimitOrder === undefined) {
     throw new Error('isPendingOpenLimitOrder was passed as undefined!');
   }
@@ -35,14 +38,14 @@ export const buildTradeIdentifier = (collateral, trader, pairIndex, index, isPen
   return `trade://${collateral}/${trader}/${pairIndex}/${index}?isOpenLimit=${isPendingOpenLimitOrder}`;
 };
 
-export const transformLastUpdated = (collateral, ol, olLastUpdated, t, tLastUpdated) => {
+export const transformLastUpdated = (ol, olLastUpdated, t, tLastUpdated) => {
   return [
     ...olLastUpdated.map((l, i) => [
-      buildTradeIdentifier(collateral, ol[i].trader, ol[i].pairIndex, ol[i].index, true),
+      buildTradeIdentifier(ol[i].collateral, ol[i].trader, ol[i].pairIndex, ol[i].index, true),
       { sl: l.sl, tp: l.tp, limit: l.limit },
     ]),
     ...tLastUpdated.map((l, i) => [
-      buildTradeIdentifier(collateral, t[i].trader, t[i].pairIndex, t[i].index, false),
+      buildTradeIdentifier(t[i].collateral, t[i].trader, t[i].pairIndex, t[i].index, false),
       { sl: l.sl, tp: l.tp, limit: l.limit },
     ]),
   ];
@@ -90,14 +93,14 @@ export const packNft = (a, b, c, d, e, f) => {
 
 // OI Windows
 // 1e18 USD normalized
-export const convertOpenCollateral = (collateral) => ({
-  oiLongUsd: parseFloat(collateral.oiLongUsd) / 1e18, //
-  oiShortUsd: parseFloat(collateral.oiShortUsd) / 1e18,
+export const convertOiWindow = (oiWindow) => ({
+  oiLongUsd: parseFloat(oiWindow.oiLongUsd) / 1e18,
+  oiShortUsd: parseFloat(oiWindow.oiShortUsd) / 1e18,
 });
 
 export const convertOiWindows = (oiWindows) => {
   return oiWindows.map((pairWindows) =>
-    Object.fromEntries(Object.entries(pairWindows).map(([key, oiWindow]) => [key, convertOpenCollateral(oiWindow)]))
+    Object.fromEntries(Object.entries(pairWindows).map(([key, oiWindow]) => [key, convertOiWindow(oiWindow)]))
   );
 };
 
@@ -153,3 +156,38 @@ export const updateWindowsDuration = (oiWindowsSettings, windowsDuration) => {
 export const updateWindowsCount = (oiWindowsSettings, windowsCount) => {
   oiWindowsSettings.windowsCount = parseFloat(windowsCount);
 };
+
+export const appConfig = () => {
+  const conf = {
+    MAX_FEE_PER_GAS_WEI_HEX:
+      (process.env.MAX_GAS_PRICE_GWEI ?? '').length > 0 ? Web3.utils.toHex(parseInt(process.env.MAX_GAS_PRICE_GWEI, 10) * 1e9) : 0,
+    MAX_GAS_PER_TRANSACTION_HEX: Web3.utils.toHex(parseInt(process.env.MAX_GAS_PER_TRANSACTION, 10)),
+    EVENT_CONFIRMATIONS_MS: parseFloat(process.env.EVENT_CONFIRMATIONS_SEC) * 1000,
+    AUTO_HARVEST_MS: parseFloat(process.env.AUTO_HARVEST_SEC) * 1000,
+    FAILED_ORDER_TRIGGER_TIMEOUT_MS: parseFloat(process.env.FAILED_ORDER_TRIGGER_TIMEOUT_SEC || '60') * 1000,
+    PRIORITY_GWEI_MULTIPLIER: parseFloat(process.env.PRIORITY_GWEI_MULTIPLIER),
+    MIN_PRIORITY_GWEI: parseFloat(process.env.MIN_PRIORITY_GWEI),
+    COLLATERAL_PRICE_REFRESH_INTERVAL_MS: parseFloat(process.env.COLLATERAL_PRICE_REFRESH_INTERVAL_SEC || '5') * 1000,
+    OPEN_TRADES_REFRESH_MS: parseFloat(process.env.OPEN_TRADES_REFRESH_SEC || '120') * 1000,
+    GAS_REFRESH_INTERVAL_MS: parseFloat(process.env.GAS_REFRESH_INTERVAL_SEC || '3') * 1000,
+    WEB3_STATUS_REPORT_INTERVAL_MS: parseFloat(process.env.WEB3_STATUS_REPORT_INTERVAL_SEC || '30') * 1000,
+    USE_MULTICALL: (process.env.USE_MULTICALL && process.env.USE_MULTICALL === 'true') || false,
+    MAX_RETRIES: process.env.MAX_RETRIES && !isNaN(+process.env.MAX_RETRIES) ? parseInt(process.env.MAX_RETRIES) : -1,
+    WEB3_PROVIDER_URLS: process.env.WSS_URLS.split(','),
+    CHAIN_ID: process.env.CHAIN_ID !== undefined ? parseInt(process.env.CHAIN_ID, 10) : CHAIN_IDS.POLYGON,
+    CHAIN: process.env.CHAIN ?? 'mainnet',
+    DRY_RUN_MODE: process.env.DRY_RUN_MODE === 'true',
+    FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS: parseFloat(process.env.FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_SEC || '61') * 1000,
+  };
+
+  const NETWORK = NETWORKS[conf.CHAIN_ID];
+
+  return {
+    ...conf,
+    NETWORK,
+  };
+};
+
+export * from './logger.js';
+export * from './NonceManager.js';
+export * from './multiCollateral.js';

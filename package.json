@@ -5,8 +5,8 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node bot.js",
-    "start:dev": "npx cross-env NODE_ENV=development node bot.js",
+    "start": "node src/bot.js",
+    "start:dev": "npx cross-env NODE_ENV=development node src/bot.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
