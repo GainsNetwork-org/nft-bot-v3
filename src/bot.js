@@ -361,6 +361,7 @@ setInterval(() => {
 
   executionStats = {
     ...executionStats,
+    lastNonce: nonceManager.getLastNonce(),
     uptime: DateTime.now()
       .diff(DateTime.fromJSDate(executionStats.startTime), ['days', 'hours', 'minutes', 'seconds'])
       .toFormat("d'd'h'h'm'm's's'"),
