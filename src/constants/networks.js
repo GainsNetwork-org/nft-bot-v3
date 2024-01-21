@@ -45,17 +45,16 @@ export const NETWORKS = {
         storage: '0xaee4d11a16B2bc65EDD6416Fb626EB404a6D65BD',
         trading: '0xb0901FEaD3112f6CaF9353ec5c36DC3DdE111F61',
       },
-      // @todo uncomment when stacks are released
-      // {
-      //   collateral: COLLATERAL.WETH,
-      //   storage: '0xE7712ebcd451919B38Be8fD102800A496C5BeD4E',
-      //   trading: '0xa3151BF6Eef2dcF2fA1Fdc115C5150167bDfc6b6',
-      // },
-      // {
-      //   collateral: COLLATERAL.USDC,
-      //   storage: '0xC504C9C30B9d88cBc9704Fc2d06a08A4c7bE9378',
-      //   trading: '0x79d0521d5cAc0335fFa56b2849466cbB564d7f2D',
-      // },
+      {
+        collateral: COLLATERAL.WETH,
+        storage: '0xE7712ebcd451919B38Be8fD102800A496C5BeD4E',
+        trading: '0xa3151BF6Eef2dcF2fA1Fdc115C5150167bDfc6b6',
+      },
+      {
+        collateral: COLLATERAL.USDC,
+        storage: '0xC504C9C30B9d88cBc9704Fc2d06a08A4c7bE9378',
+        trading: '0x79d0521d5cAc0335fFa56b2849466cbB564d7f2D',
+      },
     ],
   },
   [CHAIN_IDS.MUMBAI]: {
@@ -94,17 +93,16 @@ export const NETWORKS = {
         storage: '0xcFa6ebD475d89dB04cAd5A756fff1cb2BC5bE33c',
         trading: '0x2c7e82641f03Fa077F88833213210A86027f15dc',
       },
-      // @todo uncomment when stacks are released
-      // {
-      //   collateral: COLLATERAL.WETH,
-      //   storage: '0xFe54a9A1C2C276cf37C56CeeE30737FDc6dA4d27',
-      //   trading: '0x48B07695c41AaC54CC35F56AF25573dd19235c6f',
-      // },
-      // {
-      //   collateral: COLLATERAL.USDC,
-      //   storage: '0x3B09fCa4cC6b140fDd364f28db830ccE01Fd60fD',
-      //   trading: '0x2FE799d81FDfCC441093eaB52Af788d4Cc6Ff650',
-      // },
+      {
+        collateral: COLLATERAL.WETH,
+        storage: '0xFe54a9A1C2C276cf37C56CeeE30737FDc6dA4d27',
+        trading: '0x48B07695c41AaC54CC35F56AF25573dd19235c6f',
+      },
+      {
+        collateral: COLLATERAL.USDC,
+        storage: '0x3B09fCa4cC6b140fDd364f28db830ccE01Fd60fD',
+        trading: '0x2FE799d81FDfCC441093eaB52Af788d4Cc6Ff650',
+      },
     ],
   },
 };
