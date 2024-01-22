@@ -238,9 +238,14 @@ async function setCurrentWeb3Client(newWeb3ClientIndex) {
   fetchTradingVariables();
   fetchOpenTrades();
 
-  app.collaterals.map(async (collat) => {
+  app.collaterals.map(async (collat, index) => {
+    appLogger.info(`[${collat}] Queing LINK approval checks`);
+
     const stack = app.stacks[collat];
-    checkContractApprovals(stack, [stack.contracts.storage.options.address, stack.contracts.nftRewards.options.address]);
+
+    setTimeout(() => {
+      checkContractApprovals(stack, [stack.contracts.storage.options.address, stack.contracts.nftRewards.options.address]);
+    }, index * 500 + 1000);
   });
 
   appLogger.info('New web3 client selection completed. Took: ' + (performance.now() - executionStartTime) + 'ms');
