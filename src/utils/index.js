@@ -39,6 +39,8 @@ export const buildTradeIdentifier = (collateral, trader, pairIndex, index, isPen
 };
 
 export const transformLastUpdated = (ol, olLastUpdated, t, tLastUpdated) => {
+  if (!olLastUpdated?.length || !tLastUpdated?.length) return [[], []];
+
   return [
     ...olLastUpdated.map((l, i) => [
       buildTradeIdentifier(ol[i].collateral, ol[i].trader, ol[i].pairIndex, ol[i].index, true),

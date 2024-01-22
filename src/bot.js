@@ -593,7 +593,7 @@ async function fetchTradingVariables() {
 
         const [borrowingFeesGroups, groupExponents] = [borrowingFeesGroupsInfo['0'], borrowingFeesGroupsInfo['1']];
         app.stacks[collat].borrowingFeesContext.pairs = borrowingFeesPairs;
-        app.stacks[collat].borrowingFeesContext.groups = borrowingFeesGroups.map((value, idx) => ({
+        app.stacks[collat].borrowingFeesContext.groups = borrowingFeesGroups?.map((value, idx) => ({
           oiLong: parseFloat(value.oiLong) / 1e10,
           oiShort: parseFloat(value.oiShort) / 1e10,
           feePerBlock: parseFloat(value.feePerBlock) / 1e10,
@@ -857,7 +857,7 @@ async function fetchOpenTrades() {
       }
     }
 
-    appLogger.info(`Fetched last updated info for ${tLastUpdated.length + olLastUpdated.length} trade(s).`);
+    appLogger.info(`Fetched last updated info for ${tLastUpdated?.length + olLastUpdated?.length || 0} trade(s).`);
     return transformLastUpdated(openLimitOrders, olLastUpdated, pairTrades, tLastUpdated);
   }
 }
