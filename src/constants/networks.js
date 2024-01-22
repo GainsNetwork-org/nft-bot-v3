@@ -57,30 +57,6 @@ export const NETWORKS = {
       },
     ],
   },
-  [CHAIN_IDS.MUMBAI]: {
-    chainName: 'mumbai',
-    chainId: CHAIN_IDS.MUMBAI,
-    gasMode: GAS_MODE.EIP1559,
-    gasStationUrl: 'https://gasstation-testnet.polygon.technology/v2',
-    multiCollatDiamondAddress: '0xDee93dD1Cb54ce80D690eC07a20CB0ce9d7F741C',
-    supportedCollaterals: [
-      {
-        collateral: COLLATERAL.DAI,
-        storage: '0x4d2dF485c608aa55A23d8d98dD2B4FA24Ba0f2Cf',
-        trading: '0x194aa2bbb5f98eddffda9f7b37cb78319f56cd0b',
-      },
-      {
-        collateral: COLLATERAL.WETH,
-        storage: '0x989DF13f4feE478cAc463CCCDB784Aa36108aB37',
-        trading: '0x31369228781Bf2FDe2117506c25e69A5c360F52A',
-      },
-      {
-        collateral: COLLATERAL.USDC,
-        storage: '0x13ed64798DfC826f6384F226913509e18662ab0B',
-        trading: '0xF52EDAB4fd86332529AE3E05206e9375ddc7a0FD',
-      },
-    ],
-  },
   [CHAIN_IDS.ARBITRUM]: {
     chainName: 'arbitrum',
     chainId: CHAIN_IDS.ARBITRUM,
@@ -102,6 +78,30 @@ export const NETWORKS = {
         collateral: COLLATERAL.USDC,
         storage: '0x3B09fCa4cC6b140fDd364f28db830ccE01Fd60fD',
         trading: '0x2FE799d81FDfCC441093eaB52Af788d4Cc6Ff650',
+      },
+    ],
+  },
+  [CHAIN_IDS.MUMBAI]: {
+    chainName: 'mumbai',
+    chainId: CHAIN_IDS.MUMBAI,
+    gasMode: GAS_MODE.EIP1559,
+    gasStationUrl: 'https://gasstation-testnet.polygon.technology/v2',
+    multiCollatDiamondAddress: '0xDee93dD1Cb54ce80D690eC07a20CB0ce9d7F741C',
+    supportedCollaterals: [
+      {
+        collateral: COLLATERAL.DAI,
+        storage: '0x4d2dF485c608aa55A23d8d98dD2B4FA24Ba0f2Cf',
+        trading: '0x194aa2bbb5f98eddffda9f7b37cb78319f56cd0b',
+      },
+      {
+        collateral: COLLATERAL.WETH,
+        storage: '0x989DF13f4feE478cAc463CCCDB784Aa36108aB37',
+        trading: '0x31369228781Bf2FDe2117506c25e69A5c360F52A',
+      },
+      {
+        collateral: COLLATERAL.USDC,
+        storage: '0x13ed64798DfC826f6384F226913509e18662ab0B',
+        trading: '0xF52EDAB4fd86332529AE3E05206e9375ddc7a0FD',
       },
     ],
   },
