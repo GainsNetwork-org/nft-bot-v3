@@ -9,7 +9,7 @@ services:
       dockerfile: Dockerfile
     cpus: 1
     mem_limit: 1G
-    command: node bot.js
+    command: node src/bot.js
     restart: unless-stopped
   bot-polygon:
     environment:
@@ -17,7 +17,7 @@ services:
     image: nft_bot
     cpus: 1
     mem_limit: 1G
-    command: node bot.js
+    command: node src/bot.js
     restart: unless-stopped
   bot-arbitrum:
     environment:
@@ -25,5 +25,5 @@ services:
     image: nft_bot
     cpus: 1
     mem_limit: 1G
-    command: node bot.js
+    command: node src/bot.js
     restart: unless-stopped
