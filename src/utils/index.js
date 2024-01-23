@@ -107,7 +107,7 @@ export const convertOiWindows = (oiWindows) => {
 };
 
 export const increaseWindowOi = (oiWindows, pairIndex, windowId, long, openInterest) => {
-  if (!oiWindows[pairIndex][windowId]) oiWindows[pairIndex][windowId] = { oiLongUsd: 0, oiShortUsd: 0 };
+  if (!oiWindows[pairIndex]?.[windowId]) oiWindows[pairIndex][windowId] = { oiLongUsd: 0, oiShortUsd: 0 };
 
   const oi = parseFloat(openInterest) / 1e18;
 
