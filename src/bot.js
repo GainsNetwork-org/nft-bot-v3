@@ -1287,7 +1287,7 @@ async function handleBorrowingFeesEvent(stack, event) {
       const { pairIndex, maxOi } = event.returnValues;
 
       if (stack.openInterests[pairIndex] === undefined) {
-        appLogger.warn('Cannot process PairParamsUpdated event for pairIndex ${pairIndex}. Contract parameters not yet loaded.');
+        appLogger.warn(`Cannot process PairParamsUpdated event for pairIndex ${pairIndex}. Contract parameters not yet loaded.`);
         return;
       }
       stack.openInterests[pairIndex].max = (parseFloat(maxOi) * stack.collateralConfig.precision) / 1e10 + '';
