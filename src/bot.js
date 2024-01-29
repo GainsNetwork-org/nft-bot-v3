@@ -139,7 +139,6 @@ const app = {
   gas: {
     priorityTransactionMaxPriorityFeePerGas: 50,
     standardTransactionGasFees: { maxFee: 31, maxPriorityFee: 31 },
-
     gasPriceBn: new Web3.utils.BN(0.1 * 1e9),
   },
 };
@@ -201,6 +200,10 @@ async function setCurrentWeb3Client(newWeb3ClientIndex) {
     throw Error('Missing `multiCollatDiamondAddress` network configuration.');
   }
 
+  // update selected index here to prevent race conditions on arbitrum
+  const wasFirstClientSelection = app.currentlySelectedWeb3Client === null;
+  app.currentlySelectedWeb3ClientIndex = newWeb3ClientIndex;
+
   app.multiCollatContract = new newWeb3Client.eth.Contract(abis.MULTI_COLLAT_DIAMOND, NETWORK.multiCollatDiamondAddress);
 
   const supportedCollaterals = [];
@@ -216,10 +219,7 @@ async function setCurrentWeb3Client(newWeb3ClientIndex) {
   }
   app.collaterals = supportedCollaterals;
 
-  const wasFirstClientSelection = app.currentlySelectedWeb3Client === null;
-
   // Update the globally selected provider with this new provider
-  app.currentlySelectedWeb3ClientIndex = newWeb3ClientIndex;
   app.currentlySelectedWeb3Client = newWeb3Client;
 
   // Subscribe to events using the new provider
@@ -360,7 +360,7 @@ setInterval(() => {
     appLogger.warn('No Web3 client has been selected yet!');
   } else {
     appLogger.info(
-      `Current Web3 Client: ${app.currentlySelectedWeb3Client.currentProvider.url} (#${app.currentlySelectedWeb3ClientIndex})`
+      `Current Web3 Client: ${app.currentlySelectedWeb3Client?.currentProvider?.url} (#${app.currentlySelectedWeb3ClientIndex})`
     );
   }
 
