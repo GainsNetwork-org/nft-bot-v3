@@ -139,7 +139,6 @@ const app = {
   gas: {
     priorityTransactionMaxPriorityFeePerGas: 50,
     standardTransactionGasFees: { maxFee: 31, maxPriorityFee: 31 },
-
     gasPriceBn: new Web3.utils.BN(0.1 * 1e9),
   },
 };
@@ -201,6 +200,10 @@ async function setCurrentWeb3Client(newWeb3ClientIndex) {
     throw Error('Missing `multiCollatDiamondAddress` network configuration.');
   }
 
+  // update selected index here to prevent race conditions on arbitrum
+  const wasFirstClientSelection = app.currentlySelectedWeb3Client === null;
+  app.currentlySelectedWeb3ClientIndex = newWeb3ClientIndex;
+
   app.multiCollatContract = new newWeb3Client.eth.Contract(abis.MULTI_COLLAT_DIAMOND, NETWORK.multiCollatDiamondAddress);
 
   const supportedCollaterals = [];
@@ -216,10 +219,7 @@ async function setCurrentWeb3Client(newWeb3ClientIndex) {
   }
   app.collaterals = supportedCollaterals;
 
-  const wasFirstClientSelection = app.currentlySelectedWeb3Client === null;
-
   // Update the globally selected provider with this new provider
-  app.currentlySelectedWeb3ClientIndex = newWeb3ClientIndex;
   app.currentlySelectedWeb3Client = newWeb3Client;
 
   // Subscribe to events using the new provider
@@ -360,7 +360,7 @@ setInterval(() => {
     appLogger.warn('No Web3 client has been selected yet!');
   } else {
     appLogger.info(
-      `Current Web3 Client: ${app.currentlySelectedWeb3Client.currentProvider.url} (#${app.currentlySelectedWeb3ClientIndex})`
+      `Current Web3 Client: ${app.currentlySelectedWeb3Client?.currentProvider?.url} (#${app.currentlySelectedWeb3ClientIndex})`
     );
   }
 
@@ -445,7 +445,7 @@ async function startFetchingLatestGasPrices() {
       if (NETWORK.gasMode === GAS_MODE.EIP1559) {
         // TODO: Add support for EIP1159 provider fetching here
       } else if (NETWORK.gasMode === GAS_MODE.LEGACY) {
-        app.gasPriceBn = new BN(await app.currentlySelectedWeb3Client.eth.getGasPrice());
+        app.gas.gasPriceBn = new BN(await app.currentlySelectedWeb3Client.eth.getGasPrice());
       }
     }
   }
@@ -1287,7 +1287,7 @@ async function handleBorrowingFeesEvent(stack, event) {
       const { pairIndex, maxOi } = event.returnValues;
 
       if (stack.openInterests[pairIndex] === undefined) {
-        appLogger.warn('Cannot process PairParamsUpdated event for pairIndex ${pairIndex}. Contract parameters not yet loaded.');
+        appLogger.warn(`Cannot process PairParamsUpdated event for pairIndex ${pairIndex}. Contract parameters not yet loaded.`);
         return;
       }
       stack.openInterests[pairIndex].max = (parseFloat(maxOi) * stack.collateralConfig.precision) / 1e10 + '';
@@ -1788,7 +1788,7 @@ function getTransactionGasFees(network, isPriority = false) {
     };
   } else if (NETWORK.gasMode === GAS_MODE.LEGACY) {
     return {
-      gasPrice: toHex(app.gas.gasPriceBn.mul(BN(400)).div(BN(100))),
+      gasPrice: toHex(app.gas.gasPriceBn.mul(BN(500)).div(BN(100))),
     };
   }
 
