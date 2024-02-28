@@ -445,7 +445,7 @@ async function startFetchingLatestGasPrices() {
       if (NETWORK.gasMode === GAS_MODE.EIP1559) {
         // TODO: Add support for EIP1159 provider fetching here
       } else if (NETWORK.gasMode === GAS_MODE.LEGACY) {
-        app.gasPriceBn = new BN(await app.currentlySelectedWeb3Client.eth.getGasPrice());
+        app.gas.gasPriceBn = new BN(await app.currentlySelectedWeb3Client.eth.getGasPrice());
       }
     }
   }
@@ -1788,7 +1788,7 @@ function getTransactionGasFees(network, isPriority = false) {
     };
   } else if (NETWORK.gasMode === GAS_MODE.LEGACY) {
     return {
-      gasPrice: toHex(app.gas.gasPriceBn.mul(BN(400)).div(BN(100))),
+      gasPrice: toHex(app.gas.gasPriceBn.mul(BN(500)).div(BN(100))),
     };
   }
 
