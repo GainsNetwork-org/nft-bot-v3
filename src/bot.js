@@ -5,15 +5,15 @@
 import dotenv from 'dotenv';
 import ethers from 'ethers';
 import {
-  isStocksOpen,
+  fetchOpenPairTradesRaw,
+  getCurrentOiWindowId,
+  getLiquidationPrice,
+  getSpreadWithPriceImpactP,
+  isCommoditiesOpen,
   isForexOpen,
   isIndicesOpen,
-  isCommoditiesOpen,
-  fetchOpenPairTradesRaw,
-  getLiquidationPrice,
+  isStocksOpen,
   withinMaxGroupOi,
-  getSpreadWithPriceImpactP,
-  getCurrentOiWindowId,
 } from '@gainsnetwork/sdk';
 import Web3 from 'web3';
 import { WebSocket } from 'ws';
@@ -23,34 +23,37 @@ import { Contract, Provider } from 'ethcall';
 import {
   ABIS as abis,
   GAS_MODE,
-  isStocksGroup,
+  isCommoditiesGroup,
   isForexGroup,
   isIndicesGroup,
-  isCommoditiesGroup,
+  isStocksGroup,
   MAX_OPEN_NEGATIVE_PNL_P,
+  PENDING_ORDER_TYPE,
   TRADE_TYPE,
 } from './constants/index.js';
 import {
-  NonceManager,
-  createLogger,
-  transformRawTrades,
+  appConfig,
   buildTradeIdentifier,
-  transformLastUpdated,
-  convertOpenInterest,
+  convertOiWindows,
   convertTrade,
   convertTradeInfo,
   convertTradeInitialAccFees,
-  packNft,
-  convertOiWindows,
-  increaseWindowOi,
+  createLogger,
   decreaseWindowOi,
-  transferOiWindows,
-  updateWindowsDuration,
-  updateWindowsCount,
-  appConfig,
-  initStack,
   getEthersContract,
+  increaseWindowOi,
+  initContracts,
+  NonceManager,
+  packTrigger,
+  transferOiWindows,
+  transformFrom1e10,
+  transformOi,
+  transformRawTrade,
+  transformRawTrades,
+  updateWindowsCount,
+  updateWindowsDuration,
 } from './utils/index.js';
+
 const { toHex, BN } = Web3.utils;
 
 // Make errors JSON serializable
@@ -119,12 +122,16 @@ const app = {
   currentlySelectedWeb3Client: null,
   web3Clients: [],
   // contracts
-  collaterals: [],
-  stacks: {},
-  multiCollatContract: null,
-  eventSubs: {},
+  collaterals: {},
+  diamond: null,
+  contracts: {
+    diamond: null,
+    link: null,
+  },
+  eventSub: null,
   // params
   spreadsP: [],
+  borrowingFeesContext: {}, // { collateralIndex: { groups: [], pairs: [] } }
   oiWindows: {},
   oiWindowsSettings: { startTs: 0, windowsDuration: 0, windowsCount: 0 },
   blocks: {
@@ -133,9 +140,9 @@ const app = {
   },
   // storage/tracking
   knownOpenTrades: null,
-  tradesLastUpdated: new Map(),
   triggeredOrders: new Map(),
   triggerRetries: new Map(),
+  allowedLink: false,
   gas: {
     priorityTransactionMaxPriorityFeePerGas: 50,
     standardTransactionGasFees: { maxFee: 31, maxPriorityFee: 31 },
@@ -149,39 +156,44 @@ if (!NETWORK) {
   throw new Error(`Invalid chain id: ${CHAIN_ID}`);
 }
 
-async function checkLinkAllowance(stack, contract) {
+async function checkLinkAllowance(contractAddress) {
   try {
-    const link = stack.contracts.link;
-    const allowance = await link.methods.allowance(process.env.PUBLIC_KEY, contract).call();
-    const key = contract === stack.contracts.storage.options.address ? 'storage' : 'rewards';
+    const link = app.contracts.link;
+
+    if (!link) {
+      throw new Error('Link contract not initialized');
+    }
+
+    const allowance = await link.methods.allowance(process.env.PUBLIC_KEY, contractAddress).call();
 
     if (parseFloat(allowance) > 0) {
-      stack.allowedLink[key] = true;
-      appLogger.info(`[${stack.collateral}][${key}] LINK allowance OK.`);
+      app.allowedLink = true;
+      appLogger.info(`LINK allowance OK.`);
     } else {
-      appLogger.info(`[${stack.collateral}][${key}] LINK not allowed, approving now.`);
+      appLogger.info(`LINK not allowed, approving now.`);
 
       const tx = createTransaction({
         to: link.options.address,
-        data: link.methods.approve(contract, '115792089237316195423570985008687907853269984665640564039457584007913129639935').encodeABI(),
+        data: link.methods
+          .approve(contractAddress, '115792089237316195423570985008687907853269984665640564039457584007913129639935')
+          .encodeABI(),
       });
 
       try {
         const signed = await app.currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
-
         await app.currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
 
-        appLogger.info(`[${stack.collateral}][${key}] LINK successfully approved.`);
-        stack.allowedLink[key] = true;
+        appLogger.info(`LINK successfully approved.`);
+        app.allowedLink = true;
       } catch (error) {
-        appLogger.error(`[${stack.collateral}][${key}] LINK approve transaction failed!`, error);
+        appLogger.error(`LINK approve transaction failed!`, error);
 
         throw error;
       }
     }
   } catch {
     setTimeout(() => {
-      checkLinkAllowance(stack, contract);
+      checkLinkAllowance(contractAddress);
     }, 5 * 1000);
   }
 }
@@ -196,28 +208,16 @@ async function setCurrentWeb3Client(newWeb3ClientIndex) {
   const executionStartTime = performance.now();
   const newWeb3Client = app.web3Clients[newWeb3ClientIndex];
 
-  if (!NETWORK.multiCollatDiamondAddress || NETWORK.multiCollatDiamondAddress?.length < 42) {
-    throw Error('Missing `multiCollatDiamondAddress` network configuration.');
+  if (!NETWORK.diamondAddress || NETWORK.diamondAddress?.length < 42) {
+    throw Error('Missing `diamondAddress` network configuration.');
   }
 
   // update selected index here to prevent race conditions on arbitrum
   const wasFirstClientSelection = app.currentlySelectedWeb3Client === null;
   app.currentlySelectedWeb3ClientIndex = newWeb3ClientIndex;
 
-  app.multiCollatContract = new newWeb3Client.eth.Contract(abis.MULTI_COLLAT_DIAMOND, NETWORK.multiCollatDiamondAddress);
-
-  const supportedCollaterals = [];
-  const stacks = await Promise.all(
-    NETWORK.supportedCollaterals.map(async (stackConfig) => {
-      return initStack(newWeb3Client, app.multiCollatContract, stackConfig);
-    })
-  );
-
-  for (const stack of stacks) {
-    supportedCollaterals.push(stack.collateral);
-    app.stacks[stack.collateral] = stack;
-  }
-  app.collaterals = supportedCollaterals;
+  // setup contracts + collateral configs
+  await initContracts(newWeb3Client, app, NETWORK);
 
   // Update the globally selected provider with this new provider
   app.currentlySelectedWeb3Client = newWeb3Client;
@@ -237,24 +237,9 @@ async function setCurrentWeb3Client(newWeb3ClientIndex) {
   // Fire and forget refreshing of data using new provider
   fetchTradingVariables();
   fetchOpenTrades();
-
-  app.collaterals.map(async (collat, index) => {
-    appLogger.info(`[${collat}] Queing LINK approval checks`);
-
-    const stack = app.stacks[collat];
-
-    setTimeout(() => {
-      checkContractApprovals(stack, [stack.contracts.storage.options.address, stack.contracts.nftRewards.options.address]);
-    }, index * 500 + 1000);
-  });
+  checkLinkAllowance(app.contracts.diamond.options.address);
 
   appLogger.info('New web3 client selection completed. Took: ' + (performance.now() - executionStartTime) + 'ms');
-}
-
-async function checkContractApprovals(stack, addresses) {
-  for (const contract of addresses) {
-    await checkLinkAllowance(stack, contract);
-  }
 }
 
 function createWeb3Provider(providerUrl) {
@@ -380,15 +365,15 @@ setInterval(async () => {
     appLogger.warn('No Web3 client has been selected yet, will not refresh collateral prices!');
   } else {
     await Promise.all(
-      app.collaterals.map(async (collat) => {
-        const stack = app.stacks[collat];
-        const price = ((await stack.contracts.aggregator.methods.getCollateralPriceUsd().call()) + '') / 1e8;
+      Object.keys(app.collaterals).map(async (collateralIndex) => {
+        const stack = app.collaterals[collateralIndex];
+        const price = ((await app.contracts.diamond.methods.getCollateralPriceUsd(collateralIndex).call()) + '') / 1e8;
 
         if (isNaN(price)) {
-          appLogger.error(`[${collat}] Collateral Price update returned invalid value`, price);
+          appLogger.error(`[${stack.symbol}] Collateral Price update returned invalid value`, price);
         } else {
           stack.price = price;
-          appLogger.debug(`[${collat}] Price updated to ${price}, ${app.stacks[collat].price}`);
+          appLogger.debug(`[${stack.symbol}] Price updated to ${price}, ${app.collaterals[collateralIndex].price}`);
         }
       })
     );
@@ -470,7 +455,7 @@ async function fetchTradingVariables() {
 
   const executionStart = performance.now();
 
-  const pairsCount = await app.multiCollatContract.methods.pairsCount().call();
+  const pairsCount = await app.contracts.diamond.methods.pairsCount().call();
 
   if (currentTradingVariablesFetchPromise !== null) {
     appLogger.warn(`A current fetchTradingVariables call was already in progress, just awaiting that...`);
@@ -479,12 +464,7 @@ async function fetchTradingVariables() {
   }
 
   try {
-    currentTradingVariablesFetchPromise = Promise.all([
-      fetchGlobalPairs(pairsCount),
-      fetchPairs(pairsCount),
-      fetchBorrowingFees(),
-      fetchOiWindows(pairsCount),
-    ]);
+    currentTradingVariablesFetchPromise = Promise.all([fetchPairs(pairsCount), fetchBorrowingFees(), fetchOiWindows(pairsCount)]);
 
     await currentTradingVariablesFetchPromise;
     appLogger.info(`Done fetching trading variables; took ${performance.now() - executionStart}ms.`);
@@ -506,12 +486,12 @@ async function fetchTradingVariables() {
     currentTradingVariablesFetchPromise = null;
   }
 
-  async function fetchGlobalPairs(pairsCount) {
-    const [depths, maxLeverage, pairsBackend] = await Promise.all([
-      app.multiCollatContract.methods.getPairDepths([...Array(parseInt(pairsCount)).keys()]).call(),
-      app.multiCollatContract.methods.getAllPairsRestrictedMaxLeverage().call(),
+  async function fetchPairs(pairsCount) {
+    const [depths, maxLeverage, pairs] = await Promise.all([
+      app.contracts.diamond.methods.getPairDepths([...Array(parseInt(pairsCount)).keys()]).call(),
+      app.contracts.diamond.methods.getAllPairsRestrictedMaxLeverage().call(),
       Promise.all(
-        [...Array(parseInt(pairsCount)).keys()].map(async (_, pairIndex) => app.multiCollatContract.methods.pairsBackend(pairIndex).call())
+        [...Array(parseInt(pairsCount)).keys()].map(async (_, pairIndex) => app.contracts.diamond.methods.pairs(pairIndex).call())
       ),
     ]);
 
@@ -520,94 +500,81 @@ async function fetchTradingVariables() {
       onePercentDepthAboveUsd: parseFloat(value.onePercentDepthAboveUsd),
       onePercentDepthBelowUsd: parseFloat(value.onePercentDepthBelowUsd),
     }));
-    app.pairs = pairsBackend;
-    app.spreadsP = pairsBackend.map((p) => p['0'].spreadP);
-  }
 
-  async function fetchPairs(pairsCount) {
-    await Promise.all(
-      app.collaterals.map(async (collat) => {
-        const contracts = app.stacks[collat].contracts;
-        const maxPerPair = await contracts.storage.methods.maxTradesPerPair().call();
+    app.pairs = pairs.map(({ from, to, spreadP, groupIndex, feeIndex }) => ({
+      from,
+      to,
+      spreadP: spreadP,
+      groupIndex: groupIndex,
+      feeIndex: feeIndex,
+    }));
 
-        const newOpenInterests = [];
-
-        await Promise.all(
-          [...Array(parseInt(pairsCount)).keys()].map(async (_, pairIndex) => {
-            const [openInterestLong, openInterestShort, openInterestMax] = await Promise.all([
-              contracts.storage.methods.openInterestDai(pairIndex, 0).call(),
-              contracts.storage.methods.openInterestDai(pairIndex, 1).call(),
-              contracts.borrowingFees.methods.getCollateralPairMaxOi(pairIndex).call(),
-            ]);
-
-            newOpenInterests[pairIndex] = {
-              long: openInterestLong,
-              short: openInterestShort,
-              max: parseFloat(openInterestMax) + '', // already normalized
-            };
-          })
-        );
-
-        app.stacks[collat].maxTradesPerPair = maxPerPair;
-        app.stacks[collat].openInterests = newOpenInterests;
-      })
-    );
+    app.spreadsP = pairs.map((p) => p.spreadP);
   }
 
   async function fetchBorrowingFees() {
     await Promise.all(
-      app.collaterals.map(async (collat) => {
-        const contracts = app.stacks[collat].contracts;
-        const borrowingFeesInfo = await contracts.borrowingFees.methods.getAllPairs().call();
+      Object.keys(app.collaterals).map(async (collateralIndex) => {
+        const allBorrowingPairs = await app.contracts.diamond.methods.getAllBorrowingPairs(collateralIndex).call();
 
-        const [borrowingFees, maxOis] = [borrowingFeesInfo['0'], borrowingFeesInfo['1']];
+        const [pairsBorrowingData, rawPairsOpenInterest, pairsBorrowingPairGroup] = [
+          allBorrowingPairs[0],
+          allBorrowingPairs[1],
+          allBorrowingPairs[2],
+        ];
 
-        const borrowingFeesPairs = borrowingFees.map((value, idx) => ({
-          feePerBlock: parseFloat(value.feePerBlock) / 1e10,
-          accFeeLong: parseFloat(value.accFeeLong) / 1e10,
-          accFeeShort: parseFloat(value.accFeeShort) / 1e10,
-          accLastUpdatedBlock: parseInt(value.accLastUpdatedBlock),
-          feeExponent: value.feeExponent,
-          maxOi: parseFloat(maxOis[idx].max) / 1e10 || 0,
-          groups: value.groups.map((value) => ({
-            groupIndex: parseInt(value.groupIndex),
-            initialAccFeeLong: parseFloat(value.initialAccFeeLong) / 1e10,
-            initialAccFeeShort: parseFloat(value.initialAccFeeShort) / 1e10,
-            prevGroupAccFeeLong: parseFloat(value.prevGroupAccFeeLong) / 1e10,
-            prevGroupAccFeeShort: parseFloat(value.prevGroupAccFeeShort) / 1e10,
-            pairAccFeeLong: parseFloat(value.pairAccFeeLong) / 1e10,
-            pairAccFeeShort: parseFloat(value.pairAccFeeShort) / 1e10,
-            block: parseInt(value.block),
-          })),
-        }));
+        const pairsOpenInterests = rawPairsOpenInterest.map((oi) => transformOi(oi));
+
         const borrowingFeesGroupIds = [
-          ...new Set(borrowingFeesPairs.map((value) => value.groups.map((value) => value.groupIndex)).flat()),
+          ...new Set(pairsBorrowingPairGroup.map((value) => value.map((value) => value.groupIndex)).flat()),
         ].sort((a, b) => a - b);
 
-        const borrowingFeesGroupsInfo =
+        const borrowingFeeGroupResults =
           borrowingFeesGroupIds.length > 0
-            ? await contracts.borrowingFees.methods
-                .getGroups(Array.from(Array(+borrowingFeesGroupIds[borrowingFeesGroupIds.length - 1] + 1).keys()))
+            ? await app.contracts.diamond.methods
+                .getBorrowingGroups(collateralIndex, Array.from(Array(+borrowingFeesGroupIds[borrowingFeesGroupIds.length - 1] + 1).keys()))
                 .call()
-            : [];
+            : [[], []];
 
-        const [borrowingFeesGroups, groupExponents] = [borrowingFeesGroupsInfo['0'], borrowingFeesGroupsInfo['1']];
-        app.stacks[collat].borrowingFeesContext.pairs = borrowingFeesPairs;
-        app.stacks[collat].borrowingFeesContext.groups = borrowingFeesGroups?.map((value, idx) => ({
-          oiLong: parseFloat(value.oiLong) / 1e10,
-          oiShort: parseFloat(value.oiShort) / 1e10,
-          feePerBlock: parseFloat(value.feePerBlock) / 1e10,
-          accFeeLong: parseFloat(value.accFeeLong) / 1e10,
-          accFeeShort: parseFloat(value.accFeeShort) / 1e10,
-          accLastUpdatedBlock: parseInt(value.accLastUpdatedBlock),
-          maxOi: parseFloat(value.maxOi) / 1e10,
-          feeExponent: parseInt(groupExponents[idx]) || 1,
-        }));
+        const groupsBorrowingData = borrowingFeeGroupResults[0];
+        const groupsOpenInterest = borrowingFeeGroupResults[1].map((oi) => transformOi(oi));
+
+        app.borrowingFeesContext[collateralIndex].pairs = pairsBorrowingData.map(
+          ({ feePerBlock, accFeeLong, accFeeShort, accLastUpdatedBlock, feeExponent }, idx) => ({
+            oi: pairsOpenInterests[idx],
+            feePerBlock: transformFrom1e10(feePerBlock),
+            accFeeLong: transformFrom1e10(accFeeLong),
+            accFeeShort: transformFrom1e10(accFeeShort),
+            accLastUpdatedBlock: parseInt(accLastUpdatedBlock),
+            feeExponent: parseInt(feeExponent),
+            groups: pairsBorrowingPairGroup[idx].map((group) => ({
+              groupIndex: parseInt(group.groupIndex),
+              block: parseInt(group.block),
+              initialAccFeeLong: transformFrom1e10(group.initialAccFeeLong),
+              initialAccFeeShort: transformFrom1e10(group.initialAccFeeShort),
+              prevGroupAccFeeLong: transformFrom1e10(group.prevGroupAccFeeLong),
+              prevGroupAccFeeShort: transformFrom1e10(group.prevGroupAccFeeShort),
+              pairAccFeeLong: transformFrom1e10(group.pairAccFeeLong),
+              pairAccFeeShort: transformFrom1e10(group.pairAccFeeShort),
+            })),
+          })
+        );
+
+        app.borrowingFeesContext[collateralIndex].groups = groupsBorrowingData.map(
+          ({ feePerBlock, accFeeLong, accFeeShort, accLastUpdatedBlock, feeExponent }, idx) => ({
+            oi: groupsOpenInterest[idx],
+            feePerBlock: transformFrom1e10(feePerBlock),
+            accFeeLong: transformFrom1e10(accFeeLong),
+            accFeeShort: transformFrom1e10(accFeeShort),
+            accLastUpdatedBlock: parseInt(accLastUpdatedBlock),
+            feeExponent: parseInt(feeExponent),
+          })
+        );
       })
     );
   }
   async function fetchOiWindows(pairLength) {
-    const { startTs, windowsDuration, windowsCount } = await app.multiCollatContract.methods.getOiWindowsSettings().call();
+    const { startTs, windowsDuration, windowsCount } = await app.contracts.diamond.methods.getOiWindowsSettings().call();
 
     app.oiWindowsSettings = {
       startTs: parseFloat(startTs),
@@ -623,7 +590,7 @@ async function fetchTradingVariables() {
     const oiWindowsTemp = (
       await Promise.all(
         [...Array(parseInt(pairLength)).keys()].map((_, pairIndex) =>
-          app.multiCollatContract.methods
+          app.contracts.diamond.methods
             .getOiWindows(app.oiWindowsSettings.windowsDuration, pairIndex, windowsToCheck)
             .call()
             .then((r) => r.map((w) => ({ oiLongUsd: w.oiLongUsd, oiShortUsd: w.oiShortUsd })))
@@ -639,8 +606,8 @@ async function fetchTradingVariables() {
 // LOAD OPEN TRADES
 // -----------------------------------------
 
-function buildTriggerIdentifier(collateral, trader, pairIndex, index, limitType) {
-  return `trigger://${collateral}/${trader}/${pairIndex}/${index}[lt=${limitType}]`;
+function buildTriggerIdentifier(user, index, limitType) {
+  return `trigger://${user}/${index}[lt=${limitType}]`;
 }
 
 let fetchOpenTradesRetryTimerId = null;
@@ -658,21 +625,8 @@ async function fetchOpenTrades() {
 
     const start = performance.now();
 
-    const [openLimitOrders, pairTrades] = await Promise.all([fetchOpenLimitOrders(), fetchOpenPairTrades()]);
-
-    const newOpenTrades = new Map(
-      openLimitOrders
-        .concat(pairTrades)
-        .map((trade) => [
-          buildTradeIdentifier(trade.collateral, trade.trader, trade.pairIndex, trade.index, trade.openPrice === undefined),
-          trade,
-        ])
-    );
-
-    const newTradesLastUpdated = new Map(await populateTradesLastUpdated(openLimitOrders, pairTrades, USE_MULTICALL));
-
-    app.knownOpenTrades = newOpenTrades;
-    app.tradesLastUpdated = newTradesLastUpdated;
+    const trades = await fetchOpenPairTrades();
+    app.knownOpenTrades = new Map(trades.map((trade) => [buildTradeIdentifier(trade.user, trade.index), trade]));
 
     appLogger.info(`Fetched ${app.knownOpenTrades.size} total open trade(s) in ${performance.now() - start}ms.`);
 
@@ -705,170 +659,27 @@ async function fetchOpenTrades() {
     }, 2 * 1000);
   }
 
-  async function fetchOpenLimitOrders() {
-    appLogger.info('Fetching open limit orders...');
-
-    const limitOrders = (
-      await Promise.all(
-        app.collaterals.map(async (collat) => {
-          const contracts = app.stacks[collat].contracts;
-          const openLimitOrders = await contracts.storage.methods.getOpenLimitOrders().call();
-
-          const openLimitOrdersWithTypes = await Promise.all(
-            openLimitOrders.map(async (olo) => {
-              const [type, tradeData] = await Promise.all([
-                contracts.nftRewards.methods.openLimitOrderTypes(olo.trader, olo.pairIndex, olo.index).call(),
-                contracts.callbacks.methods.tradeData(olo.trader, olo.pairIndex, olo.index, 1).call(),
-              ]);
-
-              return {
-                ...olo,
-                type,
-                maxSlippageP: parseFloat(tradeData.maxSlippageP.toString()) / 1e10 || 1,
-                collateral: collat,
-              };
-            })
-          );
-
-          appLogger.info(`[${collat}] Fetched ${openLimitOrdersWithTypes.length} open limit order(s).`);
-
-          executionStats = {
-            ...executionStats,
-            [`limitOrderCount-${collat}`]: openLimitOrdersWithTypes.length,
-          };
-
-          return openLimitOrdersWithTypes;
-        })
-      )
-    ).reduce((acc, curr, i) => [...acc, ...curr], []);
-
-    appLogger.info(`Fetched ${limitOrders.length} open limit order(s).`);
-
-    return limitOrders;
-  }
-
   async function fetchOpenPairTrades() {
     appLogger.info('Fetching open pair trades...');
 
     const ethersProvider = new ethers.providers.WebSocketProvider(app.currentlySelectedWeb3Client.currentProvider.connection._url);
-    const ethersMultiCollat = getEthersContract(app.multiCollatContract, ethersProvider);
+    const ethersMultiCollat = getEthersContract(app.contracts.diamond, ethersProvider);
 
-    // loop and merge all trades
-    const allTrades = (
-      await Promise.all(
-        app.collaterals.map(async (collat) => {
-          const contracts = app.stacks[collat].contracts;
-
-          const ethersStorage = getEthersContract(contracts.storage, ethersProvider);
-          const ethersBorrowingFees = getEthersContract(contracts.borrowingFees, ethersProvider);
-          const ethersCallbacks = getEthersContract(contracts.callbacks, ethersProvider);
-
-          const openTradesRaw = await fetchOpenPairTradesRaw(
-            {
-              gnsMultiCollatDiamond: ethersMultiCollat,
-              gfarmTradingStorageV5: ethersStorage,
-              gnsBorrowingFees: ethersBorrowingFees,
-              gnsTradingCallbacks: ethersCallbacks,
-            },
-            {
-              useMulticall: USE_MULTICALL,
-              pairBatchSize: 10, // This is a conservative batch size to accommodate high trade volumes and default RPC payload limits. Consider adjusting.
-            }
-          );
-
-          const openTrades = transformRawTrades(openTradesRaw, collat);
-          appLogger.info(`[${collat}] Fetched ${openTrades.length} new open pair trade(s).`);
-
-          executionStats = {
-            ...executionStats,
-            [`openTradesCount-${collat}`]: openTrades.length,
-          };
-
-          return openTrades;
-        })
-      )
-    ).reduce((acc, curr, i) => [...acc, ...curr], []);
+    const openPairTradesRaw = await fetchOpenPairTradesRaw(
+      {
+        gnsMultiCollatDiamond: ethersMultiCollat,
+      },
+      {
+        useMulticall: USE_MULTICALL,
+        pairBatchSize: 10,
+      }
+    );
+    const allTrades = transformRawTrades(openPairTradesRaw);
 
     appLogger.info(`Fetched ${allTrades.length} new open pair trade(s).`);
 
     return allTrades;
   }
-
-  async function populateTradesLastUpdated(openLimitOrders, pairTrades, useMulticall) {
-    appLogger.info('Fetching last updated info...');
-
-    let olLastUpdated, tLastUpdated;
-    if (useMulticall) {
-      const ethersProvider = new ethers.providers.WebSocketProvider(app.currentlySelectedWeb3Client.currentProvider.connection._url);
-      const multicallProvider = new Provider();
-      await multicallProvider.init(ethersProvider);
-
-      // Prep multicall callbacks for every stack
-      const callbacksMulticalls = {};
-      app.collaterals.map(
-        (collat) => (callbacksMulticalls[collat] = new Contract(app.stacks[collat].contracts.callbacks.options.address, abis.CALLBACKS))
-      );
-
-      olLastUpdated = await multicallProvider.all(
-        openLimitOrders.map((order) =>
-          callbacksMulticalls[order.collateral].tradeLastUpdated(order.trader, order.pairIndex, order.index, TRADE_TYPE.LIMIT)
-        ),
-        'latest'
-      );
-
-      tLastUpdated = await multicallProvider.all(
-        pairTrades.map((order) =>
-          callbacksMulticalls[order.collateral].tradeLastUpdated(order.trader, order.pairIndex, order.index, TRADE_TYPE.MARKET)
-        ),
-        'latest'
-      );
-    } else {
-      // Consider adjusting batch size or using multicall for better performance (see above)
-      const batchSize = 100;
-      for (let i = 0; i < openLimitOrders.length; i += batchSize) {
-        const batch = openLimitOrders.slice(i, i + batchSize);
-        const batchLastUpdated = await Promise.all(
-          batch.map((order) =>
-            fetchTradeLastUpdated(
-              app.stacks[order.collateral].contracts.callbacks,
-              order.trader,
-              order.pairIndex,
-              order.index,
-              TRADE_TYPE.LIMIT
-            )
-          )
-        );
-        olLastUpdated = olLastUpdated ? olLastUpdated.concat(batchLastUpdated) : batchLastUpdated;
-      }
-      for (let i = 0; i < pairTrades.length; i += batchSize) {
-        const batch = pairTrades.slice(i, i + batchSize);
-        const batchLastUpdated = await Promise.all(
-          batch.map((order) =>
-            fetchTradeLastUpdated(
-              app.stacks[order.collateral].contracts.callbacks,
-              order.trader,
-              order.pairIndex,
-              order.index,
-              TRADE_TYPE.MARKET
-            )
-          )
-        );
-        tLastUpdated = tLastUpdated ? tLastUpdated.concat(batchLastUpdated) : batchLastUpdated;
-      }
-    }
-
-    appLogger.info(`Fetched last updated info for ${tLastUpdated?.length + olLastUpdated?.length || 0} trade(s).`);
-    return transformLastUpdated(openLimitOrders, olLastUpdated, pairTrades, tLastUpdated);
-  }
-}
-
-async function fetchTradeLastUpdated(callbacks, trader, pairIndex, index, tradeType) {
-  const lastUpdated = await callbacks.methods.tradeLastUpdated(trader, pairIndex, index, tradeType).call();
-  return {
-    tp: +lastUpdated.tp,
-    sl: +lastUpdated.sl,
-    limit: +lastUpdated.limit,
-  };
 }
 // -----------------------------------------
 // WATCH TRADING EVENTS
@@ -876,54 +687,11 @@ async function fetchTradeLastUpdated(callbacks, trader, pairIndex, index, tradeT
 
 function watchLiveTradingEvents() {
   try {
-    // Handle stack specific event subs
-    app.collaterals.map(async (collat) => {
-      const stack = app.stacks[collat];
-      const subs = stack.eventSubs;
-
-      if (subs?.trading && subs?.trading?.id) {
-        subs.trading.unsubscribe();
-      }
-
-      subs.trading = stack.contracts.trading.events.allEvents({ fromBlock: 'latest' }).on('data', (event) => {
-        if (['OpenLimitPlaced', 'OpenLimitUpdated', 'OpenLimitCanceled', 'TpUpdated', 'SlUpdated'].indexOf(event.event) === -1) {
-          return;
-        }
-
-        setTimeout(() => synchronizeOpenTrades(stack, event), EVENT_CONFIRMATIONS_MS);
-      });
-
-      if (subs?.callbacks && subs?.callbacks?.id) {
-        subs.callbacks.unsubscribe();
-      }
-
-      subs.callbacks = stack.contracts.callbacks.events.allEvents({ fromBlock: 'latest' }).on('data', (event) => {
-        if (['MarketExecuted', 'LimitExecuted', 'MarketCloseCanceled', 'SlUpdated', 'SlCanceled'].indexOf(event.event) === -1) {
-          return;
-        }
-
-        setTimeout(() => synchronizeOpenTrades(stack, event), EVENT_CONFIRMATIONS_MS);
-      });
-
-      if (subs?.borrowingFees && subs?.borrowingFees?.id) {
-        subs.borrowingFees.unsubscribe();
-      }
-
-      subs.borrowingFees = stack.contracts.borrowingFees.events.allEvents({ fromBlock: 'latest' }).on('data', (event) => {
-        if (['PairAccFeesUpdated', 'GroupAccFeesUpdated', 'GroupOiUpdated', 'PairParamsUpdated'].indexOf(event.event) < 0) {
-          return;
-        }
-
-        setTimeout(() => handleBorrowingFeesEvent(stack, event), EVENT_CONFIRMATIONS_MS);
-      });
-    });
-
-    // Handle cross-stack event subs
-    if (app.eventSubs?.multiCollat && app.eventSubs?.multiCollat?.id) {
-      app.eventSubs.multiCollat.unsubscribe();
+    if (app.eventSub && app.eventSub?.id) {
+      app.eventSub.unsubscribe();
     }
 
-    app.eventSubs.multiCollat = app.multiCollatContract.events.allEvents({ fromBlock: 'latest' }).on('data', (event) => {
+    app.eventSub = app.contracts.diamond.events.allEvents({ fromBlock: 'latest' }).on('data', (event) => {
       if (
         [
           'PriceImpactOpenInterestAdded',
@@ -932,12 +700,34 @@ function watchLiveTradingEvents() {
           'PriceImpactWindowsDurationUpdated',
           'PriceImpactWindowsCountUpdated',
           'PairCustomMaxLeverageUpdated',
-        ].indexOf(event.event) === -1
+        ].indexOf(event.event) > -1
       ) {
-        return;
+        //
+        setTimeout(() => handleMultiCollatEvents(event), EVENT_CONFIRMATIONS_MS);
+        //
+      } else if (
+        ['BorrowingPairAccFeesUpdated', 'BorrowingGroupAccFeesUpdated', 'BorrowingPairOiUpdated', 'BorrowingGroupOiUpdated'].indexOf(
+          event.event
+        ) > -1
+      ) {
+        //
+        setTimeout(() => handleBorrowingFeesEvent(event), EVENT_CONFIRMATIONS_MS);
+        //
+      } else if (
+        [
+          'TradeStored',
+          'TradeClosed',
+          'TradeTpUpdated',
+          'TradeSlUpdated',
+          'OpenLimitUpdated',
+          'TradeCollateralUpdated',
+          'TriggerOrderCanceled',
+        ].indexOf(event.event) > -1
+      ) {
+        //
+        setTimeout(() => synchronizeOpenTrades(event), EVENT_CONFIRMATIONS_MS);
+        //
       }
-
-      setTimeout(() => handleMultiCollatEvents(event), EVENT_CONFIRMATIONS_MS);
     });
   } catch {
     setTimeout(() => {
@@ -997,9 +787,8 @@ async function handleMultiCollatEvents(event) {
   }
 }
 
-async function synchronizeOpenTrades(stack, event) {
+async function synchronizeOpenTrades(event) {
   try {
-    const { contracts, collateral } = stack;
     const currentKnownOpenTrades = app.knownOpenTrades;
 
     const eventName = event.event;
@@ -1015,231 +804,95 @@ async function synchronizeOpenTrades(stack, event) {
       return;
     }
 
-    if (eventName === 'OpenLimitCanceled') {
-      const { trader, pairIndex, index } = eventReturnValues;
+    if (eventName === 'TradeStored') {
+      const { trade, tradeInfo } = eventReturnValues;
+      const { user, index, collateralIndex } = trade;
+      const initialAccFees = await app.contracts.diamond.methods.getBorrowingInitialAccFees(collateralIndex, user, index).call();
 
-      const tradeKey = buildTradeIdentifier(collateral, trader, pairIndex, index, true);
+      const tradeKey = buildTradeIdentifier(user, index);
+      const newTrade = transformRawTrade({ trade, tradeInfo, initialAccFees });
+      currentKnownOpenTrades.set(tradeKey, newTrade);
+      appLogger.info(`Synchronize open trades from event ${eventName}: Stored active trade ${tradeKey}`);
+    } else if (eventName === 'TradeClosed') {
+      const { user, index } = eventReturnValues.tradeId;
+      const tradeKey = buildTradeIdentifier(user, index);
+
       const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
 
       if (existingKnownOpenTrade !== undefined) {
         currentKnownOpenTrades.delete(tradeKey);
-
-        appLogger.info(`Synchronize open trades from event ${eventName}: Removed limit for ${tradeKey}`);
+        appLogger.info(`Synchronize open trades from event ${eventName}: Removed trade for ${tradeKey}`);
       } else {
-        appLogger.info(`Synchronize open trades from event ${eventName}: Limit not found for ${tradeKey}`);
+        appLogger.info(`Synchronize open trades from event ${eventName}: Trade not found for ${tradeKey}`);
       }
-    } else if (eventName === 'OpenLimitPlaced' || eventName === 'OpenLimitUpdated') {
-      const { trader, pairIndex, index } = eventReturnValues;
+    } else if (eventName === 'TradeTpUpdated' || eventName === 'TradeSlUpdated') {
+      const { user, index } = eventReturnValues.tradeId;
+      const tradeKey = buildTradeIdentifier(user, index);
+      const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
 
-      const [hasOpenLimitOrder, openLimitOrderId] = await Promise.all([
-        contracts.storage.methods.hasOpenLimitOrder(trader, pairIndex, index).call(),
-        contracts.storage.methods.openLimitOrderIds(trader, pairIndex, index).call(),
-      ]);
-
-      if (hasOpenLimitOrder === false) {
-        appLogger.info(`Open limit order not found for ${collateral}/${trader}/${pairIndex}/${index}; ignoring!`);
-      } else {
-        const [limitOrder, type, lastUpdated, tradeData] = await Promise.all([
-          contracts.storage.methods.openLimitOrders(openLimitOrderId).call(),
-          contracts.nftRewards.methods.openLimitOrderTypes(trader, pairIndex, index).call(),
-          fetchTradeLastUpdated(contracts.callbacks, trader, pairIndex, index, TRADE_TYPE.LIMIT),
-          contracts.callbacks.methods.tradeData(trader, pairIndex, index, 1).call(),
-        ]);
-
-        limitOrder.collateral = collateral;
-        limitOrder.type = type;
-        limitOrder.maxSlippageP = parseFloat(tradeData.maxSlippageP.toString()) / 1e10 || 1;
-
-        const tradeKey = buildTradeIdentifier(collateral, trader, pairIndex, index, true);
-
-        if (currentKnownOpenTrades.has(tradeKey)) {
-          appLogger.info(`Synchronize open trades from event ${eventName}: Updating open limit order for ${tradeKey}`);
+      if (existingKnownOpenTrade !== undefined) {
+        if (eventName === 'TradeTpUpdated') {
+          existingKnownOpenTrade.tp = eventReturnValues.newTp.toString();
+          existingKnownOpenTrade.tradeInfo.tpLastUpdatedBlock = event.blockNumber.toString();
         } else {
-          appLogger.info(`Synchronize open trades from event ${eventName}: Storing new open limit order for ${tradeKey}`);
+          existingKnownOpenTrade.sl = eventReturnValues.newSl.toString();
+          existingKnownOpenTrade.tradeInfo.slLastUpdatedBlock = event.blockNumber.toString();
         }
 
-        app.tradesLastUpdated.set(tradeKey, lastUpdated);
-        currentKnownOpenTrades.set(tradeKey, limitOrder);
-      }
-    } else if (eventName === 'TpUpdated' || eventName === 'SlUpdated' || eventName === 'SlCanceled') {
-      const { trader, pairIndex, index } = eventReturnValues;
-
-      // Fetch all fresh trade information to update known open trades
-      const [trade, tradeInfo, tradeInitialAccFees, lastUpdated] = await Promise.all([
-        contracts.storage.methods.openTrades(trader, pairIndex, index).call(),
-        contracts.storage.methods.openTradesInfo(trader, pairIndex, index).call(),
-        contracts.borrowingFees.methods.initialAccFees(trader, pairIndex, index).call(),
-        fetchTradeLastUpdated(contracts.callbacks, trader, pairIndex, index, TRADE_TYPE.MARKET),
-      ]);
-
-      trade.collateral = collateral;
-      trade.tradeInfo = tradeInfo;
-      trade.tradeInitialAccFees = convertTradeInitialAccFees({
-        borrowing: {
-          accPairFee: tradeInitialAccFees.accPairFee,
-          accGroupFee: tradeInitialAccFees.accGroupFee,
-          block: tradeInitialAccFees.block,
-        },
-      });
-
-      const tradeKey = buildTradeIdentifier(collateral, trader, pairIndex, index, false);
-      app.tradesLastUpdated.set(tradeKey, lastUpdated);
-      currentKnownOpenTrades.set(tradeKey, trade);
-
-      appLogger.info(`Synchronize open trades from event ${eventName}: Updated trade ${tradeKey}`);
-    } else if (eventName === 'MarketCloseCanceled') {
-      const { trader, pairIndex, index } = eventReturnValues;
-      const tradeKey = buildTradeIdentifier(collateral, trader, pairIndex, index, false);
-
-      const trade = await contracts.storage.methods.openTrades(trader, pairIndex, index).call();
-
-      // Make sure the trade is still actually active
-      if (parseInt(trade.leverage, 10) > 0) {
-        // Fetch all fresh trade information to update known open trades
-        const [tradeInfo, tradeInitialAccFees, lastUpdated] = await Promise.all([
-          contracts.storage.methods.openTradesInfo(trader, pairIndex, index).call(),
-          contracts.borrowingFees.methods.initialAccFees(trader, pairIndex, index).call(),
-          fetchTradeLastUpdated(contracts.callbacks, trader, pairIndex, index, TRADE_TYPE.MARKET),
-        ]);
-
-        trade.collateral = collateral;
-        trade.tradeInfo = tradeInfo;
-        trade.tradeInitialAccFees = convertTradeInitialAccFees({
-          borrowing: {
-            accPairFee: tradeInitialAccFees.accPairFee,
-            accGroupFee: tradeInitialAccFees.accGroupFee,
-            block: tradeInitialAccFees.block,
-          },
-        });
-
-        app.tradesLastUpdated.set(tradeKey, lastUpdated);
-        currentKnownOpenTrades.set(tradeKey, trade);
+        appLogger.info(`Synchronize update trade from event ${eventName}: Updated values for ${tradeKey}`);
       } else {
-        app.tradesLastUpdated.delete(tradeKey);
-        currentKnownOpenTrades.delete(tradeKey);
+        appLogger.error(`Synchronize update trade from event ${eventName}: Trade not found for ${tradeKey}!`);
+      }
+    } else if (eventName === 'OpenLimitUpdated') {
+      const { trader, index, newPrice, newTp, newSl, maxSlippageP } = eventReturnValues;
+      const blockNumber = event.blockNumber.toString();
+      const tradeKey = buildTradeIdentifier(trader, index);
+
+      const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
+
+      if (existingKnownOpenTrade !== undefined) {
+        existingKnownOpenTrade.openPrice = newPrice.toString();
+        existingKnownOpenTrade.tp = newTp.toString();
+        existingKnownOpenTrade.sl = newSl.toString();
+        existingKnownOpenTrade.tradeInfo.maxSlippageP = maxSlippageP.toString();
+        existingKnownOpenTrade.tradeInfo.tpLastUpdatedBlock = blockNumber;
+        existingKnownOpenTrade.tradeInfo.slLastUpdatedBlock = blockNumber;
+        existingKnownOpenTrade.tradeInfo.createdBlock = blockNumber;
+
+        appLogger.info(`Synchronize update trade from event ${eventName}: Updated values for ${tradeKey}`);
+      } else {
+        appLogger.error(`Synchronize update trade from event ${eventName}: Trade not found for ${tradeKey}!`);
+      }
+    } else if (eventName === 'TradeCollateralUpdated') {
+      const { user, index } = eventReturnValues.tradeId;
+      const tradeKey = buildTradeIdentifier(user, index);
+
+      const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
+
+      if (existingKnownOpenTrade !== undefined) {
+        existingKnownOpenTrade.collateralAmount = eventReturnValues.collateralAmount.toString();
+        appLogger.info(`Synchronize update trade from event ${eventName}: Updated collateral for ${tradeKey}`);
+      } else {
+        appLogger.error(`Synchronize update trade from event ${eventName}: Trade not found for ${tradeKey}!`);
+      }
+    } else if (eventName === 'TriggerOrderCanceled') {
+      const { user, index } = eventReturnValues.orderId; // this is a pending order Id
+      const { orderType } = eventReturnValues;
+
+      const pendingOrder = await app.contracts.diamond.methods.getPendingOrder({ user, index }).call();
+
+      const triggeredOrderTrackingInfoIdentifier = buildTriggerIdentifier(pendingOrder.trade.user, pendingOrder.trade.index, orderType);
+
+      if (app.triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
+        app.triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
+        appLogger.info(`Synchronize trigger tracking from event ${eventName}: Trigger deleted for ${triggeredOrderTrackingInfoIdentifier}`);
+      } else {
+        appLogger.error(
+          `Synchronize trigger tracking from event ${eventName}: Trigger not found for ${triggeredOrderTrackingInfoIdentifier}!`
+        );
       }
 
       return;
-    } else if (
-      (eventName === 'MarketExecuted' && eventReturnValues.open === true) ||
-      (eventName === 'LimitExecuted' && eventReturnValues.orderType === '3')
-    ) {
-      const { t: trade, limitIndex } = eventReturnValues;
-      const { trader, pairIndex, index } = trade;
-
-      if (eventName === 'LimitExecuted') {
-        const openTradeKey = buildTradeIdentifier(collateral, trader, pairIndex, limitIndex, true);
-
-        if (currentKnownOpenTrades.has(openTradeKey)) {
-          appLogger.info(`Synchronize open trades from event ${eventName}: Removed open limit trade ${openTradeKey}.`);
-
-          app.tradesLastUpdated.delete(openTradeKey);
-          currentKnownOpenTrades.delete(openTradeKey);
-        } else {
-          appLogger.warn(
-            `Synchronize open trades from event ${eventName}: Open limit trade ${openTradeKey} was not found? Unable to remove.`
-          );
-        }
-
-        resetRetryCounter(buildTriggerIdentifier(collateral, trader, pairIndex, limitIndex, 3));
-      }
-
-      const [tradeInfo, tradeInitialAccFees, lastUpdated] = await Promise.all([
-        contracts.storage.methods.openTradesInfo(trader, pairIndex, index).call(),
-        contracts.borrowingFees.methods.initialAccFees(trader, pairIndex, index).call(),
-        fetchTradeLastUpdated(contracts.callbacks, trader, pairIndex, index, TRADE_TYPE.MARKET),
-      ]);
-
-      const tradeKey = buildTradeIdentifier(collateral, trader, pairIndex, index, false);
-
-      app.tradesLastUpdated.set(tradeKey, lastUpdated);
-      currentKnownOpenTrades.set(tradeKey, {
-        ...trade,
-        collateral,
-        tradeInfo,
-        tradeInitialAccFees: convertTradeInitialAccFees({
-          borrowing: {
-            accPairFee: tradeInitialAccFees.accPairFee,
-            accGroupFee: tradeInitialAccFees.accGroupFee,
-            block: tradeInitialAccFees.block,
-          },
-        }),
-      });
-
-      appLogger.info(`Synchronize open trades from event ${eventName}: Stored active trade ${tradeKey}`);
-
-      // reset any known SL/TP/LIQ counters
-      resetRetryCounter(buildTriggerIdentifier(collateral, trader, pairIndex, index, 0));
-      resetRetryCounter(buildTriggerIdentifier(collateral, trader, pairIndex, index, 1));
-      resetRetryCounter(buildTriggerIdentifier(collateral, trader, pairIndex, index, 2));
-    } else if (
-      (eventName === 'MarketExecuted' && eventReturnValues.open === false) ||
-      (eventName === 'LimitExecuted' && eventReturnValues.orderType !== '3')
-    ) {
-      const { trader, pairIndex, index } = eventReturnValues.t;
-      const tradeKey = buildTradeIdentifier(collateral, trader, pairIndex, index, false);
-
-      const triggeredOrderTrackingInfoIdentifier = buildTriggerIdentifier(
-        collateral,
-        trader,
-        pairIndex,
-        index,
-        eventReturnValues.orderType ?? 'N/A'
-      );
-
-      appLogger.info(`Synchronize open trades from event ${eventName}: event received for ${triggeredOrderTrackingInfoIdentifier}...`);
-
-      const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
-
-      // If this was a known open trade then we need to remove it now
-      if (existingKnownOpenTrade !== undefined) {
-        currentKnownOpenTrades.delete(tradeKey);
-        app.tradesLastUpdated.delete(tradeKey);
-        appLogger.info(`Synchronize open trades from event ${eventName}: Removed ${tradeKey} from known open trades.`);
-      } else {
-        appLogger.info(
-          `Synchronize open trades from event ${eventName}: Trade ${tradeKey} was not found in known open trades; just ignoring.`
-        );
-      }
-
-      const triggeredOrderDetails = app.triggeredOrders.get(triggeredOrderTrackingInfoIdentifier);
-
-      // If we were tracking this triggered order, stop tracking it now and clear the timeout so it doesn't
-      // interrupt the event loop for no reason later
-      if (triggeredOrderDetails !== undefined) {
-        appLogger.debug(
-          `Synchronize open trades from event ${eventName}: We triggered order ${triggeredOrderTrackingInfoIdentifier}; clearing tracking timer.`
-        );
-
-        // If we actually managed to send the transaction off without error then we can report success and clean
-        // up tracking state now
-        if (triggeredOrderDetails.transactionSent === true) {
-          if (eventReturnValues.nftHolder === process.env.PUBLIC_KEY) {
-            appLogger.info(`💰💰💰 SUCCESSFULLY TRIGGERED ORDER ${triggeredOrderTrackingInfoIdentifier} FIRST!!!`);
-
-            executionStats = {
-              ...executionStats,
-              firstTriggers: (executionStats?.firstTriggers ?? 0) + 1,
-            };
-          } else {
-            appLogger.info(`💰 SUCCESSFULLY TRIGGERED ORDER ${triggeredOrderTrackingInfoIdentifier} AS SAME BLOCK!!!`);
-
-            executionStats = {
-              ...executionStats,
-              sameBlockTriggers: (executionStats?.sameBlockTriggers ?? 0) + 1,
-            };
-          }
-
-          clearTimeout(triggeredOrderDetails.cleanupTimerId);
-          app.triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
-        }
-      } else {
-        appLogger.debug(
-          `Synchronize open trades from event ${eventName}: Order ${triggeredOrderTrackingInfoIdentifier} was not being tracked as triggered by us.`
-        );
-      }
-
-      resetRetryCounter(triggeredOrderTrackingInfoIdentifier);
     }
 
     executionStats = {
@@ -1253,53 +906,49 @@ async function synchronizeOpenTrades(stack, event) {
   }
 }
 
-async function handleBorrowingFeesEvent(stack, event) {
+async function handleBorrowingFeesEvent(event) {
   try {
-    if (event.event === 'PairAccFeesUpdated') {
-      const { pairIndex, accFeeLong, accFeeShort } = event.returnValues;
-      const pairBorrowingFees = stack.borrowingFeesContext.pairs[pairIndex];
+    if (event.event === 'BorrowingPairAccFeesUpdated') {
+      const { collateralIndex, pairIndex, accFeeLong, accFeeShort } = event.returnValues;
+      const pairBorrowingFees = app.borrowingFeesContext[collateralIndex].pairs[pairIndex];
 
       if (pairBorrowingFees) {
         pairBorrowingFees.accFeeLong = parseFloat(accFeeLong) / 1e10;
         pairBorrowingFees.accFeeShort = parseFloat(accFeeShort) / 1e10;
         pairBorrowingFees.accLastUpdateBlock = parseInt(event.blockNumber);
       }
-    } else if (event.event === 'GroupAccFeesUpdated') {
-      const { groupIndex, accFeeLong, accFeeShort } = event.returnValues;
+    } else if (event.event === 'BorrowingGroupAccFeesUpdated') {
+      const { collateralIndex, groupIndex, accFeeLong, accFeeShort } = event.returnValues;
 
-      const groupBorrowingFees = stack.borrowingFeesContext.groups[groupIndex];
+      const groupBorrowingFees = app.borrowingFeesContext[collateralIndex].groups[groupIndex];
 
       if (groupBorrowingFees) {
         groupBorrowingFees.accFeeLong = parseFloat(accFeeLong) / 1e10;
         groupBorrowingFees.accFeeShort = parseFloat(accFeeShort) / 1e10;
         groupBorrowingFees.accLastUpdateBlock = parseInt(event.blockNumber);
       }
-    } else if (event.event === 'GroupOiUpdated') {
-      const { groupIndex, oiLong, oiShort } = event.returnValues;
+    } else if (event.event === 'BorrowingGroupOiUpdated') {
+      const { collateralIndex, groupIndex, newOiLong, newOiShort } = event.returnValues;
 
-      const groupBorrowingFees = stack.borrowingFeesContext.groups[groupIndex];
+      const groupBorrowingFees = app.borrowingFeesContext[collateralIndex].groups[groupIndex].oi;
 
       if (groupBorrowingFees) {
-        groupBorrowingFees.oiLong = parseFloat(oiLong) / 1e10;
-        groupBorrowingFees.oiShort = parseFloat(oiShort) / 1e10;
+        groupBorrowingFees.long = parseFloat(newOiLong) / 1e10;
+        groupBorrowingFees.short = parseFloat(newOiShort) / 1e10;
       }
-    } else if (event.event === 'PairParamsUpdated') {
-      const { pairIndex, maxOi } = event.returnValues;
+    } else if (event.event === 'BorrowingPairOiUpdated') {
+      const { collateralIndex, pairIndex, newOiLong, newOiShort } = event.returnValues;
 
-      if (stack.openInterests[pairIndex] === undefined) {
-        appLogger.warn(`Cannot process PairParamsUpdated event for pairIndex ${pairIndex}. Contract parameters not yet loaded.`);
-        return;
+      const pairBorrowingFees = app.borrowingFeesContext[collateralIndex].pairs[pairIndex].oi;
+
+      if (pairBorrowingFees) {
+        pairBorrowingFees.long = parseFloat(newOiLong) / 1e10;
+        pairBorrowingFees.short = parseFloat(newOiShort) / 1e10;
       }
-      stack.openInterests[pairIndex].max = (parseFloat(maxOi) * stack.collateralConfig.precision) / 1e10 + '';
-      stack.borrowingFeesContext.pairs[pairIndex].maxOi = parseFloat(maxOi) / 1e10;
     }
   } catch (error) {
     appLogger.error('Error occurred when handling BorrowingFees event.', error);
   }
-}
-
-function resetRetryCounter(triggerId) {
-  app.triggerRetries.delete(triggerId);
 }
 
 // ---------------------------------------------
@@ -1341,7 +990,7 @@ function watchPricingStream() {
       return;
     }
 
-    if (app.collaterals.some((collat) => !app.stacks[collat].allowedLink.storage || !app.stacks[collat].allowedLink.rewards)) {
+    if (!app.allowedLink) {
       appLogger.warn('LINK is not currently allowed for the configured account; unable to process any trades!');
 
       return;
@@ -1377,23 +1026,19 @@ function watchPricingStream() {
 
       await Promise.allSettled(
         [...currentKnownOpenTrades.values()].map(async (openTrade) => {
-          const { collateral, trader, pairIndex, index, buy } = openTrade;
-          if (!collateral) {
-            appLogger.error('Trade loaded without collateral information, this should not be happening!');
-            return;
-          }
+          const { user, pairIndex, index, long, collateralIndex } = openTrade;
 
-          const stack = app.stacks[collateral];
-          if (stack === undefined) {
-            appLogger.error('Unknown collateral stack, this should not be happening!');
+          const collateralConfig = app.collaterals[collateralIndex];
+          if (collateralConfig === undefined) {
+            appLogger.error('Unknown collateral config, this should not be happening!');
             return;
           }
 
           const price = pairPrices.get(parseInt(pairIndex));
           if (price === undefined) return;
 
-          const isPendingOpenLimitOrder = openTrade.openPrice === undefined;
-          const openTradeKey = buildTradeIdentifier(collateral, trader, pairIndex, index, isPendingOpenLimitOrder);
+          const isPendingOpenLimitOrder = openTrade.tradeType + '' !== '0';
+          const openTradeKey = buildTradeIdentifier(user, index);
           // Under certain conditions (forex/stock market just opened, server restart, etc) the price is not
           // available, so we need to make sure we skip any processing in that case
           if ((price ?? 0) <= 0) {
@@ -1404,62 +1049,63 @@ function watchPricingStream() {
 
           let orderType = -1;
           let liqPrice;
+
           if (isPendingOpenLimitOrder === false) {
             // Hotfix openPrice of 0
             if (parseInt(openTrade.openPrice) === 0) return;
 
             const tp = parseFloat(openTrade.tp) / 1e10;
             const sl = parseFloat(openTrade.sl) / 1e10;
-            liqPrice = getTradeLiquidationPrice(stack, openTrade);
+            liqPrice = getTradeLiquidationPrice(collateralConfig.precision, app.borrowingFeesContext[collateralIndex], openTrade);
 
-            if (tp !== 0 && ((buy && price >= tp) || (!buy && price <= tp))) {
-              orderType = 0;
-            } else if (sl !== 0 && ((buy && price <= sl) || (!buy && price >= sl))) {
-              orderType = 1;
-            } else if ((buy && price <= liqPrice) || (!buy && price >= liqPrice)) {
-              orderType = 2;
+            if (tp !== 0 && ((long && price >= tp) || (!long && price <= tp))) {
+              orderType = PENDING_ORDER_TYPE.TP_CLOSE;
+            } else if (sl !== 0 && ((long && price <= sl) || (!long && price >= sl))) {
+              orderType = PENDING_ORDER_TYPE.SL_CLOSE;
+            } else if ((long && price <= liqPrice) || (!long && price >= liqPrice)) {
+              orderType = PENDING_ORDER_TYPE.LIQ_CLOSE;
             } else {
               //appLogger.debug(`Open trade ${openTradeKey} is not ready for us to act on yet.`);
             }
           } else {
-            const posDai = parseFloat(openTrade.leverage) * parseFloat(openTrade.positionSize);
+            const leverage = parseFloat(openTrade.leverage) / 1e3;
+            const maxSlippageP = parseFloat(openTrade.tradeInfo.maxSlippageP + '') / 1e3 || 1;
+            const posDai = leverage * (parseFloat(openTrade.collateralAmount) / collateralConfig.precision);
 
             const spreadWithPriceImpactP =
               getSpreadWithPriceImpactP(
                 parseFloat(app.spreadsP[pairIndex]) / 1e10 / 100,
-                openTrade.buy,
-                (parseFloat(openTrade.positionSize) / stack.collateralConfig.precision) * stack.price,
-                parseInt(openTrade.leverage),
+                openTrade.long,
+                (parseFloat(openTrade.collateralAmount) / collateralConfig.precision) * collateralConfig.price,
+                leverage,
                 app.pairDepths[openTrade.pairIndex],
                 app.oiWindowsSettings,
                 app.oiWindows[openTrade.pairIndex]
               ) * 100;
 
-            const interestDai = buy
-              ? parseFloat(stack.openInterests[openTrade.pairIndex].long)
-              : parseFloat(stack.openInterests[openTrade.pairIndex].short);
+            // oi.long/short/max are already transformed (div 1e10)
+            const maxInterestDai = app.borrowingFeesContext[collateralIndex].pairs[openTrade.pairIndex].oi.max;
+            const interestDai = long
+              ? app.borrowingFeesContext[collateralIndex].pairs[openTrade.pairIndex].oi.long
+              : app.borrowingFeesContext[collateralIndex].pairs[openTrade.pairIndex].oi.short;
 
             const newInterestDai = interestDai + posDai;
+            const wantedPrice = parseFloat(openTrade.openPrice) / 1e10;
 
-            const maxInterestDai = parseFloat(stack.openInterests[openTrade.pairIndex].max);
-
-            const minPrice = parseFloat(openTrade.minPrice) / 1e10;
-            const maxPrice = parseFloat(openTrade.maxPrice) / 1e10;
-
+            // @todo slippage may hit SL, need to abort
             if (
-              isValidLeverage(openTrade.pairIndex, parseFloat(openTrade.leverage)) &&
+              isValidLeverage(openTrade.pairIndex, leverage) &&
               newInterestDai <= maxInterestDai &&
-              spreadWithPriceImpactP * openTrade.leverage <= MAX_OPEN_NEGATIVE_PNL_P &&
-              withinMaxGroupOi(openTrade.pairIndex, buy, posDai / stack.collateralConfig.precision, stack.borrowingFeesContext) &&
-              spreadWithPriceImpactP <= openTrade.maxSlippageP
+              spreadWithPriceImpactP * leverage <= MAX_OPEN_NEGATIVE_PNL_P &&
+              withinMaxGroupOi(openTrade.pairIndex, long, posDai, app.borrowingFeesContext[collateralIndex]) &&
+              spreadWithPriceImpactP <= maxSlippageP
             ) {
-              const tradeType = openTrade.type;
+              const tradeType = openTrade.tradeType + '';
               if (
-                (tradeType === '0' && price >= minPrice && price <= maxPrice) ||
-                (tradeType === '1' && (buy ? price <= maxPrice : price >= minPrice)) ||
-                (tradeType === '2' && (buy ? price >= minPrice : price <= maxPrice))
+                (tradeType === '1' && (long ? price <= wantedPrice : price >= wantedPrice)) ||
+                (tradeType === '2' && (long ? price >= wantedPrice : price <= wantedPrice))
               ) {
-                orderType = 3;
+                orderType = tradeType === '1' ? PENDING_ORDER_TYPE.LIMIT_OPEN : PENDING_ORDER_TYPE.STOP_OPEN;
               } else {
                 //appLogger.debug(`Limit trade ${openTradeKey} is not ready for us to act on yet.`);
               }
@@ -1471,7 +1117,8 @@ function watchPricingStream() {
             return;
           }
 
-          const groupId = parseInt(app.pairs[pairIndex][0]['groupIndex']);
+          const groupId = parseInt(app.pairs[pairIndex].groupIndex);
+
           if (isForexGroup(groupId) && !isForexOpen(new Date())) {
             return;
           }
@@ -1488,14 +1135,7 @@ function watchPricingStream() {
             return;
           }
 
-          const lastUpdated = app.tradesLastUpdated.get(openTradeKey);
-
-          if (!lastUpdated && orderType !== 2) {
-            appLogger.warn(`Last updated information for ${openTradeKey} is not available`);
-            return;
-          }
-
-          const triggeredOrderTrackingInfoIdentifier = buildTriggerIdentifier(collateral, trader, pairIndex, index, orderType);
+          const triggeredOrderTrackingInfoIdentifier = buildTriggerIdentifier(user, index, orderType);
 
           // Make sure this order hasn't already been triggered
           if (app.triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
@@ -1531,8 +1171,8 @@ function watchPricingStream() {
             try {
               const orderTransaction = createTransaction(
                 {
-                  to: stack.contracts.trading.options.address,
-                  data: stack.contracts.trading.methods.executeNftOrder(packNft(orderType, trader, pairIndex, index, 0, 0)).encodeABI(),
+                  to: app.contracts.diamond.options.address,
+                  data: app.contracts.diamond.methods.triggerOrder(packTrigger(orderType, user, index)).encodeABI(),
                 },
                 true
               );
@@ -1583,12 +1223,11 @@ function watchPricingStream() {
               };
 
               switch (errorReason) {
-                case 'SAME_BLOCK_LIMIT':
-                case 'TOO_LATE':
+                case 'PendingTrigger()':
                   // The trade has been triggered by others, delay removing it and maybe we'll have a
                   // chance to try again if original trigger fails
                   appLogger.warn(
-                    `⭕️ Order ${triggeredOrderTrackingInfoIdentifier} was already triggered and we got a "${errorReason}"; will remove from triggered tracking shortly and it may be tried again if original trigger didn't hit!`
+                    `Order ${triggeredOrderTrackingInfoIdentifier} was already triggered; will remove from triggered tracking shortly and it may be tried again if original trigger didn't hit!`
                   );
 
                   // Wait a bit and then clean from triggered orders list so it might get tried again
@@ -1602,7 +1241,7 @@ function watchPricingStream() {
 
                   break;
 
-                case 'NO_TRADE':
+                case 'NoTrade()':
                   appLogger.warn(
                     `❌ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${errorReason}" error; removing order from known trades and triggered tracking.`
                   );
@@ -1610,14 +1249,13 @@ function watchPricingStream() {
                   // The trade is gone, just remove it from known trades
                   app.triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
                   currentKnownOpenTrades.delete(openTradeKey);
-                  resetRetryCounter(triggeredOrderTrackingInfoIdentifier);
 
                   break;
 
-                case 'NO_SL':
-                case 'NO_TP':
-                case 'SUCCESS_TIMELOCK':
-                case 'IN_TIMEOUT':
+                case 'PriceImpactTooHigh()':
+                case 'WrongOrderType()':
+                case 'NoSL()':
+                case 'NoTP()':
                   appLogger.warn(
                     `❗️ Order ${triggeredOrderTrackingInfoIdentifier} missed due to "${errorReason}" error; will remove order from triggered tracking.`
                   );
@@ -1679,15 +1317,14 @@ function watchPricingStream() {
     }
   };
 
-  function getTradeLiquidationPrice(stack, trade) {
-    const { tradeInfo, tradeInitialAccFees, pairIndex } = trade;
-    const { precision } = stack.collateralConfig;
+  function getTradeLiquidationPrice(precision, borrowingFeesContext, trade) {
+    const { tradeInfo, initialAccFees, pairIndex } = trade;
 
-    return getLiquidationPrice(convertTrade(trade), convertTradeInfo(tradeInfo, precision), tradeInitialAccFees, {
+    return getLiquidationPrice(convertTrade(trade, precision), convertTradeInfo(tradeInfo), convertTradeInitialAccFees(initialAccFees), {
       currentBlock: app.blocks.latestL2Block,
-      openInterest: convertOpenInterest(stack.openInterests[pairIndex], precision),
-      pairs: stack.borrowingFeesContext.pairs,
-      groups: stack.borrowingFeesContext.groups,
+      openInterest: borrowingFeesContext.pairs[pairIndex].oi,
+      pairs: borrowingFeesContext.pairs,
+      groups: borrowingFeesContext.groups,
     });
   }
 
@@ -1722,24 +1359,20 @@ if (AUTO_HARVEST_MS > 0) {
   async function claimRewards() {
     if (!process.env.ORACLE_ADDRESS) return;
 
-    app.collaterals.map(async (collat) => {
-      const contracts = app.stacks[collat].contracts;
-
-      const tx = createTransaction({
-        to: contracts.nftRewards.options.address,
-        data: contracts.nftRewards.methods.claimRewards(process.env.ORACLE_ADDRESS).encodeABI(),
-      });
-
-      try {
-        const signed = await app.currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
-
-        await app.currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
-
-        appLogger.info(`[${collat}] Tokens claimed.`);
-      } catch (error) {
-        appLogger.error(`[${collat}] Claim tokens transaction failed!`, error);
-      }
+    const tx = createTransaction({
+      to: app.contracts.diamond.options.address,
+      data: app.contracts.diamond.methods.claimPendingTriggerRewards(process.env.ORACLE_ADDRESS).encodeABI(),
     });
+
+    try {
+      const signed = await app.currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
+
+      await app.currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
+
+      appLogger.info(`Tokens claimed.`);
+    } catch (error) {
+      appLogger.error(`Claim tokens transaction failed!`, error);
+    }
   }
 
   setInterval(async () => {

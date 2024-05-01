@@ -1,96 +1,90 @@
 import { pack } from '@gainsnetwork/sdk';
 import Web3 from 'web3';
 import { CHAIN_IDS, NETWORKS } from '../constants/index.js';
-export const transformRawTrades = (rawTrades, collateral) =>
-  rawTrades?.map(({ trade, tradeInfo, initialAccFees }) => ({
-    collateral,
-    trader: trade.trader,
-    pairIndex: trade.pairIndex.toString(),
-    index: trade.index.toString(),
-    initialPosToken: trade.initialPosToken.toString(),
-    openPrice: trade.openPrice.toString(),
-    buy: trade.buy,
-    leverage: trade.leverage.toString(),
-    tp: trade.tp.toString(),
-    sl: trade.sl.toString(),
-    tradeInfo: {
-      beingMarketClosed: tradeInfo.beingMarketClosed,
-      tokenPriceDai: tradeInfo.tokenPriceDai.toString(), // GNS/COLLATERAL
-      openInterestDai: tradeInfo.openInterestDai.toString(),
-      tpLastUpdated: tradeInfo.tpLastUpdated.toString(),
-      slLastUpdated: tradeInfo.slLastUpdated.toString(),
-    },
-    tradeData: {}, // not needed for anything
-    tradeInitialAccFees: {
-      borrowing: {
-        accPairFee: initialAccFees.borrowing.accPairFee / 1e10,
-        accGroupFee: initialAccFees.borrowing.accGroupFee / 1e10,
-        block: initialAccFees.borrowing.block,
-      },
-    },
-  }));
+export const transformRawTrades = (rawTrades) => rawTrades?.map((t) => transformRawTrade(t));
 
-export const buildTradeIdentifier = (collateral, trader, pairIndex, index, isPendingOpenLimitOrder, log = true) => {
-  if (isPendingOpenLimitOrder === undefined) {
-    throw new Error('isPendingOpenLimitOrder was passed as undefined!');
-  }
+export const transformRawTrade = ({ trade, tradeInfo, initialAccFees }) => ({
+  user: trade.user,
+  index: trade.index + '',
+  pairIndex: trade.pairIndex + '',
+  leverage: trade.leverage + '',
+  long: trade.long + '' === 'true',
+  isOpen: trade.isOpen + '' === 'true',
+  collateralIndex: trade.collateralIndex + '',
+  tradeType: trade.tradeType,
+  collateralAmount: trade.collateralAmount + '',
+  openPrice: trade.openPrice + '',
+  tp: trade.tp + '',
+  sl: trade.sl + '',
+  tradeInfo: {
+    createdBlock: tradeInfo.createdBlock + '',
+    tpLastUpdatedBlock: tradeInfo.tpLastUpdatedBlock + '',
+    slLastUpdatedBlock: tradeInfo.slLastUpdatedBlock + '',
+    maxSlippageP: tradeInfo.maxSlippageP + '',
+    lastOiUpdateTs: tradeInfo.lastOiUpdateTs,
+    collateralPriceUsd: tradeInfo.collateralPriceUsd + '',
+  },
+  initialAccFees: {
+    accPairFee: initialAccFees.accPairFee + '',
+    accGroupFee: initialAccFees.accGroupFee + '',
+    block: initialAccFees.block + '',
+  },
+});
+export const transformOi = ({ long, short, max }) => ({
+  long: parseFloat(long) / 1e10,
+  short: parseFloat(short) / 1e10,
+  max: parseFloat(max) / 1e10,
+});
 
-  return `trade://${collateral}/${trader}/${pairIndex}/${index}?isOpenLimit=${isPendingOpenLimitOrder}`;
+export const buildTradeIdentifier = (user, index, log = true) => {
+  return `trade://${user}/${index}`;
 };
 
+// @todo not needed?
 export const transformLastUpdated = (ol, olLastUpdated, t, tLastUpdated) => {
   if (!olLastUpdated?.length || !tLastUpdated?.length) return [[], []];
 
   return [
-    ...olLastUpdated.map((l, i) => [
-      buildTradeIdentifier(ol[i].collateral, ol[i].trader, ol[i].pairIndex, ol[i].index, true),
-      { sl: l.sl, tp: l.tp, limit: l.limit },
-    ]),
-    ...tLastUpdated.map((l, i) => [
-      buildTradeIdentifier(t[i].collateral, t[i].trader, t[i].pairIndex, t[i].index, false),
-      { sl: l.sl, tp: l.tp, limit: l.limit },
-    ]),
+    ...olLastUpdated.map((l, i) => [buildTradeIdentifier(ol[i].user, ol[i].index, true), { sl: l.sl, tp: l.tp, limit: l.limit }]),
+    ...tLastUpdated.map((l, i) => [buildTradeIdentifier(t[i].user, t[i].index, false), { sl: l.sl, tp: l.tp, limit: l.limit }]),
   ];
 };
 
-export const convertOpenInterest = (interest, collateralPrecision = 1e18) => ({
-  long: parseFloat(interest.long) / collateralPrecision,
-  short: parseFloat(interest.short) / collateralPrecision,
-  max: parseFloat(interest.max) / collateralPrecision,
-});
-
-export const convertTrade = (trade) => {
-  const { buy, trader } = trade;
+export const convertTrade = (trade, precision) => {
+  const { long, user } = trade;
   return {
-    buy,
-    trader,
+    user,
     index: parseInt(trade.index),
-    initialPosToken: parseFloat(trade.initialPosToken) / 1e18, // 1e18 GNS
-    leverage: parseInt(trade.leverage),
-    openPrice: parseFloat(trade.openPrice) / 1e10,
     pairIndex: parseInt(trade.pairIndex),
+    leverage: parseFloat(trade.leverage) / 1e3,
+    long,
+    isOpen: trade.isOpen + '' === 'true',
+    collateralIndex: parseInt(trade.collateralIndex),
+    tradeType: trade.tradeType,
+    collateralAmount: parseFloat(trade.collateralAmount) / precision, // COLLATERAL PRECISION
+    openPrice: parseFloat(trade.openPrice) / 1e10,
     sl: parseFloat(trade.sl) / 1e10,
     tp: parseFloat(trade.tp) / 1e10,
   };
 };
 
-export const convertTradeInfo = (tradeInfo, collateralPrecision = 1e18) => ({
-  openInterestDai: parseFloat(tradeInfo.openInterestDai) / collateralPrecision, // collateral precision
-  slLastUpdated: parseInt(tradeInfo.slLastUpdated),
-  tokenPriceDai: parseFloat(tradeInfo.tokenPriceDai) / 1e10,
-  tpLastUpdated: parseInt(tradeInfo.tpLastUpdated),
+export const convertTradeInfo = (tradeInfo) => ({
+  createdBlock: parseInt(tradeInfo.createdBlock),
+  tpLastUpdatedBlock: parseInt(tradeInfo.tpLastUpdatedBlock),
+  slLastUpdatedBlock: parseInt(tradeInfo.slLastUpdatedBlock),
+  maxSlippageP: parseFloat(tradeInfo.maxSlippageP) / 1e3,
+  lastOiUpdateTs: parseInt(tradeInfo.lastOiUpdateTs),
+  collateralPriceUsd: parseFloat(tradeInfo.collateralPriceUsd) / 1e8,
 });
 
 export const convertTradeInitialAccFees = (initialAccFees) => ({
-  borrowing: {
-    accPairFee: parseFloat(initialAccFees.borrowing?.accPairFee || '0') / 1e10,
-    accGroupFee: parseFloat(initialAccFees.borrowing?.accGroupFee || '0') / 1e10,
-    block: parseInt(initialAccFees.borrowing?.block || '0'),
-  },
+  accPairFee: parseFloat(initialAccFees?.accPairFee || '0') / 1e10,
+  accGroupFee: parseFloat(initialAccFees?.accGroupFee || '0') / 1e10,
+  block: parseInt(initialAccFees?.block || '0'),
 });
 
-export const packNft = (a, b, c, d, e, f) => {
-  return pack([a, b, c, d, e, f].map(BigInt), [8, 160, 16, 16, 16, 16].map(BigInt));
+export const packTrigger = (a, b, c) => {
+  return pack([a, b, c].map(BigInt), [8, 160, 32].map(BigInt));
 };
 
 // OI Windows
@@ -158,6 +152,8 @@ export const updateWindowsDuration = (oiWindowsSettings, windowsDuration) => {
 export const updateWindowsCount = (oiWindowsSettings, windowsCount) => {
   oiWindowsSettings.windowsCount = parseFloat(windowsCount);
 };
+
+export const transformFrom1e10 = (value) => parseFloat(value) / 1e10;
 
 export const appConfig = () => {
   const conf = {
