@@ -722,6 +722,7 @@ function watchLiveTradingEvents() {
           'OpenLimitUpdated',
           'TradeCollateralUpdated',
           'TriggerOrderCanceled',
+          'PendingOrderClosed',
         ].indexOf(event.event) > -1
       ) {
         //
@@ -890,6 +891,20 @@ async function synchronizeOpenTrades(event) {
         appLogger.error(
           `Synchronize trigger tracking from event ${eventName}: Trigger not found for ${triggeredOrderTrackingInfoIdentifier}!`
         );
+      }
+
+      return;
+    } else if (eventName === 'PendingOrderClosed') {
+      const { user, index } = eventReturnValues.orderId; // this is a pending order Id
+      const { orderType } = eventReturnValues;
+
+      const pendingOrder = await app.contracts.diamond.methods.getPendingOrder({ user, index }).call();
+
+      const triggeredOrderTrackingInfoIdentifier = buildTriggerIdentifier(pendingOrder.trade.user, pendingOrder.trade.index, orderType);
+
+      if (app.triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
+        app.triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
+        appLogger.info(`Synchronize trigger tracking from event ${eventName}: Trigger deleted for ${triggeredOrderTrackingInfoIdentifier}`);
       }
 
       return;
