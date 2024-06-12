@@ -114,6 +114,8 @@ const {
   DRY_RUN_MODE,
   FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS,
   COLLATERAL_PRICE_REFRESH_INTERVAL_MS,
+  MAX_LIQ_SPREAD_P,
+  PROTECTION_CLOSE_FACTOR_BLOCKS,
 } = appConfig();
 
 const app = {
@@ -131,6 +133,7 @@ const app = {
   eventSub: null,
   // params
   spreadsP: [],
+  protectionCloseFactors: [],
   borrowingFeesContext: {}, // { collateralIndex: { groups: [], pairs: [] } }
   oiWindows: {},
   oiWindowsSettings: { startTs: 0, windowsDuration: 0, windowsCount: 0 },
@@ -487,8 +490,9 @@ async function fetchTradingVariables() {
   }
 
   async function fetchPairs(pairsCount) {
-    const [depths, maxLeverage, pairs] = await Promise.all([
+    const [depths, protectionCloseFactors, maxLeverage, pairs] = await Promise.all([
       app.contracts.diamond.methods.getPairDepths([...Array(parseInt(pairsCount)).keys()]).call(),
+      app.contracts.diamond.methods.getProtectionCloseFactors([...Array(parseInt(pairsCount)).keys()]).call(),
       app.contracts.diamond.methods.getAllPairsRestrictedMaxLeverage().call(),
       Promise.all(
         [...Array(parseInt(pairsCount)).keys()].map(async (_, pairIndex) => app.contracts.diamond.methods.pairs(pairIndex).call())
@@ -510,6 +514,7 @@ async function fetchTradingVariables() {
     }));
 
     app.spreadsP = pairs.map((p) => p.spreadP);
+    app.protectionCloseFactors = protectionCloseFactors;
   }
 
   async function fetchBorrowingFees() {
@@ -1063,15 +1068,16 @@ function watchPricingStream() {
           }
 
           let orderType = -1;
-          let liqPrice;
+          let liqPrice = getTradeLiquidationPrice(collateralConfig.precision, app.borrowingFeesContext[collateralIndex], openTrade);
+          // Apply spread
+          liqPrice = liqPrice + 
+            liqPrice * parseFloat(Math.min(app.spreadsP[pairIndex], MAX_LIQ_SPREAD_P)) / 1e10 / 100 / 2 * (long ? -1 : 1);
+          const tp = parseFloat(openTrade.tp) / 1e10;
+          const sl = parseFloat(openTrade.sl) / 1e10;
 
           if (isPendingOpenLimitOrder === false) {
             // Hotfix openPrice of 0
             if (parseInt(openTrade.openPrice) === 0) return;
-
-            const tp = parseFloat(openTrade.tp) / 1e10;
-            const sl = parseFloat(openTrade.sl) / 1e10;
-            liqPrice = getTradeLiquidationPrice(collateralConfig.precision, app.borrowingFeesContext[collateralIndex], openTrade);
 
             if (tp !== 0 && ((long && price >= tp) || (!long && price <= tp))) {
               orderType = PENDING_ORDER_TYPE.TP_CLOSE;
@@ -1087,16 +1093,19 @@ function watchPricingStream() {
             const maxSlippageP = parseFloat(openTrade.tradeInfo.maxSlippageP + '') / 1e3 || 1;
             const posDai = leverage * (parseFloat(openTrade.collateralAmount) / collateralConfig.precision);
 
+            const useSpread = (long && price <= liqPrice) || (!long && price >= liqPrice) ? 0 : 
+              parseFloat(app.spreadsP[pairIndex]) / 1e10 / 100 / 2;
             const spreadWithPriceImpactP =
               getSpreadWithPriceImpactP(
-                parseFloat(app.spreadsP[pairIndex]) / 1e10 / 100,
+                useSpread,
                 openTrade.long,
                 (parseFloat(openTrade.collateralAmount) / collateralConfig.precision) * collateralConfig.price,
                 leverage,
                 app.pairDepths[openTrade.pairIndex],
                 app.oiWindowsSettings,
                 app.oiWindows[openTrade.pairIndex]
-              ) * 100;
+              ) * 100 / 2 * (app.blocks.latestL2Block <= openTrade.tradeInfo.createdBlock + PROTECTION_CLOSE_FACTOR_BLOCKS 
+                && app.protectionCloseFactors[openTrade.pairIndex] ? app.protectionCloseFactors[openTrade.pairIndex] : 1);
 
             // oi.long/short/max are already transformed (div 1e10)
             const maxInterestDai = app.borrowingFeesContext[collateralIndex].pairs[openTrade.pairIndex].oi.max;
