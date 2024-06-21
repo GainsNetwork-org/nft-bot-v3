@@ -1093,8 +1093,8 @@ function watchPricingStream() {
             const maxSlippageP = parseFloat(openTrade.tradeInfo.maxSlippageP + '') / 1e3 || 1;
             const posDai = leverage * (parseFloat(openTrade.collateralAmount) / collateralConfig.precision);
 
-            const useSpread = (long && price <= liqPrice) || (!long && price >= liqPrice) ? 0 : 
-              parseFloat(app.spreadsP[pairIndex]) / 1e10 / 100 / 2;
+            const useSpread = (long && price <= liqPrice) || (!long && price >= liqPrice) ?
+              parseFloat(app.spreadsP[pairIndex]) / 1e10 / 100 : 0;
             const spreadWithPriceImpactP =
               getSpreadWithPriceImpactP(
                 useSpread,
@@ -1103,9 +1103,12 @@ function watchPricingStream() {
                 leverage,
                 app.pairDepths[openTrade.pairIndex],
                 app.oiWindowsSettings,
-                app.oiWindows[openTrade.pairIndex]
-              ) * 100 / 2 * (app.blocks.latestL2Block <= openTrade.tradeInfo.createdBlock + PROTECTION_CLOSE_FACTOR_BLOCKS 
-                && app.protectionCloseFactors[openTrade.pairIndex] ? app.protectionCloseFactors[openTrade.pairIndex] : 1);
+                app.oiWindows[openTrade.pairIndex],
+                orderType <= 3 && orderType != 1,
+                app.protectionCloseFactors[openTrade.pairIndex],
+                openTrade.tradeInfo.createdBlock,
+                app.blocks.latestL2Block,
+              );
 
             // oi.long/short/max are already transformed (div 1e10)
             const maxInterestDai = app.borrowingFeesContext[collateralIndex].pairs[openTrade.pairIndex].oi.max;
