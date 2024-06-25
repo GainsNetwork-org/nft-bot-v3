@@ -1104,10 +1104,12 @@ function watchPricingStream() {
                 app.pairDepths[openTrade.pairIndex],
                 app.oiWindowsSettings,
                 app.oiWindows[openTrade.pairIndex],
-                orderType <= 3 && orderType != 1,
-                app.protectionCloseFactors[openTrade.pairIndex],
-                openTrade.tradeInfo.createdBlock,
-                app.blocks.latestL2Block,
+                {
+                  isOpen: orderType <= 3 && orderType != 1,
+                  protectionCloseFactor: app.protectionCloseFactors[openTrade.pairIndex],
+                  createdBlock: openTrade.tradeInfo.createdBlock,
+                  currentBlock: app.blocks.latestL2Block,
+                }
               );
 
             // oi.long/short/max are already transformed (div 1e10)
