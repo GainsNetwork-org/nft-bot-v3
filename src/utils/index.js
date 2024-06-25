@@ -176,6 +176,8 @@ export const appConfig = () => {
     CHAIN: process.env.CHAIN ?? 'mainnet',
     DRY_RUN_MODE: process.env.DRY_RUN_MODE === 'true',
     FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS: parseFloat(process.env.FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_SEC || '61') * 1000,
+    MAX_LIQ_SPREAD_P: 5 * 1e10 + '',
+    PROTECTION_CLOSE_FACTOR_BLOCKS: 1615, // ~1615 blocks per 7 minutes on Arbitrum
   };
 
   const NETWORK = NETWORKS[conf.CHAIN_ID];
