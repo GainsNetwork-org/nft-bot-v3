@@ -3,7 +3,7 @@ import Web3 from 'web3';
 import { CHAIN_IDS, NETWORKS } from '../constants/index.js';
 export const transformRawTrades = (rawTrades) => rawTrades?.map((t) => transformRawTrade(t));
 
-export const transformRawTrade = ({ trade, tradeInfo, initialAccFees }) => ({
+export const transformRawTrade = ({ trade, tradeInfo, initialAccFees, liquidationParams }) => ({
   user: trade.user,
   index: trade.index + '',
   pairIndex: trade.pairIndex + '',
@@ -28,6 +28,13 @@ export const transformRawTrade = ({ trade, tradeInfo, initialAccFees }) => ({
     accPairFee: initialAccFees.accPairFee + '',
     accGroupFee: initialAccFees.accGroupFee + '',
     block: initialAccFees.block + '',
+  },
+  liquidationParams: {
+    maxLiqSpreadP: liquidationParams.maxLiqSpreadP + '',
+    startLiqThresholdP: liquidationParams.startLiqThresholdP + '',
+    endLiqThresholdP: liquidationParams.endLiqThresholdP + '',
+    startLeverage: liquidationParams.startLeverage + '',
+    endLeverage: liquidationParams.endLeverage + '',
   },
 });
 export const transformOi = ({ long, short, max }) => ({
@@ -71,6 +78,17 @@ export const convertTradeInitialAccFees = (initialAccFees) => ({
   block: parseInt(initialAccFees?.block || '0'),
 });
 
+export const convertLiquidationParams = (liquidationParams) => ({
+  maxLiqSpreadP: parseFloat(liquidationParams?.maxLiqSpreadP || '0') / 1e12,
+  startLiqThresholdP: parseFloat(liquidationParams?.startLiqThresholdP || '0') / 1e12,
+  endLiqThresholdP: parseFloat(liquidationParams?.endLiqThresholdP || '0') / 1e12,
+  startLeverage: parseFloat(liquidationParams?.startLeverage || '0') / 1e3,
+  endLeverage: parseFloat(liquidationParams?.endLeverage || '0') / 1e3,
+});
+
+export const convertPairSpreadP = (pairSpreadP) => transformFrom1e10(pairSpreadP + '') / 100;
+
+export const transformProtectionCloseFactor = (protectionCloseFactor) => transformFrom1e10(protectionCloseFactor + '');
 export const packTrigger = (a, b, c) => {
   return pack([a, b, c].map(BigInt), [8, 160, 32].map(BigInt));
 };
