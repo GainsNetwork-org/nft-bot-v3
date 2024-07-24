@@ -40,16 +40,6 @@ export const buildTradeIdentifier = (user, index, log = true) => {
   return `trade://${user}/${index}`;
 };
 
-// @todo not needed?
-export const transformLastUpdated = (ol, olLastUpdated, t, tLastUpdated) => {
-  if (!olLastUpdated?.length || !tLastUpdated?.length) return [[], []];
-
-  return [
-    ...olLastUpdated.map((l, i) => [buildTradeIdentifier(ol[i].user, ol[i].index, true), { sl: l.sl, tp: l.tp, limit: l.limit }]),
-    ...tLastUpdated.map((l, i) => [buildTradeIdentifier(t[i].user, t[i].index, false), { sl: l.sl, tp: l.tp, limit: l.limit }]),
-  ];
-};
-
 export const convertTrade = (trade, precision) => {
   const { long, user } = trade;
   return {
@@ -68,13 +58,11 @@ export const convertTrade = (trade, precision) => {
   };
 };
 
-export const convertTradeInfo = (tradeInfo) => ({
-  createdBlock: parseInt(tradeInfo.createdBlock),
-  tpLastUpdatedBlock: parseInt(tradeInfo.tpLastUpdatedBlock),
-  slLastUpdatedBlock: parseInt(tradeInfo.slLastUpdatedBlock),
-  maxSlippageP: parseFloat(tradeInfo.maxSlippageP) / 1e3,
-  lastOiUpdateTs: parseInt(tradeInfo.lastOiUpdateTs),
-  collateralPriceUsd: parseFloat(tradeInfo.collateralPriceUsd) / 1e8,
+export const convertFee = (fee) => ({
+  openFeeP: parseFloat(fee.openFeeP) / 1e12,
+  closeFeeP: parseFloat(fee.closeFeeP) / 1e12,
+  minPositionSizeUsd: parseFloat(fee.minPositionSizeUsd) / 1e18,
+  triggerOrderFeeP: parseFloat(fee.triggerOrderFeeP) / 1e12,
 });
 
 export const convertTradeInitialAccFees = (initialAccFees) => ({
