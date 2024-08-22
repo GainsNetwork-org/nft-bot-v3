@@ -7,8 +7,8 @@ import ethers from 'ethers';
 import {
   fetchOpenPairTradesRaw,
   getCurrentOiWindowId,
-  getLiqPnlThresholdP,
   getLiquidationPrice,
+  getPnl,
   getSpreadWithPriceImpactP,
   isCommoditiesOpen,
   isForexOpen,
@@ -35,11 +35,12 @@ import {
   convertFee,
   convertLiquidationParams,
   convertOiWindows,
+  convertPairFactors,
   convertPairSpreadP,
   convertTrade,
+  convertTradeInfo,
   convertTradeInitialAccFees,
   createLogger,
-  decreaseWindowOi,
   getEthersContract,
   increaseWindowOi,
   initContracts,
@@ -114,7 +115,6 @@ const {
   DRY_RUN_MODE,
   FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS,
   COLLATERAL_PRICE_REFRESH_INTERVAL_MS,
-  PROTECTION_CLOSE_FACTOR_BLOCKS,
 } = appConfig();
 
 const app = {
@@ -132,7 +132,7 @@ const app = {
   eventSub: null,
   // params
   spreadsP: [],
-  protectionCloseFactors: [],
+  pairFactors: [],
   groupLiquidationParams: [],
   borrowingFeesContext: {}, // { collateralIndex: { groups: [], pairs: [] } }
   oiWindows: {},
@@ -490,15 +490,14 @@ async function fetchTradingVariables() {
   }
 
   async function fetchPairs(pairsCount) {
-    const [depths, protectionCloseFactors, maxLeverage, pairs, feesCount, protectionCloseFactorBlocks, groupsCount] = await Promise.all([
+    const [depths, pairFactors, maxLeverage, pairs, feesCount, groupsCount] = await Promise.all([
       app.contracts.diamond.methods.getPairDepths([...Array(parseInt(pairsCount)).keys()]).call(),
-      app.contracts.diamond.methods.getProtectionCloseFactors([...Array(parseInt(pairsCount)).keys()]).call(),
+      app.contracts.diamond.methods.getPairFactors([...Array(parseInt(pairsCount)).keys()]).call(),
       app.contracts.diamond.methods.getAllPairsRestrictedMaxLeverage().call(),
       Promise.all(
         [...Array(parseInt(pairsCount)).keys()].map(async (_, pairIndex) => app.contracts.diamond.methods.pairs(pairIndex).call())
       ),
       app.contracts.diamond.methods.feesCount().call(),
-      app.contracts.diamond.methods.getProtectionCloseFactorBlocks().call(),
       app.contracts.diamond.methods.groupsCount().call(),
     ]);
 
@@ -527,7 +526,7 @@ async function fetchTradingVariables() {
       minPositionSizeUsd: minPositionSizeUsd,
     }));
 
-    app.protectionCloseFactors = protectionCloseFactors;
+    app.pairFactors = pairFactors.map((pairFactor) => convertPairFactors(pairFactor));
 
     app.groupLiquidationParams = (
       await Promise.all(
@@ -721,11 +720,14 @@ function watchLiveTradingEvents() {
       if (
         [
           'PriceImpactOpenInterestAdded',
-          'PriceImpactOpenInterestRemoved',
           'PriceImpactOiTransferredPairs',
           'PriceImpactWindowsDurationUpdated',
           'PriceImpactWindowsCountUpdated',
           'PairCustomMaxLeverageUpdated',
+          'GroupLiquidationParamsUpdated',
+          'ProtectionCloseFactorUpdated',
+          'ProtectionCloseFactorBlocksUpdated',
+          'CumulativeFactorUpdated',
         ].indexOf(event.event) > -1
       ) {
         //
@@ -750,6 +752,7 @@ function watchLiveTradingEvents() {
           'TriggerOrderCanceled',
           'PendingOrderClosed',
           'TradePositionUpdated',
+          'TradeMaxClosingSlippagePUpdated',
         ].indexOf(event.event) > -1
       ) {
         //
@@ -770,19 +773,6 @@ async function handleMultiCollatEvents(event) {
       const { pairIndex, windowId, long, openInterestUsd } = event.returnValues.oiWindowUpdate;
 
       increaseWindowOi(app.oiWindows, pairIndex, windowId, long, openInterestUsd);
-
-      appLogger.verbose(`Processed ${event.event}.`);
-    } else if (event.event === 'PriceImpactOpenInterestRemoved') {
-      const { oiWindowUpdate, notOutdated } = event.returnValues;
-
-      decreaseWindowOi(
-        app.oiWindows,
-        oiWindowUpdate.pairIndex,
-        oiWindowUpdate.windowId,
-        oiWindowUpdate.long,
-        oiWindowUpdate.openInterestUsd,
-        notOutdated
-      );
 
       appLogger.verbose(`Processed ${event.event}.`);
     } else if (event.event === 'PriceImpactOiTransferredPairs') {
@@ -809,6 +799,30 @@ async function handleMultiCollatEvents(event) {
       app.pairMaxLeverage.set(index, parseFloat(maxLeverage));
 
       appLogger.info(`${event.event}: Set pairMaxLeverage for pair ${index} to ${maxLeverage}.`);
+    } else if (event.event === 'GroupLiquidationParamsUpdated') {
+      const { index, params } = event.returnValues;
+
+      app.groupLiquidationParams[index] = convertLiquidationParams(params);
+
+      appLogger.info(`${event.event}: Set groupLiquidationParams for group ${index}.`, app.groupLiquidationParams[index]);
+    } else if (event.event === 'ProtectionCloseFactorUpdated') {
+      const { pairIndex, protectionCloseFactor } = event.returnValues;
+
+      app.pairFactors[pairIndex].protectionCloseFactor = parseFloat(protectionCloseFactor + '') / 1e10;
+
+      appLogger.info(`${event.event}: Set protectionCloseFactor for pair ${pairIndex} to ${protectionCloseFactor + ''}`);
+    } else if (event.event === 'ProtectionCloseFactorBlocksUpdated') {
+      const { pairIndex, protectionCloseFactorBlocks } = event.returnValues;
+
+      app.pairFactors[pairIndex].protectionCloseFactorBlocks = parseInt(protectionCloseFactorBlocks + '');
+
+      appLogger.info(`${event.event}: Set protectionCloseFactorBlocks for pair ${pairIndex} to ${protectionCloseFactorBlocks + ''}`);
+    } else if (event.event === 'CumulativeFactorUpdated') {
+      const { pairIndex, cumulativeFactor } = event.returnValues;
+
+      app.pairFactors[pairIndex].cumulativeFactor = parseFloat(cumulativeFactor + '') / 1e10;
+
+      appLogger.info(`${event.event}: Set cumulativeFactor for pair ${pairIndex} to ${cumulativeFactor + ''}`);
     }
   } catch (error) {
     appLogger.error('Error occurred when handling BorrowingFees event.', error);
@@ -871,6 +885,19 @@ async function synchronizeOpenTrades(event) {
       } else {
         appLogger.error(`Synchronize update trade from event ${eventName}: Trade not found for ${tradeKey}!`);
       }
+    } else if (eventName === 'TradeMaxClosingSlippagePUpdated') {
+      const { user, index } = eventReturnValues.tradeId;
+      const tradeKey = buildTradeIdentifier(user, index);
+
+      const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
+
+      if (existingKnownOpenTrade !== undefined) {
+        existingKnownOpenTrade.tradeInfo.maxSlippageP = eventReturnValues.maxClosingSlippageP.toString();
+
+        appLogger.info(`Synchronize update trade from event ${eventName}: Updated values for ${tradeKey}`);
+      } else {
+        appLogger.error(`Synchronize update trade from event ${eventName}: Trade not found for ${tradeKey}!`);
+      }
     } else if (eventName === 'OpenLimitUpdated') {
       const { trader, index, newPrice, newTp, newSl, maxSlippageP } = eventReturnValues;
       const blockNumber = event.blockNumber.toString();
@@ -926,6 +953,16 @@ async function synchronizeOpenTrades(event) {
           block: initialAccFees.block + '',
         };
 
+        if (eventReturnValues.isPartialIncrease) {
+          const liquidationParams = await app.contracts.diamond.methods.getTradeLiquidationParams(user, index).call();
+          existingKnownOpenTrade.liquidationParams = {
+            maxLiqSpreadP: liquidationParams.maxLiqSpreadP + '',
+            startLiqThresholdP: liquidationParams.startLiqThresholdP + '',
+            endLiqThresholdP: liquidationParams.endLiqThresholdP + '',
+            startLeverage: liquidationParams.startLeverage + '',
+            endLeverage: liquidationParams.endLeverage + '',
+          };
+        }
         appLogger.info(`Synchronize update trade from event ${eventName}: Updated values for ${tradeKey}`);
       } else {
         appLogger.error(`Synchronize update trade from event ${eventName}: Trade not found for ${tradeKey}!`);
@@ -1119,24 +1156,88 @@ function watchPricingStream() {
 
           let orderType = -1;
 
+          ////////// Prep converted objects //////////
+          const convertedTrade = convertTrade(openTrade, collateralConfig.precision);
+          const convertedTradeInfo = convertTradeInfo(openTrade.tradeInfo);
+          const convertedInitialAccFees = convertTradeInitialAccFees(openTrade.initialAccFees);
+          const convertedLiquidationParams = convertLiquidationParams(openTrade.liquidationParams);
+          const convertedFee = convertFee(app.fees[parseInt(app.pairs[pairIndex].feeIndex)]);
+          const convertedPairSpreadP = convertPairSpreadP(app.spreadsP[pairIndex]);
+          const borrowingFeesContext = app.borrowingFeesContext[collateralIndex];
+          ////////////////////////////////////////////
+
           if (isPendingOpenLimitOrder === false) {
             // Hotfix openPrice of 0
             if (parseInt(openTrade.openPrice) === 0) return;
 
             const liqPrice = getTradeLiquidationPrice(
-              collateralConfig.precision,
-              app.borrowingFeesContext[collateralIndex],
-              openTrade,
-              app.fees[parseInt(app.pairs[pairIndex].feeIndex)],
-              app.spreadsP[pairIndex]
+              convertedTrade,
+              convertedTradeInfo,
+              convertedInitialAccFees,
+              convertedLiquidationParams,
+              convertedFee,
+              convertedPairSpreadP,
+              borrowingFeesContext
+            );
+            const [, pnlPercentage] = getPnl(
+              price,
+              convertedTrade,
+              convertedTradeInfo,
+              convertedInitialAccFees,
+              convertedLiquidationParams,
+              true,
+              {
+                maxGainP: 900,
+                fee: convertedFee,
+                currentBlock: app.blocks.latestL2Block,
+                openInterest: borrowingFeesContext.pairs[convertedTrade.pairIndex].oi,
+                pairs: borrowingFeesContext.pairs,
+                groups: borrowingFeesContext.groups,
+                collateralPriceUsd: app.collaterals[convertedTrade.collateralIndex].price,
+                contractsVersion: convertedTradeInfo.contractsVersion,
+                feeMultiplier: 1,
+              }
             );
 
-            const tp = parseFloat(openTrade.tp) / 1e10;
-            const sl = parseFloat(openTrade.sl) / 1e10;
+            const spreadWithPriceImpactP = getSpreadWithPriceImpactP(
+              convertedPairSpreadP,
+              openTrade.long,
+              convertedTrade.collateralAmount * collateralConfig.price,
+              convertedTrade.leverage,
+              app.pairDepths[openTrade.pairIndex],
+              app.oiWindowsSettings,
+              app.oiWindows[openTrade.pairIndex],
+              {
+                isOpen: false,
+                isPnlPositive: pnlPercentage > 0,
+                createdBlock: +openTrade.tradeInfo.createdBlock,
+                ...app.pairFactors[pairIndex],
+                liquidationParams: convertLiquidationParams(openTrade.liquidationParams),
+                contractsVersion: +openTrade.tradeInfo.contractsVersion,
+                currentBlock: app.blocks.latestL2Block,
+              }
+            );
 
-            if (tp !== 0 && ((long && price >= tp) || (!long && price <= tp))) {
+            const tp = convertedTrade.tp;
+            const sl = convertedTrade.sl;
+
+            // inverse direction (!long) because it's a close trade op
+            const priceAfterImpact = !long ? price * (1 + spreadWithPriceImpactP) : price * (1 - spreadWithPriceImpactP);
+
+            const tpDistanceP = tp !== 0 ? (Math.abs(tp - priceAfterImpact) / tp) * 100 : 0;
+            const slDistanceP = sl !== 0 ? (Math.abs(sl - priceAfterImpact) / sl) * 100 : 0;
+
+            if (
+              tp !== 0 &&
+              tpDistanceP <= convertedTradeInfo.maxSlippageP && // abs distance from current price and tp can't be above max slippage
+              ((long && price >= tp) || (!long && price <= tp))
+            ) {
               orderType = PENDING_ORDER_TYPE.TP_CLOSE;
-            } else if (sl !== 0 && ((long && price <= sl) || (!long && price >= sl))) {
+            } else if (
+              sl !== 0 &&
+              slDistanceP <= convertedTradeInfo.maxSlippageP && // abs distance from current price and sl can't be above max slippage
+              ((long && price <= sl) || (!long && price >= sl))
+            ) {
               orderType = PENDING_ORDER_TYPE.SL_CLOSE;
             } else if ((long && price <= liqPrice) || (!long && price >= liqPrice)) {
               orderType = PENDING_ORDER_TYPE.LIQ_CLOSE;
@@ -1144,16 +1245,14 @@ function watchPricingStream() {
               //appLogger.debug(`Open trade ${openTradeKey} is not ready for us to act on yet.`);
             }
           } else {
-            const leverage = parseFloat(openTrade.leverage) / 1e3;
-            const maxSlippageP = parseFloat(openTrade.tradeInfo.maxSlippageP + '') / 1e3 || 1;
-            const posDai = leverage * (parseFloat(openTrade.collateralAmount) / collateralConfig.precision);
+            const posDai = convertedTrade.leverage * convertedTrade.collateralAmount;
 
             const spreadWithPriceImpactP =
               getSpreadWithPriceImpactP(
-                convertPairSpreadP(app.spreadsP[pairIndex]),
+                convertedPairSpreadP,
                 openTrade.long,
-                (parseFloat(openTrade.collateralAmount) / collateralConfig.precision) * collateralConfig.price,
-                leverage,
+                convertedTrade.collateralAmount * collateralConfig.price,
+                convertedTrade.leverage,
                 app.pairDepths[openTrade.pairIndex],
                 app.oiWindowsSettings,
                 app.oiWindows[openTrade.pairIndex]
@@ -1166,14 +1265,17 @@ function watchPricingStream() {
               : app.borrowingFeesContext[collateralIndex].pairs[openTrade.pairIndex].oi.short;
 
             const newInterestDai = interestDai + posDai;
-            const wantedPrice = parseFloat(openTrade.openPrice) / 1e10;
+            const wantedPrice = convertedTrade.openPrice;
+
+            const openPriceDistanceP = (Math.abs(convertedTrade.openPrice - price) / convertedTrade.openPrice) * 100;
 
             if (
-              isValidLeverage(openTrade.pairIndex, leverage) &&
+              isValidLeverage(openTrade.pairIndex, convertedTrade.leverage) &&
               newInterestDai <= maxInterestDai &&
-              spreadWithPriceImpactP * leverage <= MAX_OPEN_NEGATIVE_PNL_P &&
+              spreadWithPriceImpactP * convertedTrade.leverage <= MAX_OPEN_NEGATIVE_PNL_P &&
               withinMaxGroupOi(openTrade.pairIndex, long, posDai, app.borrowingFeesContext[collateralIndex]) &&
-              spreadWithPriceImpactP <= maxSlippageP
+              spreadWithPriceImpactP <= convertedTradeInfo.maxSlippageP &&
+              openPriceDistanceP <= convertedTradeInfo.maxSlippageP // ensure that current price isn't too far from open price
             ) {
               const tradeType = openTrade.tradeType + '';
               if (
@@ -1390,16 +1492,23 @@ function watchPricingStream() {
     }
   };
 
-  function getTradeLiquidationPrice(precision, borrowingFeesContext, trade, feeContext, pairSpreadP) {
-    const { initialAccFees, pairIndex, liquidationParams } = trade;
-
-    return getLiquidationPrice(convertTrade(trade, precision), convertFee(feeContext), convertTradeInitialAccFees(initialAccFees), {
+  function getTradeLiquidationPrice(
+    convertedTrade,
+    convertedTradeInfo,
+    convertedInitialAccFees,
+    convertedLiquidationParams,
+    convertedFee,
+    convertedPairSpreadP,
+    borrowingFeesContext
+  ) {
+    return getLiquidationPrice(convertedTrade, convertedFee, convertedInitialAccFees, {
       currentBlock: app.blocks.latestL2Block,
-      openInterest: borrowingFeesContext.pairs[pairIndex].oi,
       pairs: borrowingFeesContext.pairs,
       groups: borrowingFeesContext.groups,
-      liquidationParams: convertLiquidationParams(liquidationParams),
-      pairSpreadP: convertPairSpreadP(pairSpreadP),
+      liquidationParams: convertedLiquidationParams,
+      pairSpreadP: convertedPairSpreadP,
+      collateralPriceUsd: app.collaterals[convertedTrade.collateralIndex].price,
+      contractsVersion: convertedTradeInfo.contractsVersion,
     });
   }
 

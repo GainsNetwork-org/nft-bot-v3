@@ -23,6 +23,8 @@ export const transformRawTrade = ({ trade, tradeInfo, initialAccFees, liquidatio
     maxSlippageP: tradeInfo.maxSlippageP + '',
     lastOiUpdateTs: tradeInfo.lastOiUpdateTs,
     collateralPriceUsd: tradeInfo.collateralPriceUsd + '',
+    contractsVersion: tradeInfo.contractsVersion + '',
+    lastPosIncreaseBlock: tradeInfo.lastPosIncreaseBlock + '',
   },
   initialAccFees: {
     accPairFee: initialAccFees.accPairFee + '',
@@ -65,6 +67,24 @@ export const convertTrade = (trade, precision) => {
   };
 };
 
+export const convertTradeInfo = (tradeInfo) => {
+  return {
+    createdBlock: parseInt(tradeInfo.createdBlock),
+    tpLastUpdatedBlock: parseInt(tradeInfo.tpLastUpdatedBlock),
+    slLastUpdatedBlock: parseInt(tradeInfo.slLastUpdatedBlock),
+    maxSlippageP: tradeInfo.maxSlippageP + '' === '0' ? 1 : parseFloat(tradeInfo.maxSlippageP) / 1e3,
+    lastOiUpdateTs: parseFloat(tradeInfo.lastOiUpdateTs),
+    collateralPriceUsd: parseFloat(tradeInfo.collateralPriceUsd) / 1e8,
+    contractsVersion: parseInt(tradeInfo.contractsVersion),
+    lastPosIncreaseBlock: parseInt(tradeInfo.lastPosIncreaseBlock),
+  };
+};
+
+export const convertPairFactors = (pairFactors) => ({
+  protectionCloseFactor: parseFloat(pairFactors.protectionCloseFactor) / 1e10,
+  cumulativeFactor: parseFloat(pairFactors.cumulativeFactor) / 1e10,
+  protectionCloseFactorBlocks: parseInt(pairFactors.protectionCloseFactorBlocks),
+});
 export const convertFee = (fee) => ({
   openFeeP: parseFloat(fee.openFeeP) / 1e12,
   closeFeeP: parseFloat(fee.closeFeeP) / 1e12,
@@ -118,21 +138,6 @@ export const increaseWindowOi = (oiWindows, pairIndex, windowId, long, openInter
   }
 };
 
-export const decreaseWindowOi = (oiWindows, pairIndex, windowId, long, openInterest, notOutdated) => {
-  if (!notOutdated) return;
-
-  if (!oiWindows[pairIndex][windowId]) {
-    return;
-  }
-
-  const oi = parseFloat(openInterest) / 1e18;
-  if (long) {
-    oiWindows[pairIndex][windowId].oiLongUsd -= oi;
-  } else {
-    oiWindows[pairIndex][windowId].oiShortUsd -= oi;
-  }
-};
-
 export const transferOiWindows = (oiWindows, pairsCount, prevCurrentWindowId, prevEarliestWindowId, newCurrentWindowId) => {
   const newOiWindows = [];
 
@@ -183,7 +188,6 @@ export const appConfig = () => {
     DRY_RUN_MODE: process.env.DRY_RUN_MODE === 'true',
     FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS: parseFloat(process.env.FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_SEC || '61') * 1000,
     MAX_LIQ_SPREAD_P: 5 * 1e10 + '',
-    PROTECTION_CLOSE_FACTOR_BLOCKS: 1615, // ~1615 blocks per 7 minutes on Arbitrum
   };
 
   const NETWORK = NETWORKS[conf.CHAIN_ID];
