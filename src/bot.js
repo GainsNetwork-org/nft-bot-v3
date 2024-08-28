@@ -1279,8 +1279,9 @@ function watchPricingStream() {
 
             const newInterestDai = interestDai + posDai;
             const wantedPrice = convertedTrade.openPrice;
+            const wantedPriceAfterImpact = long ? wantedPrice * (1 + spreadWithPriceImpactP) : wantedPrice * (1 - spreadWithPriceImpactP);
 
-            const openPriceDistanceP = (Math.abs(convertedTrade.openPrice - price) / convertedTrade.openPrice) * 100;
+            const openPriceDistanceP = (Math.abs(wantedPrice - price) / wantedPrice) * 100;
 
             if (
               isValidLeverage(openTrade.pairIndex, convertedTrade.leverage) &&
@@ -1288,7 +1289,11 @@ function watchPricingStream() {
               spreadWithPriceImpactP * convertedTrade.leverage <= MAX_OPEN_NEGATIVE_PNL_P &&
               withinMaxGroupOi(openTrade.pairIndex, long, posDai, app.borrowingFeesContext[collateralIndex]) &&
               spreadWithPriceImpactP <= convertedTradeInfo.maxSlippageP &&
-              openPriceDistanceP <= convertedTradeInfo.maxSlippageP // ensure that current price isn't too far from open price
+              // Ensure that current price isn't too far from open price
+              openPriceDistanceP <= convertedTradeInfo.maxSlippageP &&
+              // Ensure TP isn't hit with wanted price + spread/PI
+              (convertedTrade.tp === 0 ||
+                (convertedTrade.tp > 0 && (long ? wantedPriceAfterImpact < convertedTrade.tp : wantedPriceAfterImpact > convertedTrade.tp)))
             ) {
               const tradeType = openTrade.tradeType + '';
               if (
