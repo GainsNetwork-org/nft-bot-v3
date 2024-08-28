@@ -728,6 +728,7 @@ function watchLiveTradingEvents() {
           'ProtectionCloseFactorUpdated',
           'ProtectionCloseFactorBlocksUpdated',
           'CumulativeFactorUpdated',
+          'OnePercentDepthUpdated',
         ].indexOf(event.event) > -1
       ) {
         //
@@ -823,6 +824,15 @@ async function handleMultiCollatEvents(event) {
       app.pairFactors[pairIndex].cumulativeFactor = parseFloat(cumulativeFactor + '') / 1e10;
 
       appLogger.info(`${event.event}: Set cumulativeFactor for pair ${pairIndex} to ${cumulativeFactor + ''}`);
+    } else if (event.event === 'OnePercentDepthUpdated') {
+      const { pairIndex, valueAboveUsd, valueBelowUsd } = event.returnValues;
+
+      app.pairDepths[+pairIndex] = {
+        onePercentDepthAboveUsd: parseFloat(valueAboveUsd),
+        onePercentDepthBelowUsd: parseFloat(valueBelowUsd),
+      };
+
+      appLogger.info(`${event.event}: Set 1% depth for pair ${pairIndex} to ${valueAboveUsd} above, ${valueBelowUsd} below`);
     }
   } catch (error) {
     appLogger.error('Error occurred when handling BorrowingFees event.', error);
