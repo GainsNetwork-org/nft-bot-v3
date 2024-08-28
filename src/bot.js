@@ -1170,17 +1170,34 @@ function watchPricingStream() {
             // Hotfix openPrice of 0
             if (parseInt(openTrade.openPrice) === 0) return;
 
-            const liqPrice = getTradeLiquidationPrice(
-              convertedTrade,
-              convertedTradeInfo,
-              convertedInitialAccFees,
-              convertedLiquidationParams,
-              convertedFee,
-              convertedPairSpreadP,
-              borrowingFeesContext
-            );
+            const spreadCtx = {
+              isOpen: false,
+              isPnlPositive: false,
+              createdBlock: +openTrade.tradeInfo.createdBlock,
+              ...app.pairFactors[pairIndex],
+              liquidationParams: convertLiquidationParams(openTrade.liquidationParams),
+              contractsVersion: +openTrade.tradeInfo.contractsVersion,
+              currentBlock: app.blocks.latestL2Block,
+            };
+
+            const calculateSpreadWithPriceImpactP = (spreadCtxToUse) => {
+              return getSpreadWithPriceImpactP(
+                convertedPairSpreadP,
+                openTrade.long,
+                convertedTrade.collateralAmount * collateralConfig.price,
+                convertedTrade.leverage,
+                app.pairDepths[openTrade.pairIndex],
+                app.oiWindowsSettings,
+                app.oiWindows[openTrade.pairIndex],
+                spreadCtxToUse
+              );
+            };
+
+            // Fetch spread + price impact with no protection factor
+            const spreadWithPriceImpactPnoProtection = calculateSpreadWithPriceImpactP(spreadCtx);
+
             const [, pnlPercentage] = getPnl(
-              price,
+              !long ? price * (1 + spreadWithPriceImpactPnoProtection) : price * (1 - spreadWithPriceImpactPnoProtection),
               convertedTrade,
               convertedTradeInfo,
               convertedInitialAccFees,
@@ -1199,24 +1216,10 @@ function watchPricingStream() {
               }
             );
 
-            const spreadWithPriceImpactP = getSpreadWithPriceImpactP(
-              convertedPairSpreadP,
-              openTrade.long,
-              convertedTrade.collateralAmount * collateralConfig.price,
-              convertedTrade.leverage,
-              app.pairDepths[openTrade.pairIndex],
-              app.oiWindowsSettings,
-              app.oiWindows[openTrade.pairIndex],
-              {
-                isOpen: false,
-                isPnlPositive: pnlPercentage > 0,
-                createdBlock: +openTrade.tradeInfo.createdBlock,
-                ...app.pairFactors[pairIndex],
-                liquidationParams: convertLiquidationParams(openTrade.liquidationParams),
-                contractsVersion: +openTrade.tradeInfo.contractsVersion,
-                currentBlock: app.blocks.latestL2Block,
-              }
-            );
+            const spreadWithPriceImpactP = calculateSpreadWithPriceImpactP({
+              ...spreadCtx,
+              isPnlPositive: pnlPercentage > 0,
+            });
 
             const tp = convertedTrade.tp;
             const sl = convertedTrade.sl;
@@ -1226,6 +1229,16 @@ function watchPricingStream() {
 
             const tpDistanceP = tp !== 0 ? (Math.abs(tp - priceAfterImpact) / tp) * 100 : 0;
             const slDistanceP = sl !== 0 ? (Math.abs(sl - priceAfterImpact) / sl) * 100 : 0;
+
+            const liqPrice = getTradeLiquidationPrice(
+              convertedTrade,
+              convertedTradeInfo,
+              convertedInitialAccFees,
+              convertedLiquidationParams,
+              convertedFee,
+              convertedPairSpreadP,
+              borrowingFeesContext
+            );
 
             if (
               tp !== 0 &&
