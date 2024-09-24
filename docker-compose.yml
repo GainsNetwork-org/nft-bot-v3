@@ -27,3 +27,11 @@ services:
     mem_limit: 1G
     command: node src/bot.js
     restart: unless-stopped
+  bot-base:
+    environment:
+      - NODE_ENV=base
+    image: nft_bot
+    cpus: 1
+    mem_limit: 1G
+    command: node src/bot.js
+    restart: unless-stopped
