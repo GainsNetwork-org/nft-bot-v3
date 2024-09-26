@@ -175,12 +175,15 @@ async function checkLinkAllowance(contractAddress) {
     } else {
       appLogger.info(`LINK not allowed, approving now.`);
 
-      const tx = createTransaction({
-        to: link.options.address,
-        data: link.methods
-          .approve(contractAddress, '115792089237316195423570985008687907853269984665640564039457584007913129639935')
-          .encodeABI(),
-      });
+      const tx = createTransaction(
+        {
+          to: link.options.address,
+          data: link.methods
+            .approve(contractAddress, '115792089237316195423570985008687907853269984665640564039457584007913129639935')
+            .encodeABI(),
+        },
+        true
+      );
 
       try {
         const signed = await app.currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
@@ -281,6 +284,9 @@ function createWeb3Client(providerIndex, providerUrl) {
   web3Client.eth.handleRevert = true;
   web3Client.eth.defaultAccount = process.env.PUBLIC_KEY;
   web3Client.eth.defaultChain = CHAIN;
+  web3Client.eth.extend({
+    methods: [{ name: 'getMaxPriorityFeePerGas', call: 'eth_maxPriorityFeePerGas', outputFormatter: Web3.utils.hexToNumberString }],
+  });
 
   web3Client.eth.subscribe('newBlockHeaders').on('data', async (header) => {
     const newBlockNumber = header.number;
@@ -415,7 +421,7 @@ async function startFetchingLatestGasPrices() {
         const gasPriceData = await response.json();
 
         if (NETWORK.gasMode === GAS_MODE.EIP1559) {
-          app.standardTransactionGasFees = {
+          app.gas.standardTransactionGasFees = {
             maxFee: Math.round(gasPriceData.standard.maxFee),
             maxPriorityFee: Math.round(gasPriceData.standard.maxPriorityFee),
           };
@@ -431,7 +437,14 @@ async function startFetchingLatestGasPrices() {
       }
     } else {
       if (NETWORK.gasMode === GAS_MODE.EIP1559) {
-        // TODO: Add support for EIP1159 provider fetching here
+        app.gas.standardTransactionGasFees = {
+          maxFee: Number(await app.currentlySelectedWeb3Client.eth.getGasPrice()) / 1e9,
+          maxPriorityFee: Number(await app.currentlySelectedWeb3Client.eth.getMaxPriorityFeePerGas()) / 1e9,
+        };
+        app.gas.priorityTransactionMaxPriorityFeePerGas = Math.max(
+          app.gas.standardTransactionGasFees.maxPriorityFee * PRIORITY_GWEI_MULTIPLIER,
+          MIN_PRIORITY_GWEI
+        );
       } else if (NETWORK.gasMode === GAS_MODE.LEGACY) {
         app.gas.gasPriceBn = new BN(await app.currentlySelectedWeb3Client.eth.getGasPrice());
       }
@@ -1629,9 +1642,9 @@ function getTransactionGasFees(network, isPriority = false) {
   if (NETWORK.gasMode === GAS_MODE.EIP1559) {
     return {
       maxPriorityFeePerGas: isPriority
-        ? toHex(app.gas.priorityTransactionMaxPriorityFeePerGas * 1e9)
-        : toHex(app.gas.standardTransactionGasFees.maxPriorityFee * 1e9),
-      maxFeePerGas: isPriority ? MAX_FEE_PER_GAS_WEI_HEX : toHex(app.gas.standardTransactionGasFees.maxFee * 1e9),
+        ? toHex(Math.round(app.gas.priorityTransactionMaxPriorityFeePerGas * 1e9))
+        : toHex(Math.round(app.gas.standardTransactionGasFees.maxPriorityFee * 1e9)),
+      maxFeePerGas: isPriority ? MAX_FEE_PER_GAS_WEI_HEX : toHex(Math.round(app.gas.standardTransactionGasFees.maxFee * 1e9)),
     };
   } else if (NETWORK.gasMode === GAS_MODE.LEGACY) {
     return {
