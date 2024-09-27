@@ -8,6 +8,7 @@ export const CHAIN_IDS = {
   MUMBAI: 80001,
   ARBITRUM: 42161,
   SEPOLIA: 421614,
+  BASE: 8453,
 };
 
 export const COLLATERAL = {
@@ -95,6 +96,19 @@ export const NETWORKS = {
       {
         symbol: COLLATERAL.USDC,
         collateralIndex: 3,
+      },
+    ],
+  },
+  [CHAIN_IDS.BASE]: {
+    chainName: 'base',
+    chainId: CHAIN_IDS.BASE,
+    gasMode: GAS_MODE.EIP1559,
+    gasStationUrl: undefined,
+    diamondAddress: '0x6cD5aC19a07518A8092eEFfDA4f1174C72704eeb',
+    collaterals: [
+      {
+        symbol: COLLATERAL.USDC,
+        collateralIndex: 1,
       },
     ],
   },
