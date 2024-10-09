@@ -32,6 +32,7 @@ import {
 import {
   appConfig,
   buildTradeIdentifier,
+  chunkArray,
   convertFee,
   convertLiquidationParams,
   convertOiWindows,
@@ -145,6 +146,7 @@ const app = {
   knownOpenTrades: null,
   triggeredOrders: new Map(),
   triggerRetries: new Map(),
+  protectionCloseFactorWhitelist: new Map(),
   allowedLink: false,
   gas: {
     priorityTransactionMaxPriorityFeePerGas: 50,
@@ -514,7 +516,7 @@ async function fetchTradingVariables() {
       app.contracts.diamond.methods.groupsCount().call(),
     ]);
 
-    app.pairMaxLeverage = new Map(maxLeverage.map((l, idx) => [idx, parseInt(l)]));
+    app.pairMaxLeverage = new Map(maxLeverage.map((l, idx) => [idx, parseFloat(l) / 1e3]));
     app.pairDepths = depths.map((value) => ({
       onePercentDepthAboveUsd: parseFloat(value.onePercentDepthAboveUsd),
       onePercentDepthBelowUsd: parseFloat(value.onePercentDepthBelowUsd),
@@ -532,12 +534,14 @@ async function fetchTradingVariables() {
 
     app.fees = (
       await Promise.all([...Array(parseInt(feesCount)).keys()].map((_, feeIndex) => app.contracts.diamond.methods.fees(feeIndex).call()))
-    ).map(({ openFeeP, closeFeeP, triggerOrderFeeP, minPositionSizeUsd }) => ({
-      openFeeP: openFeeP,
-      closeFeeP: closeFeeP,
-      triggerOrderFeeP: triggerOrderFeeP,
-      minPositionSizeUsd: minPositionSizeUsd,
-    }));
+    ).map(({ totalPositionSizeFeeP, totalLiqCollateralFeeP, oraclePositionSizeFeeP, minPositionSizeUsd }) =>
+      convertFee({
+        totalPositionSizeFeeP: totalPositionSizeFeeP,
+        totalLiqCollateralFeeP: totalLiqCollateralFeeP,
+        oraclePositionSizeFeeP: oraclePositionSizeFeeP,
+        minPositionSizeUsd: minPositionSizeUsd,
+      })
+    );
 
     app.pairFactors = pairFactors.map((pairFactor) => convertPairFactors(pairFactor));
 
@@ -663,8 +667,9 @@ async function fetchOpenTrades() {
 
     const start = performance.now();
 
-    const trades = await fetchOpenPairTrades();
+    const { allTrades: trades, protectionCloseFactorWhitelist } = await fetchOpenPairTrades();
     app.knownOpenTrades = new Map(trades.map((trade) => [buildTradeIdentifier(trade.user, trade.index), trade]));
+    app.protectionCloseFactorWhitelist = new Map([...app.protectionCloseFactorWhitelist, ...protectionCloseFactorWhitelist]);
 
     appLogger.info(`Fetched ${app.knownOpenTrades.size} total open trade(s) in ${performance.now() - start}ms.`);
 
@@ -716,7 +721,25 @@ async function fetchOpenTrades() {
 
     appLogger.info(`Fetched ${allTrades.length} new open pair trade(s).`);
 
-    return allTrades;
+    const unknownTraders = [...new Set(allTrades.map((trade) => trade.user))].filter(
+      (address) => !app.protectionCloseFactorWhitelist.has(address.toLowerCase())
+    );
+
+    const protectionCloseFactorWhitelist = (
+      await Promise.all(
+        chunkArray(unknownTraders, 20).map((traderChunk) =>
+          app.contracts.diamond.methods
+            .multicall(traderChunk.map((address) => app.contracts.diamond.methods.getProtectionCloseFactorWhitelist(address).encodeABI()))
+            .call()
+        )
+      )
+    )
+      .flat()
+      .map((value, idx) => [unknownTraders[idx].toLowerCase(), Number(value) === 1]);
+
+    appLogger.info(`Fetched ${protectionCloseFactorWhitelist.length} trader whitelist status.`);
+
+    return { allTrades, protectionCloseFactorWhitelist };
   }
 }
 // -----------------------------------------
@@ -742,6 +765,9 @@ function watchLiveTradingEvents() {
           'ProtectionCloseFactorBlocksUpdated',
           'CumulativeFactorUpdated',
           'OnePercentDepthUpdated',
+          'ProtectionCloseFactorWhitelistUpdated',
+          'ExemptOnOpenUpdated',
+          'ExemptAfterProtectionCloseFactorUpdated',
         ].indexOf(event.event) > -1
       ) {
         //
@@ -761,7 +787,7 @@ function watchLiveTradingEvents() {
           'TradeClosed',
           'TradeTpUpdated',
           'TradeSlUpdated',
-          'OpenLimitUpdated',
+          'OpenOrderDetailsUpdated',
           'TradeCollateralUpdated',
           'TriggerOrderCanceled',
           'PendingOrderClosed',
@@ -837,6 +863,20 @@ async function handleMultiCollatEvents(event) {
       app.pairFactors[pairIndex].cumulativeFactor = parseFloat(cumulativeFactor + '') / 1e10;
 
       appLogger.info(`${event.event}: Set cumulativeFactor for pair ${pairIndex} to ${cumulativeFactor + ''}`);
+    } else if (event.event === 'ExemptOnOpenUpdated') {
+      const { pairIndex, exemptOnOpen } = event.returnValues;
+
+      app.pairFactors[pairIndex].exemptOnOpen = exemptOnOpen + '' === 'true';
+
+      appLogger.info(`${event.event}: Set exemptOnOpen for pair ${pairIndex} to ${exemptOnOpen + ''}`);
+    } else if (event.event === 'ExemptAfterProtectionCloseFactorUpdated') {
+      const { pairIndex, exemptAfterProtectionCloseFactor } = event.returnValues;
+
+      app.pairFactors[pairIndex].exemptAfterProtectionCloseFactor = exemptAfterProtectionCloseFactor + '' === 'true';
+
+      appLogger.info(
+        `${event.event}: Set exemptAfterProtectionCloseFactor for pair ${pairIndex} to ${exemptAfterProtectionCloseFactor + ''}`
+      );
     } else if (event.event === 'OnePercentDepthUpdated') {
       const { pairIndex, valueAboveUsd, valueBelowUsd } = event.returnValues;
 
@@ -846,6 +886,12 @@ async function handleMultiCollatEvents(event) {
       };
 
       appLogger.info(`${event.event}: Set 1% depth for pair ${pairIndex} to ${valueAboveUsd} above, ${valueBelowUsd} below`);
+    } else if (event.event === 'ProtectionCloseFactorWhitelistUpdated') {
+      const { trader, whitelisted } = event.returnValues;
+
+      app.protectionCloseFactorWhitelist.set(trader.toLowerCase(), whitelisted + '' === 'true');
+
+      appLogger.info(`${event.event}: Set protectionCloseFactorWhitelist for ${trader} to ${whitelisted + ''}`);
     }
   } catch (error) {
     appLogger.error('Error occurred when handling BorrowingFees event.', error);
@@ -879,7 +925,7 @@ async function synchronizeOpenTrades(event) {
       currentKnownOpenTrades.set(tradeKey, newTrade);
       appLogger.info(`Synchronize open trades from event ${eventName}: Stored active trade ${tradeKey}`);
     } else if (eventName === 'TradeClosed') {
-      const { user, index } = eventReturnValues.tradeId;
+      const { user, index } = eventReturnValues;
       const tradeKey = buildTradeIdentifier(user, index);
 
       const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
@@ -891,7 +937,7 @@ async function synchronizeOpenTrades(event) {
         appLogger.info(`Synchronize open trades from event ${eventName}: Trade not found for ${tradeKey}`);
       }
     } else if (eventName === 'TradeTpUpdated' || eventName === 'TradeSlUpdated') {
-      const { user, index } = eventReturnValues.tradeId;
+      const { user, index } = eventReturnValues;
       const tradeKey = buildTradeIdentifier(user, index);
       const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
 
@@ -909,7 +955,7 @@ async function synchronizeOpenTrades(event) {
         appLogger.error(`Synchronize update trade from event ${eventName}: Trade not found for ${tradeKey}!`);
       }
     } else if (eventName === 'TradeMaxClosingSlippagePUpdated') {
-      const { user, index } = eventReturnValues.tradeId;
+      const { user, index } = eventReturnValues;
       const tradeKey = buildTradeIdentifier(user, index);
 
       const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
@@ -921,8 +967,8 @@ async function synchronizeOpenTrades(event) {
       } else {
         appLogger.error(`Synchronize update trade from event ${eventName}: Trade not found for ${tradeKey}!`);
       }
-    } else if (eventName === 'OpenLimitUpdated') {
-      const { trader, index, newPrice, newTp, newSl, maxSlippageP } = eventReturnValues;
+    } else if (eventName === 'OpenOrderDetailsUpdated') {
+      const { user: trader, index, openPrice: newPrice, tp: newTp, sl: newSl, maxSlippageP } = eventReturnValues;
       const blockNumber = event.blockNumber.toString();
       const tradeKey = buildTradeIdentifier(trader, index);
 
@@ -942,7 +988,7 @@ async function synchronizeOpenTrades(event) {
         appLogger.error(`Synchronize update trade from event ${eventName}: Trade not found for ${tradeKey}!`);
       }
     } else if (eventName === 'TradeCollateralUpdated') {
-      const { user, index } = eventReturnValues.tradeId;
+      const { user, index } = eventReturnValues;
       const tradeKey = buildTradeIdentifier(user, index);
 
       const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
@@ -954,7 +1000,7 @@ async function synchronizeOpenTrades(event) {
         appLogger.error(`Synchronize update trade from event ${eventName}: Trade not found for ${tradeKey}!`);
       }
     } else if (eventName === 'TradePositionUpdated') {
-      const { user, index } = eventReturnValues.tradeId;
+      const { user, index } = eventReturnValues;
       const tradeKey = buildTradeIdentifier(user, index);
 
       const existingKnownOpenTrade = currentKnownOpenTrades.get(tradeKey);
@@ -1184,7 +1230,7 @@ function watchPricingStream() {
           const convertedTradeInfo = convertTradeInfo(openTrade.tradeInfo);
           const convertedInitialAccFees = convertTradeInitialAccFees(openTrade.initialAccFees);
           const convertedLiquidationParams = convertLiquidationParams(openTrade.liquidationParams);
-          const convertedFee = convertFee(app.fees[parseInt(app.pairs[pairIndex].feeIndex)]);
+          const convertedFee = app.fees[parseInt(app.pairs[pairIndex].feeIndex)];
           const convertedPairSpreadP = convertPairSpreadP(app.spreadsP[pairIndex]);
           const borrowingFeesContext = app.borrowingFeesContext[collateralIndex];
           ////////////////////////////////////////////
@@ -1201,6 +1247,7 @@ function watchPricingStream() {
               liquidationParams: convertLiquidationParams(openTrade.liquidationParams),
               contractsVersion: +openTrade.tradeInfo.contractsVersion,
               currentBlock: app.blocks.latestL2Block,
+              protectionCloseFactorWhitelist: app.protectionCloseFactorWhitelist.has(user.toLowerCase()),
             };
 
             const calculateSpreadWithPriceImpactP = (spreadCtxToUse) => {
