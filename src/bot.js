@@ -1338,7 +1338,8 @@ function watchPricingStream() {
                 convertedTrade.leverage,
                 app.pairDepths[openTrade.pairIndex],
                 app.oiWindowsSettings,
-                app.oiWindows[openTrade.pairIndex]
+                app.oiWindows[openTrade.pairIndex],
+                { isOpen: true, ...app.pairFactors[openTrade.pairIndex] }
               ) * 100;
 
             // oi.long/short/max are already transformed (div 1e10)
