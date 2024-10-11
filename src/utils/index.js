@@ -84,12 +84,14 @@ export const convertPairFactors = (pairFactors) => ({
   protectionCloseFactor: parseFloat(pairFactors.protectionCloseFactor) / 1e10,
   cumulativeFactor: parseFloat(pairFactors.cumulativeFactor) / 1e10,
   protectionCloseFactorBlocks: parseInt(pairFactors.protectionCloseFactorBlocks),
+  exemptOnOpen: pairFactors.exemptOnOpen + '' === 'true',
+  exemptAfterProtectionCloseFactor: pairFactors.exemptAfterProtectionCloseFactor + '' === 'true',
 });
 export const convertFee = (fee) => ({
-  openFeeP: parseFloat(fee.openFeeP) / 1e12,
-  closeFeeP: parseFloat(fee.closeFeeP) / 1e12,
-  minPositionSizeUsd: parseFloat(fee.minPositionSizeUsd) / 1e18,
-  triggerOrderFeeP: parseFloat(fee.triggerOrderFeeP) / 1e12,
+  totalPositionSizeFeeP: parseFloat(fee.totalPositionSizeFeeP) / 1e12,
+  totalLiqCollateralFeeP: parseFloat(fee.totalLiqCollateralFeeP) / 1e12,
+  oraclePositionSizeFeeP: parseFloat(fee.oraclePositionSizeFeeP) / 1e12,
+  minPositionSizeUsd: parseFloat(fee.minPositionSizeUsd) / 1e3,
 });
 
 export const convertTradeInitialAccFees = (initialAccFees) => ({
@@ -111,6 +113,17 @@ export const convertPairSpreadP = (pairSpreadP) => transformFrom1e10(pairSpreadP
 export const transformProtectionCloseFactor = (protectionCloseFactor) => transformFrom1e10(protectionCloseFactor + '');
 export const packTrigger = (a, b, c) => {
   return pack([a, b, c].map(BigInt), [8, 160, 32].map(BigInt));
+};
+
+export const chunkArray = (array, chunkSize) => {
+  return array.reduce((chunks, element, index) => {
+    const chunkIndex = Math.floor(index / chunkSize);
+    if (!chunks[chunkIndex]) {
+      chunks[chunkIndex] = [];
+    }
+    chunks[chunkIndex].push(element);
+    return chunks;
+  }, []);
 };
 
 // OI Windows
