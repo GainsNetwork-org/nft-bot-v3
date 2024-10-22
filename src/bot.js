@@ -1223,6 +1223,11 @@ function watchPricingStream() {
           }
           const groupId = parseInt(app.pairs[pairIndex].groupIndex);
 
+          // Skip these groups altogether
+          if (isStocksGroup(groupId) || isIndicesGroup(groupId)) {
+            return;
+          }
+
           let orderType = -1;
 
           ////////// Prep converted objects //////////
@@ -1386,14 +1391,6 @@ function watchPricingStream() {
           }
 
           if (isForexGroup(groupId) && !isForexOpen(new Date())) {
-            return;
-          }
-
-          if (isStocksGroup(groupId) && !isStocksOpen(new Date())) {
-            return;
-          }
-
-          if (isIndicesGroup(groupId) && !isIndicesOpen(new Date())) {
             return;
           }
 
