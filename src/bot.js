@@ -1235,6 +1235,21 @@ function watchPricingStream() {
           const borrowingFeesContext = app.borrowingFeesContext[collateralIndex];
           ////////////////////////////////////////////
 
+          const debug = {
+            user,
+            index,
+            long,
+            collateralIndex,
+            pairIndex,
+            price,
+            liqPrice: null,
+            liquidationParams: convertedLiquidationParams,
+            latestL2Block: app.blocks.latestL2Block,
+            convertedFee,
+            collateralPriceUsd: app.collaterals[convertedTrade.collateralIndex].price,
+            contractsVersion: convertedTradeInfo.contractsVersion,
+          };
+
           if (isPendingOpenLimitOrder === false) {
             // Hotfix openPrice of 0
             if (parseInt(openTrade.openPrice) === 0) return;
@@ -1244,7 +1259,7 @@ function watchPricingStream() {
               isPnlPositive: false,
               createdBlock: +openTrade.tradeInfo.createdBlock,
               ...app.pairFactors[pairIndex],
-              liquidationParams: convertLiquidationParams(openTrade.liquidationParams),
+              liquidationParams: convertedLiquidationParams,
               contractsVersion: +openTrade.tradeInfo.contractsVersion,
               currentBlock: app.blocks.latestL2Block,
               protectionCloseFactorWhitelist: app.protectionCloseFactorWhitelist.has(user.toLowerCase()),
@@ -1309,6 +1324,8 @@ function watchPricingStream() {
               convertedPairSpreadP,
               borrowingFeesContext
             );
+
+            debug.liqPrice = liqPrice;
 
             if (
               tp !== 0 &&
@@ -1433,6 +1450,7 @@ function watchPricingStream() {
             }
 
             appLogger.info(`🤞 Trying to trigger ${triggeredOrderTrackingInfoIdentifier}...`);
+            appLogger.info(debug);
 
             try {
               const orderTransaction = createTransaction(
