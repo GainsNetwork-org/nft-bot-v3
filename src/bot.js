@@ -1447,7 +1447,7 @@ function watchPricingStream() {
             }
 
             appLogger.info(`🤞 Trying to trigger ${triggeredOrderTrackingInfoIdentifier}...`);
-            appLogger.info(debug);
+            appLogger.info(JSON.stringify(debug));
 
             try {
               const orderTransaction = createTransaction(
