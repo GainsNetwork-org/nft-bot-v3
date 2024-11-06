@@ -94,6 +94,11 @@ let executionStats = {
     last: null,
     ts: null,
   },
+  refresh: {
+    openTrades: null,
+    tradingVariables: null,
+  },
+  config: {},
 };
 
 // -----------------------------------------
@@ -121,6 +126,28 @@ const {
   FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS,
   COLLATERAL_PRICE_REFRESH_INTERVAL_MS,
 } = appConfig();
+
+// Stringify, stops logger from pretty printing and consuming too many lines
+executionStats.config = JSON.stringify({
+  MAX_FEE_PER_GAS_WEI_HEX,
+  MAX_GAS_PER_TRANSACTION_HEX,
+  EVENT_CONFIRMATIONS_MS,
+  AUTO_HARVEST_MS,
+  FAILED_ORDER_TRIGGER_TIMEOUT_MS,
+  PRIORITY_GWEI_MULTIPLIER,
+  MIN_PRIORITY_GWEI,
+  OPEN_TRADES_REFRESH_MS,
+  GAS_REFRESH_INTERVAL_MS,
+  WEB3_STATUS_REPORT_INTERVAL_MS,
+  USE_MULTICALL,
+  MAX_RETRIES,
+  CHAIN_ID,
+  CHAIN,
+  NETWORK,
+  DRY_RUN_MODE,
+  FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS,
+  COLLATERAL_PRICE_REFRESH_INTERVAL_MS,
+});
 
 const app = {
   // web3
@@ -490,6 +517,7 @@ async function fetchTradingVariables() {
 
     await currentTradingVariablesFetchPromise;
     appLogger.info(`Done fetching trading variables; took ${performance.now() - executionStart}ms.`);
+    executionStats.refresh.tradingVariables = Date.now();
 
     if (FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS > 0) {
       fetchTradingVariablesTimerId = setTimeout(() => {
@@ -677,6 +705,7 @@ async function fetchOpenTrades() {
 
     appLogger.info(`Fetched ${app.knownOpenTrades.size} total open trade(s) in ${performance.now() - start}ms.`);
 
+    executionStats.refresh.openTrades = Date.now();
     // Check if we're supposed to auto-refresh open trades and if so, schedule the next refresh
     if (OPEN_TRADES_REFRESH_MS !== 0) {
       appLogger.debug(`Scheduling auto-refresh of open trades in for ${OPEN_TRADES_REFRESH_MS}ms from now.`);
