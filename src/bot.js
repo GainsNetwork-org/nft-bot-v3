@@ -90,6 +90,10 @@ if (process.env.NODE_ENV) {
 const appLogger = createLogger('BOT', process.env.LOG_LEVEL);
 let executionStats = {
   startTime: new Date(),
+  feedLatency: {
+    last: null,
+    ts: null,
+  },
 };
 
 // -----------------------------------------
@@ -1051,10 +1055,12 @@ async function synchronizeOpenTrades(event) {
 
       if (app.triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
         app.triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
-        appLogger.info(`Synchronize trigger tracking from event ${eventName}: Trigger deleted for ${triggeredOrderTrackingInfoIdentifier}`);
+        appLogger.info(
+          `Synchronize trigger tracking from event ${eventName}: Trigger deleted for ${triggeredOrderTrackingInfoIdentifier}; Tx ${event.transactionHash}`
+        );
       } else {
         appLogger.error(
-          `Synchronize trigger tracking from event ${eventName}: Trigger not found for ${triggeredOrderTrackingInfoIdentifier}!`
+          `Synchronize trigger tracking from event ${eventName}: Trigger not found for ${triggeredOrderTrackingInfoIdentifier}! Tx ${event.transactionHash}`
         );
       }
 
@@ -1097,7 +1103,7 @@ async function handleBorrowingFeesEvent(event) {
         pairBorrowingFees.accFeeShort = parseFloat(accFeeShort) / 1e10;
         pairBorrowingFees.accLastUpdateBlock = parseInt(event.blockNumber);
         appLogger.info(
-          `${event.event}: Updated borrowingFees.pair[${pairIndex}] with accFeeLong:${pairBorrowingFees.accFeeLong}, accFeeShort:${pairBorrowingFees.accFeeShort}, accLastUpdateBlock:${pairBorrowingFees.accLastUpdateBlock}`
+          `${event.event}: Updated borrowingFees.pair[${pairIndex},${collateralIndex}] with accFeeLong:${pairBorrowingFees.accFeeLong}, accFeeShort:${pairBorrowingFees.accFeeShort}, accLastUpdateBlock:${pairBorrowingFees.accLastUpdateBlock}`
         );
       }
     } else if (event.event === 'BorrowingGroupAccFeesUpdated') {
@@ -1111,7 +1117,7 @@ async function handleBorrowingFeesEvent(event) {
         groupBorrowingFees.accLastUpdateBlock = parseInt(event.blockNumber);
 
         appLogger.info(
-          `${event.event}: Updated borrowingFees.group[${groupIndex}] with accFeeLong:${groupBorrowingFees.accFeeLong}, accFeeShort:${groupBorrowingFees.accFeeShort}, accLastUpdateBlock:${groupBorrowingFees.accLastUpdateBlock}`
+          `${event.event}: Updated borrowingFees.group[${groupIndex},${collateralIndex}] with accFeeLong:${groupBorrowingFees.accFeeLong}, accFeeShort:${groupBorrowingFees.accFeeShort}, accLastUpdateBlock:${groupBorrowingFees.accLastUpdateBlock}`
         );
       }
     } else if (event.event === 'BorrowingGroupOiUpdated') {
@@ -1141,7 +1147,7 @@ async function handleBorrowingFeesEvent(event) {
         groupBorrowingFees.feePerBlock = transformFrom1e10(feePerBlock);
         groupBorrowingFees.oi.max = transformFrom1e10(maxOi);
         appLogger.info(
-          `${event.event}: Updated borrowingFees.group[${groupIndex}] with feePerBlock:${groupBorrowingFees.feePerBlock}, oi.maxOi:${groupBorrowingFees.oi.max}`
+          `${event.event}: Updated borrowingFees.group[${groupIndex},${collateralIndex}] with feePerBlock:${groupBorrowingFees.feePerBlock}, oi.maxOi:${groupBorrowingFees.oi.max}`
         );
       }
     } else if (event.event === 'BorrowingPairParamsUpdated') {
@@ -1154,7 +1160,7 @@ async function handleBorrowingFeesEvent(event) {
         pairBorrowingFees.oi.max = transformFrom1e10(maxOi);
 
         appLogger.info(
-          `${event.event}: Updated borrowingFees.pair[${pairIndex}] with feePerBlock:${pairBorrowingFees.feePerBlock}, oi.maxOi:${pairBorrowingFees.oi.max}`
+          `${event.event}: Updated borrowingFees.pair[${pairIndex},${collateralIndex}] with feePerBlock:${pairBorrowingFees.feePerBlock}, oi.maxOi:${pairBorrowingFees.oi.max}`
         );
       }
     }
@@ -1213,7 +1219,9 @@ function watchPricingStream() {
     // If there's only one element in the array then it's a timestamp
     if (messageData.length === 1) {
       // Checkpoint ts at index 0
-      // const checkpoint = messageData[0]
+      const checkpoint = messageData[0];
+      executionStats.feedLatency.ts = Date.now();
+      executionStats.feedLatency.last = checkpoint;
       return;
     }
 
@@ -1221,6 +1229,8 @@ function watchPricingStream() {
     for (let i = 0; i < messageData.length; i += 2) {
       pairPrices.set(messageData[i], messageData[i + 1]);
     }
+
+    const msgTs = Date.now();
 
     pricingUpdatesMessageProcessingCount++;
 
@@ -1290,6 +1300,8 @@ function watchPricingStream() {
             convertedFee,
             collateralPriceUsd: app.collaterals[convertedTrade.collateralIndex].price,
             contractsVersion: convertedTradeInfo.contractsVersion,
+            pricingUpdatesMessageProcessingCount,
+            msgTs,
           };
 
           if (isPendingOpenLimitOrder === false) {
