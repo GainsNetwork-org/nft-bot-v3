@@ -1301,6 +1301,9 @@ function watchPricingStream() {
             collateralPriceUsd: app.collaterals[convertedTrade.collateralIndex].price,
             contractsVersion: convertedTradeInfo.contractsVersion,
             pricingUpdatesMessageProcessingCount,
+            trade: convertedTrade,
+            tradeInfo: convertedTradeInfo,
+            initialAccFees: convertedInitialAccFees,
             msgTs,
           };
 
