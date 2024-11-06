@@ -961,7 +961,10 @@ async function synchronizeOpenTrades(event) {
       const tradeKey = buildTradeIdentifier(user, index);
       const newTrade = transformRawTrade({ trade, tradeInfo, initialAccFees, liquidationParams });
       currentKnownOpenTrades.set(tradeKey, newTrade);
-      appLogger.info(`Synchronize open trades from event ${eventName}: Stored active trade ${tradeKey}`);
+      const { accPairFee, accGroupFee, block } = newTrade.initialAccFees;
+      appLogger.info(
+        `Synchronize open trades from event ${eventName}: Stored active trade ${tradeKey}; InitialAccFees{accPairFee: ${accPairFee}, accGroupFee: ${accGroupFee}, block: ${block} }`
+      );
     } else if (eventName === 'TradeClosed') {
       const { user, index } = eventReturnValues;
       const tradeKey = buildTradeIdentifier(user, index);
