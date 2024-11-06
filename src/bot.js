@@ -699,7 +699,13 @@ async function fetchOpenTrades() {
 
     const start = performance.now();
 
-    const { allTrades: trades, protectionCloseFactorWhitelist } = await fetchOpenPairTrades();
+    const { allTrades: trades, protectionCloseFactorWhitelist } = await Promise.race([
+      fetchOpenPairTrades(),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Timed out fetching open trades!')), OPEN_TRADES_REFRESH_MS); // @todo add it's own config
+      }),
+    ]);
+
     app.knownOpenTrades = new Map(trades.map((trade) => [buildTradeIdentifier(trade.user, trade.index), trade]));
     app.protectionCloseFactorWhitelist = new Map([...app.protectionCloseFactorWhitelist, ...protectionCloseFactorWhitelist]);
 
@@ -1641,7 +1647,9 @@ function watchPricingStream() {
 
                   if (
                     errorMessage !== undefined &&
-                    (errorMessage.includes('nonce too low') || errorMessage.includes('replacement transaction underpriced'))
+                    (errorMessage.includes('nonce too low') ||
+                      errorMessage.includes('nonce too high') ||
+                      errorMessage.includes('replacement transaction underpriced'))
                   ) {
                     appLogger.error(
                       `⁉️ Some how we ended up with a nonce that was too low; forcing a refresh now and the trade may be tried again if still available.`
