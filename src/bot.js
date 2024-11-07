@@ -702,7 +702,7 @@ async function fetchOpenTrades() {
     const { allTrades: trades, protectionCloseFactorWhitelist } = await Promise.race([
       fetchOpenPairTrades(),
       new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Timed out fetching open trades!')), OPEN_TRADES_REFRESH_MS); // @todo add it's own config
+        setTimeout(() => reject(new Error('Timed out fetching open trades!')), OPEN_TRADES_REFRESH_MS);
       }),
     ]);
 
