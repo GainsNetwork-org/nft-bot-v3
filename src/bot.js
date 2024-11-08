@@ -90,6 +90,15 @@ if (process.env.NODE_ENV) {
 const appLogger = createLogger('BOT', process.env.LOG_LEVEL);
 let executionStats = {
   startTime: new Date(),
+  feedLatency: {
+    last: null,
+    ts: null,
+  },
+  refresh: {
+    openTrades: null,
+    tradingVariables: null,
+  },
+  config: {},
 };
 
 // -----------------------------------------
@@ -117,6 +126,28 @@ const {
   FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS,
   COLLATERAL_PRICE_REFRESH_INTERVAL_MS,
 } = appConfig();
+
+// Stringify, stops logger from pretty printing and consuming too many lines
+executionStats.config = JSON.stringify({
+  MAX_FEE_PER_GAS_WEI_HEX,
+  MAX_GAS_PER_TRANSACTION_HEX,
+  EVENT_CONFIRMATIONS_MS,
+  AUTO_HARVEST_MS,
+  FAILED_ORDER_TRIGGER_TIMEOUT_MS,
+  PRIORITY_GWEI_MULTIPLIER,
+  MIN_PRIORITY_GWEI,
+  OPEN_TRADES_REFRESH_MS,
+  GAS_REFRESH_INTERVAL_MS,
+  WEB3_STATUS_REPORT_INTERVAL_MS,
+  USE_MULTICALL,
+  MAX_RETRIES,
+  CHAIN_ID,
+  CHAIN,
+  NETWORK,
+  DRY_RUN_MODE,
+  FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS,
+  COLLATERAL_PRICE_REFRESH_INTERVAL_MS,
+});
 
 const app = {
   // web3
@@ -486,6 +517,7 @@ async function fetchTradingVariables() {
 
     await currentTradingVariablesFetchPromise;
     appLogger.info(`Done fetching trading variables; took ${performance.now() - executionStart}ms.`);
+    executionStats.refresh.tradingVariables = Date.now();
 
     if (FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS > 0) {
       fetchTradingVariablesTimerId = setTimeout(() => {
@@ -667,12 +699,19 @@ async function fetchOpenTrades() {
 
     const start = performance.now();
 
-    const { allTrades: trades, protectionCloseFactorWhitelist } = await fetchOpenPairTrades();
+    const { allTrades: trades, protectionCloseFactorWhitelist } = await Promise.race([
+      fetchOpenPairTrades(),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Timed out fetching open trades!')), OPEN_TRADES_REFRESH_MS);
+      }),
+    ]);
+
     app.knownOpenTrades = new Map(trades.map((trade) => [buildTradeIdentifier(trade.user, trade.index), trade]));
     app.protectionCloseFactorWhitelist = new Map([...app.protectionCloseFactorWhitelist, ...protectionCloseFactorWhitelist]);
 
     appLogger.info(`Fetched ${app.knownOpenTrades.size} total open trade(s) in ${performance.now() - start}ms.`);
 
+    executionStats.refresh.openTrades = Date.now();
     // Check if we're supposed to auto-refresh open trades and if so, schedule the next refresh
     if (OPEN_TRADES_REFRESH_MS !== 0) {
       appLogger.debug(`Scheduling auto-refresh of open trades in for ${OPEN_TRADES_REFRESH_MS}ms from now.`);
@@ -774,9 +813,14 @@ function watchLiveTradingEvents() {
         setTimeout(() => handleMultiCollatEvents(event), EVENT_CONFIRMATIONS_MS);
         //
       } else if (
-        ['BorrowingPairAccFeesUpdated', 'BorrowingGroupAccFeesUpdated', 'BorrowingPairOiUpdated', 'BorrowingGroupOiUpdated'].indexOf(
-          event.event
-        ) > -1
+        [
+          'BorrowingPairAccFeesUpdated',
+          'BorrowingGroupAccFeesUpdated',
+          'BorrowingPairOiUpdated',
+          'BorrowingGroupOiUpdated',
+          'BorrowingGroupUpdated',
+          'BorrowingPairParamsUpdated',
+        ].indexOf(event.event) > -1
       ) {
         //
         setTimeout(() => handleBorrowingFeesEvent(event), EVENT_CONFIRMATIONS_MS);
@@ -923,7 +967,10 @@ async function synchronizeOpenTrades(event) {
       const tradeKey = buildTradeIdentifier(user, index);
       const newTrade = transformRawTrade({ trade, tradeInfo, initialAccFees, liquidationParams });
       currentKnownOpenTrades.set(tradeKey, newTrade);
-      appLogger.info(`Synchronize open trades from event ${eventName}: Stored active trade ${tradeKey}`);
+      const { accPairFee, accGroupFee, block } = newTrade.initialAccFees;
+      appLogger.info(
+        `Synchronize open trades from event ${eventName}: Stored active trade ${tradeKey}; InitialAccFees{accPairFee: ${accPairFee}, accGroupFee: ${accGroupFee}, block: ${block} }`
+      );
     } else if (eventName === 'TradeClosed') {
       const { user, index } = eventReturnValues;
       const tradeKey = buildTradeIdentifier(user, index);
@@ -1046,10 +1093,12 @@ async function synchronizeOpenTrades(event) {
 
       if (app.triggeredOrders.has(triggeredOrderTrackingInfoIdentifier)) {
         app.triggeredOrders.delete(triggeredOrderTrackingInfoIdentifier);
-        appLogger.info(`Synchronize trigger tracking from event ${eventName}: Trigger deleted for ${triggeredOrderTrackingInfoIdentifier}`);
+        appLogger.info(
+          `Synchronize trigger tracking from event ${eventName}: Trigger deleted for ${triggeredOrderTrackingInfoIdentifier}; Tx ${event.transactionHash}`
+        );
       } else {
         appLogger.error(
-          `Synchronize trigger tracking from event ${eventName}: Trigger not found for ${triggeredOrderTrackingInfoIdentifier}!`
+          `Synchronize trigger tracking from event ${eventName}: Trigger not found for ${triggeredOrderTrackingInfoIdentifier}! Tx ${event.transactionHash}`
         );
       }
 
@@ -1090,7 +1139,10 @@ async function handleBorrowingFeesEvent(event) {
       if (pairBorrowingFees) {
         pairBorrowingFees.accFeeLong = parseFloat(accFeeLong) / 1e10;
         pairBorrowingFees.accFeeShort = parseFloat(accFeeShort) / 1e10;
-        pairBorrowingFees.accLastUpdateBlock = parseInt(event.blockNumber);
+        pairBorrowingFees.accLastUpdatedBlock = parseInt(event.blockNumber);
+        appLogger.info(
+          `${event.event}: Updated borrowingFees.pair[${pairIndex},${collateralIndex}] with accFeeLong:${pairBorrowingFees.accFeeLong}, accFeeShort:${pairBorrowingFees.accFeeShort}, accLastUpdatedBlock:${pairBorrowingFees.accLastUpdatedBlock}`
+        );
       }
     } else if (event.event === 'BorrowingGroupAccFeesUpdated') {
       const { collateralIndex, groupIndex, accFeeLong, accFeeShort } = event.returnValues;
@@ -1100,7 +1152,11 @@ async function handleBorrowingFeesEvent(event) {
       if (groupBorrowingFees) {
         groupBorrowingFees.accFeeLong = parseFloat(accFeeLong) / 1e10;
         groupBorrowingFees.accFeeShort = parseFloat(accFeeShort) / 1e10;
-        groupBorrowingFees.accLastUpdateBlock = parseInt(event.blockNumber);
+        groupBorrowingFees.accLastUpdatedBlock = parseInt(event.blockNumber);
+
+        appLogger.info(
+          `${event.event}: Updated borrowingFees.group[${groupIndex},${collateralIndex}] with accFeeLong:${groupBorrowingFees.accFeeLong}, accFeeShort:${groupBorrowingFees.accFeeShort}, accLastUpdatedBlock:${groupBorrowingFees.accLastUpdatedBlock}`
+        );
       }
     } else if (event.event === 'BorrowingGroupOiUpdated') {
       const { collateralIndex, groupIndex, newOiLong, newOiShort } = event.returnValues;
@@ -1119,6 +1175,31 @@ async function handleBorrowingFeesEvent(event) {
       if (pairBorrowingFees) {
         pairBorrowingFees.long = parseFloat(newOiLong) / 1e10;
         pairBorrowingFees.short = parseFloat(newOiShort) / 1e10;
+      }
+    } else if (event.event === 'BorrowingGroupUpdated') {
+      const { collateralIndex, groupIndex, feePerBlock, maxOi } = event.returnValues;
+
+      const groupBorrowingFees = app.borrowingFeesContext[collateralIndex].groups[groupIndex];
+
+      if (groupBorrowingFees) {
+        groupBorrowingFees.feePerBlock = transformFrom1e10(feePerBlock);
+        groupBorrowingFees.oi.max = transformFrom1e10(maxOi);
+        appLogger.info(
+          `${event.event}: Updated borrowingFees.group[${groupIndex},${collateralIndex}] with feePerBlock:${groupBorrowingFees.feePerBlock}, oi.maxOi:${groupBorrowingFees.oi.max}`
+        );
+      }
+    } else if (event.event === 'BorrowingPairParamsUpdated') {
+      const { collateralIndex, pairIndex, feePerBlock, maxOi } = event.returnValues;
+
+      const pairBorrowingFees = app.borrowingFeesContext[collateralIndex].pairs[pairIndex];
+
+      if (pairBorrowingFees) {
+        pairBorrowingFees.feePerBlock = transformFrom1e10(feePerBlock);
+        pairBorrowingFees.oi.max = transformFrom1e10(maxOi);
+
+        appLogger.info(
+          `${event.event}: Updated borrowingFees.pair[${pairIndex},${collateralIndex}] with feePerBlock:${pairBorrowingFees.feePerBlock}, oi.maxOi:${pairBorrowingFees.oi.max}`
+        );
       }
     }
   } catch (error) {
@@ -1176,7 +1257,9 @@ function watchPricingStream() {
     // If there's only one element in the array then it's a timestamp
     if (messageData.length === 1) {
       // Checkpoint ts at index 0
-      // const checkpoint = messageData[0]
+      const checkpoint = messageData[0];
+      executionStats.feedLatency.ts = Date.now();
+      executionStats.feedLatency.last = checkpoint;
       return;
     }
 
@@ -1184,6 +1267,8 @@ function watchPricingStream() {
     for (let i = 0; i < messageData.length; i += 2) {
       pairPrices.set(messageData[i], messageData[i + 1]);
     }
+
+    const msgTs = Date.now();
 
     pricingUpdatesMessageProcessingCount++;
 
@@ -1240,6 +1325,26 @@ function watchPricingStream() {
           const borrowingFeesContext = app.borrowingFeesContext[collateralIndex];
           ////////////////////////////////////////////
 
+          const debug = {
+            user,
+            index,
+            long,
+            collateralIndex,
+            pairIndex,
+            price,
+            liqPrice: null,
+            liquidationParams: convertedLiquidationParams,
+            latestL2Block: app.blocks.latestL2Block,
+            convertedFee,
+            collateralPriceUsd: app.collaterals[convertedTrade.collateralIndex].price,
+            contractsVersion: convertedTradeInfo.contractsVersion,
+            pricingUpdatesMessageProcessingCount,
+            trade: convertedTrade,
+            tradeInfo: convertedTradeInfo,
+            initialAccFees: convertedInitialAccFees,
+            msgTs,
+          };
+
           if (isPendingOpenLimitOrder === false) {
             // Hotfix openPrice of 0
             if (parseInt(openTrade.openPrice) === 0) return;
@@ -1249,7 +1354,7 @@ function watchPricingStream() {
               isPnlPositive: false,
               createdBlock: +openTrade.tradeInfo.createdBlock,
               ...app.pairFactors[pairIndex],
-              liquidationParams: convertLiquidationParams(openTrade.liquidationParams),
+              liquidationParams: convertedLiquidationParams,
               contractsVersion: +openTrade.tradeInfo.contractsVersion,
               currentBlock: app.blocks.latestL2Block,
               protectionCloseFactorWhitelist: app.protectionCloseFactorWhitelist.has(user.toLowerCase()),
@@ -1314,6 +1419,8 @@ function watchPricingStream() {
               convertedPairSpreadP,
               borrowingFeesContext
             );
+
+            debug.liqPrice = liqPrice;
 
             if (
               tp !== 0 &&
@@ -1430,6 +1537,7 @@ function watchPricingStream() {
             }
 
             appLogger.info(`🤞 Trying to trigger ${triggeredOrderTrackingInfoIdentifier}...`);
+            appLogger.info(JSON.stringify(debug));
 
             try {
               const orderTransaction = createTransaction(
@@ -1539,7 +1647,9 @@ function watchPricingStream() {
 
                   if (
                     errorMessage !== undefined &&
-                    (errorMessage.includes('nonce too low') || errorMessage.includes('replacement transaction underpriced'))
+                    (errorMessage.includes('nonce too low') ||
+                      errorMessage.includes('nonce too high') ||
+                      errorMessage.includes('replacement transaction underpriced'))
                   ) {
                     appLogger.error(
                       `⁉️ Some how we ended up with a nonce that was too low; forcing a refresh now and the trade may be tried again if still available.`
