@@ -1,5 +1,5 @@
 const GROUP_IDS = {
-  CRYPTO: [0, 10],
+  CRYPTO: [0, 10, 11],
   FOREX: [1, 8, 9],
   STOCKS: [2, 3, 4],
   INDICES: [5],
