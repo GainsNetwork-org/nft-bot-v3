@@ -35,3 +35,11 @@ services:
     mem_limit: 1G
     command: node src/bot.js
     restart: unless-stopped
+  bot-apechain:
+    environment:
+      - NODE_ENV=apechain
+    image: nft_bot
+    cpus: 1
+    mem_limit: 1G
+    command: node src/bot.js
+    restart: unless-stopped

@@ -11,6 +11,10 @@ export const initContracts = async (w3, ctx, networkConfig) => {
   const linkAddress = await ctx.contracts.diamond.methods.getChainlinkToken().call();
   ctx.contracts.link = new w3.eth.Contract(abis.LINK, linkAddress);
 
+  if (networkConfig.apeDelegate) {
+    ctx.contracts.apeDelegate = new w3.eth.Contract(abis.APE_DELEGATE, networkConfig.apeDelegate);
+  }
+
   for (const collateral of networkConfig.collaterals) {
     ctx.collaterals[collateral.collateralIndex] = {
       ...collateral,

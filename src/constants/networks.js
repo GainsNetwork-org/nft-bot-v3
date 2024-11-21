@@ -9,12 +9,14 @@ export const CHAIN_IDS = {
   ARBITRUM: 42161,
   SEPOLIA: 421614,
   BASE: 8453,
+  APECHAIN: 33139,
 };
 
 export const COLLATERAL = {
   DAI: 'DAI',
   WETH: 'WETH',
   USDC: 'USDC',
+  APE: 'APE',
 };
 
 export const COLLATERAL_CONFIG = {
@@ -32,6 +34,11 @@ export const COLLATERAL_CONFIG = {
     decimals: 6,
     precision: 1e6,
     precisionDelta: 1e12,
+  },
+  [COLLATERAL.APE]: {
+    decimals: 18,
+    precision: 1e18,
+    precisionDelta: 1,
   },
 };
 
@@ -108,6 +115,20 @@ export const NETWORKS = {
     collaterals: [
       {
         symbol: COLLATERAL.USDC,
+        collateralIndex: 1,
+      },
+    ],
+  },
+  [CHAIN_IDS.APECHAIN]: {
+    chainName: 'apechain',
+    chainId: CHAIN_IDS.APECHAIN,
+    gasMode: GAS_MODE.EIP1559,
+    gasStationUrl: undefined,
+    diamondAddress: '0x2BE5D7058AdBa14Bc38E4A83E94A81f7491b0163',
+    apeDelegate: '0x9998357A0733814cC3D918e907Afa14B6D47648B',
+    collaterals: [
+      {
+        symbol: COLLATERAL.APE,
         collateralIndex: 1,
       },
     ],
