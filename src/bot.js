@@ -1779,8 +1779,8 @@ async function distributeNativeYield() {
     const balance = await app.currentlySelectedWeb3Client.eth.getBalance(app.contracts.apeDelegate.options.address);
     const parsedBalance = parseFloat(balance + '') / 1e18;
 
-    if (parsedBalance < 1) {
-      appLogger.info(`ApeDelegate balance of ${parsedBalance} is not above threshold (1)`);
+    if (parsedBalance < 20) {
+      appLogger.info(`ApeDelegate balance of ${parsedBalance} is not above threshold (20)`);
       return;
     }
 
