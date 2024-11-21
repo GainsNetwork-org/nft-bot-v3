@@ -12,8 +12,6 @@ import {
   getSpreadWithPriceImpactP,
   isCommoditiesOpen,
   isForexOpen,
-  isIndicesOpen,
-  isStocksOpen,
   withinMaxGroupOi,
 } from '@gainsnetwork/sdk';
 import Web3 from 'web3';
@@ -129,6 +127,7 @@ const app = {
   contracts: {
     diamond: null,
     link: null,
+    apeDelegate: null,
   },
   eventSub: null,
   // params
@@ -1447,7 +1446,7 @@ function watchPricingStream() {
             }
 
             appLogger.info(`🤞 Trying to trigger ${triggeredOrderTrackingInfoIdentifier}...`);
-            appLogger.info(debug);
+            appLogger.info(JSON.stringify(debug));
 
             try {
               const orderTransaction = createTransaction(
@@ -1675,6 +1674,50 @@ if (AUTO_HARVEST_MS > 0) {
     }
   }, AUTO_HARVEST_MS);
 }
+
+async function distributeNativeYield() {
+  // Only run for configured networks (Apechain)
+  if (!app.contracts.apeDelegate) {
+    return;
+  }
+
+  try {
+    appLogger.info(`Checking if there is any native yield to distribute`);
+
+    const balance = await app.currentlySelectedWeb3Client.eth.getBalance(app.contracts.apeDelegate.options.address);
+    const parsedBalance = parseFloat(balance + '') / 1e18;
+
+    if (parsedBalance < 1) {
+      appLogger.info(`ApeDelegate balance of ${parsedBalance} is not above threshold (1)`);
+      return;
+    }
+
+    appLogger.info(`Found ${parsedBalance} APE to be distributed`);
+    const tx = createTransaction({
+      to: app.contracts.apeDelegate.options.address,
+      data: app.contracts.apeDelegate.methods.distributeYield().encodeABI(),
+    });
+
+    const signed = await app.currentlySelectedWeb3Client.eth.accounts.signTransaction(tx, process.env.PRIVATE_KEY);
+
+    appLogger.info(`Calling 'distributeYield()'`);
+    await app.currentlySelectedWeb3Client.eth.sendSignedTransaction(signed.rawTransaction);
+    appLogger.info(`Called 'distributeYield()'`);
+  } catch (error) {
+    appLogger.error(`Distribution of native yield failed`, { error: error?.message || error });
+  }
+}
+
+setInterval(
+  async () => {
+    try {
+      await distributeNativeYield();
+    } catch (error) {
+      appLogger.error('Distribution of native yield failed unexpectedly!', error);
+    }
+  },
+  2 * 60 * 1000 // every two minutes
+);
 
 /**
  * Creates a base transaction object using fixed, configured values and optionally fills out any additionally
