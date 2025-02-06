@@ -110,6 +110,11 @@ export const convertLiquidationParams = (liquidationParams) => ({
 
 export const convertPairSpreadP = (pairSpreadP) => transformFrom1e10(pairSpreadP + '') / 100;
 
+export const convertFeePerBlockCaps = ({ minP, maxP }) => ({
+  minP: parseFloat(minP) / 1e3 / 100,
+  maxP: parseFloat(maxP) / 1e3 / 100,
+});
+
 export const transformProtectionCloseFactor = (protectionCloseFactor) => transformFrom1e10(protectionCloseFactor + '');
 export const packTrigger = (a, b, c) => {
   return pack([a, b, c].map(BigInt), [8, 160, 32].map(BigInt));
