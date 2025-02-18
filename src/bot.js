@@ -32,6 +32,7 @@ import {
   buildTradeIdentifier,
   chunkArray,
   convertFee,
+  convertFeePerBlockCaps,
   convertLiquidationParams,
   convertOiWindows,
   convertPairFactors,
@@ -166,6 +167,7 @@ const app = {
   pairFactors: [],
   groupLiquidationParams: [],
   borrowingFeesContext: {}, // { collateralIndex: { groups: [], pairs: [] } }
+  feePerBlockCap: { minP: 0, maxP: 1 },
   oiWindows: {},
   oiWindowsSettings: { startTs: 0, windowsDuration: 0, windowsCount: 0 },
   blocks: {
@@ -536,7 +538,7 @@ async function fetchTradingVariables() {
   }
 
   async function fetchPairs(pairsCount) {
-    const [depths, pairFactors, maxLeverage, pairs, feesCount, groupsCount] = await Promise.all([
+    const [depths, pairFactors, maxLeverage, pairs, feesCount, groupsCount, feePerBlockCap] = await Promise.all([
       app.contracts.diamond.methods.getPairDepths([...Array(parseInt(pairsCount)).keys()]).call(),
       app.contracts.diamond.methods.getPairFactors([...Array(parseInt(pairsCount)).keys()]).call(),
       app.contracts.diamond.methods.getAllPairsRestrictedMaxLeverage().call(),
@@ -545,8 +547,10 @@ async function fetchTradingVariables() {
       ),
       app.contracts.diamond.methods.feesCount().call(),
       app.contracts.diamond.methods.groupsCount().call(),
+      app.contracts.diamond.methods.getBorrowingFeePerBlockCap().call(),
     ]);
 
+    app.feePerBlockCap = convertFeePerBlockCaps(feePerBlockCap);
     app.pairMaxLeverage = new Map(maxLeverage.map((l, idx) => [idx, parseFloat(l) / 1e3]));
     app.pairDepths = depths.map((value) => ({
       onePercentDepthAboveUsd: parseFloat(value.onePercentDepthAboveUsd),
@@ -598,6 +602,12 @@ async function fetchTradingVariables() {
 
         const pairsOpenInterests = rawPairsOpenInterest.map((oi) => transformOi(oi));
 
+        const pairFeeCaps = (
+          await app.contracts.diamond.methods
+            .getBorrowingPairFeePerBlockCaps(collateralIndex, [...Array(pairsBorrowingData.length).keys()])
+            .call()
+        ).map(({ minP, maxP }) => convertFeePerBlockCaps({ minP, maxP }));
+
         const borrowingFeesGroupIds = [
           ...new Set(pairsBorrowingPairGroup.map((value) => value.map((value) => value.groupIndex)).flat()),
         ].sort((a, b) => a - b);
@@ -630,6 +640,7 @@ async function fetchTradingVariables() {
               pairAccFeeLong: transformFrom1e10(group.pairAccFeeLong),
               pairAccFeeShort: transformFrom1e10(group.pairAccFeeShort),
             })),
+            feePerBlockCap: pairFeeCaps[idx],
           })
         );
 
@@ -819,6 +830,7 @@ function watchLiveTradingEvents() {
           'BorrowingGroupOiUpdated',
           'BorrowingGroupUpdated',
           'BorrowingPairParamsUpdated',
+          'BorrowingPairFeePerBlockCapUpdated',
         ].indexOf(event.event) > -1
       ) {
         //
@@ -1195,6 +1207,18 @@ async function handleBorrowingFeesEvent(event) {
       if (pairBorrowingFees) {
         pairBorrowingFees.feePerBlock = transformFrom1e10(feePerBlock);
         pairBorrowingFees.oi.max = transformFrom1e10(maxOi);
+
+        appLogger.info(
+          `${event.event}: Updated borrowingFees.pair[${pairIndex},${collateralIndex}] with feePerBlock:${pairBorrowingFees.feePerBlock}, oi.maxOi:${pairBorrowingFees.oi.max}`
+        );
+      }
+    } else if (event.event === 'BorrowingPairFeePerBlockCapUpdated') {
+      const { collateralIndex, pairIndex, minP, maxP } = event.returnValues;
+
+      const pairBorrowingFees = app.borrowingFeesContext[collateralIndex].pairs[pairIndex];
+
+      if (pairBorrowingFees) {
+        pairBorrowingFees.feePerBlock = parseFloat(maxP) > 0 ? convertFeePerBlockCaps({ minP, maxP }) : { ...app.feePerBlockCap };
 
         appLogger.info(
           `${event.event}: Updated borrowingFees.pair[${pairIndex},${collateralIndex}] with feePerBlock:${pairBorrowingFees.feePerBlock}, oi.maxOi:${pairBorrowingFees.oi.max}`
