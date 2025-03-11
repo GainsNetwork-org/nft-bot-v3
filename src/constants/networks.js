@@ -89,6 +89,10 @@ export const NETWORKS = {
         symbol: COLLATERAL.USDC,
         collateralIndex: 3,
       },
+      {
+        symbol: COLLATERAL.GNS,
+        collateralIndex: 4,
+      },
     ],
   },
   [CHAIN_IDS.SEPOLIA]: {
