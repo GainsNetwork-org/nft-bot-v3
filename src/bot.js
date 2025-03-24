@@ -497,6 +497,7 @@ async function startFetchingLatestGasPrices() {
 
 let fetchTradingVariablesTimerId = null;
 let currentTradingVariablesFetchPromise = null;
+let fetchTradingVariablesIntervalId = null;
 
 async function fetchTradingVariables() {
   appLogger.info('Fetching trading variables...');
@@ -526,10 +527,16 @@ async function fetchTradingVariables() {
     executionStats.refresh.tradingVariables = Date.now();
 
     if (FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS > 0) {
-      fetchTradingVariablesTimerId = setTimeout(() => {
-        fetchTradingVariablesTimerId = null;
-        fetchTradingVariables();
-      }, FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS);
+      if (fetchTradingVariablesIntervalId !== null) {
+        appLogger.warn(`Trading variables interval already set!`);
+      } else {
+				appLogger.info(`Scheduling auto-refresh of trading variables in for every ${FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS}ms.`);
+        fetchTradingVariablesIntervalId = setInterval(() => {
+          appLogger.info(`Refreshing trading variables from interval`);
+          fetchTradingVariablesTimerId = null;
+          fetchTradingVariables();
+        }, FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS);
+      }
     }
   } catch (error) {
     appLogger.error('Error while fetching trading variables!', { error });
@@ -700,6 +707,7 @@ function buildTriggerIdentifier(user, index, limitType) {
 }
 
 let fetchOpenTradesRetryTimerId = null;
+let fetchOpenTradesIntervalId = null;
 
 async function fetchOpenTrades() {
   appLogger.info('Fetching open trades...');
@@ -729,9 +737,16 @@ async function fetchOpenTrades() {
     executionStats.refresh.openTrades = Date.now();
     // Check if we're supposed to auto-refresh open trades and if so, schedule the next refresh
     if (OPEN_TRADES_REFRESH_MS !== 0) {
-      appLogger.debug(`Scheduling auto-refresh of open trades in for ${OPEN_TRADES_REFRESH_MS}ms from now.`);
 
-      setTimeout(() => fetchOpenTrades(), OPEN_TRADES_REFRESH_MS);
+      if (fetchOpenTradesIntervalId !== null) {
+        appLogger.warn(`Open Trades interval already set!`);
+      } else {
+				appLogger.info(`Scheduling auto-refresh of open trades in for every ${OPEN_TRADES_REFRESH_MS}ms.`);
+        fetchOpenTradesIntervalId = setInterval(() => {
+          appLogger.info(`Refreshing Open Trades from interval`);
+          fetchOpenTrades();
+        }, OPEN_TRADES_REFRESH_MS);
+      }
     } else {
       appLogger.info(
         `Auto-refresh of open trades is disabled (OPEN_TRADES_REFRESH=0); will only synchronize based on blockchain events from here out!`
