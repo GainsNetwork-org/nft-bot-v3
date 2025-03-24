@@ -514,9 +514,7 @@ async function fetchTradingVariables() {
   const pairsCount = await app.contracts.diamond.methods.pairsCount().call();
 
   if (currentTradingVariablesFetchPromise !== null) {
-    appLogger.warn(`A current fetchTradingVariables call was already in progress, just awaiting that...`);
-
-    return await currentTradingVariablesFetchPromise;
+    appLogger.warn(`A current fetchTradingVariables call was already in progress, this may mean a hanging provider connection!`);
   }
 
   try {
@@ -530,7 +528,7 @@ async function fetchTradingVariables() {
       if (fetchTradingVariablesIntervalId !== null) {
         appLogger.warn(`Trading variables interval already set!`);
       } else {
-				appLogger.info(`Scheduling auto-refresh of trading variables in for every ${FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS}ms.`);
+        appLogger.info(`Scheduling auto-refresh of trading variables in for every ${FETCH_TRADING_VARIABLES_REFRESH_INTERVAL_MS}ms.`);
         fetchTradingVariablesIntervalId = setInterval(() => {
           appLogger.info(`Refreshing trading variables from interval`);
           fetchTradingVariablesTimerId = null;
@@ -737,11 +735,10 @@ async function fetchOpenTrades() {
     executionStats.refresh.openTrades = Date.now();
     // Check if we're supposed to auto-refresh open trades and if so, schedule the next refresh
     if (OPEN_TRADES_REFRESH_MS !== 0) {
-
       if (fetchOpenTradesIntervalId !== null) {
         appLogger.warn(`Open Trades interval already set!`);
       } else {
-				appLogger.info(`Scheduling auto-refresh of open trades in for every ${OPEN_TRADES_REFRESH_MS}ms.`);
+        appLogger.info(`Scheduling auto-refresh of open trades in for every ${OPEN_TRADES_REFRESH_MS}ms.`);
         fetchOpenTradesIntervalId = setInterval(() => {
           appLogger.info(`Refreshing Open Trades from interval`);
           fetchOpenTrades();
