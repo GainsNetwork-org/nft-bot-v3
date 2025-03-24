@@ -286,10 +286,16 @@ async function setCurrentWeb3Client(newWeb3ClientIndex) {
 }
 
 function createWeb3Provider(providerUrl) {
+  return provider;
+}
+
+function createWeb3Client(providerIndex, providerUrl) {
   const provider = new Web3.providers.WebsocketProvider(providerUrl, {
+    timeout: 15000,
     clientConfig: {
       keepalive: true,
       keepaliveInterval: 30 * 1000,
+      timeout: 15000,
     },
     reconnect: {
       auto: true,
@@ -298,25 +304,6 @@ function createWeb3Provider(providerUrl) {
     },
   });
 
-  provider.on('connect', () => {
-    if (provider.connected) {
-      appLogger.info(`Connected to provider ${providerUrl}`);
-    }
-  });
-
-  provider.on('reconnect', () => {
-    appLogger.info(`Provider ${providerUrl} is reconnecting...`);
-  });
-
-  provider.on('error', (error) => {
-    appLogger.info(`Provider error: ${providerUrl}`, error);
-  });
-
-  return provider;
-}
-
-function createWeb3Client(providerIndex, providerUrl) {
-  const provider = createWeb3Provider(providerUrl);
   const web3Client = new Web3(provider);
   web3Client.eth.handleRevert = true;
   web3Client.eth.defaultAccount = process.env.PUBLIC_KEY;
@@ -325,43 +312,64 @@ function createWeb3Client(providerIndex, providerUrl) {
     methods: [{ name: 'getMaxPriorityFeePerGas', call: 'eth_maxPriorityFeePerGas', outputFormatter: Web3.utils.hexToNumberString }],
   });
 
-  web3Client.eth.subscribe('newBlockHeaders').on('data', async (header) => {
-    const newBlockNumber = header.number;
+  async function handleConnect() {
+    web3Client.eth.subscribe('newBlockHeaders').on('data', async (header) => {
+      const newBlockNumber = header.number;
 
-    if (newBlockNumber === null) {
-      appLogger.debug(`Received unfinished block from provider ${providerUrl}; ignoring...`);
+      if (newBlockNumber === null) {
+        appLogger.debug(`Received unfinished block from provider ${providerUrl}; ignoring...`);
 
-      return;
+        return;
+      }
+
+      if (newBlockNumber > app.blocks.latestL2Block) {
+        app.blocks.latestL2Block = newBlockNumber;
+      }
+
+      app.blocks.web3ClientBlocks[providerIndex] = newBlockNumber;
+
+      appLogger.debug(`New block received ${newBlockNumber} from provider ${providerUrl}...`);
+
+      if (app.currentlySelectedWeb3ClientIndex === providerIndex) {
+        return;
+      }
+
+      const blockDiff =
+        app.currentlySelectedWeb3ClientIndex === -1
+          ? newBlockNumber
+          : newBlockNumber - app.blocks.web3ClientBlocks[app.currentlySelectedWeb3ClientIndex];
+
+      // Check if this block is more recent than the currently selected provider's block by the max drift
+      // and, if so, switch now
+      if (blockDiff > MAX_PROVIDER_BLOCK_DRIFT && app.lastWeb3ClientPromotion + WEB3_PROVIDER_PROMOTION_TIMEOUT < Date.now()) {
+        appLogger.info(
+          `Switching to provider ${providerUrl} #${providerIndex} because it is ${blockDiff} block(s) ahead of current provider (${newBlockNumber} vs ${
+            app.blocks.web3ClientBlocks[app.currentlySelectedWeb3ClientIndex]
+          })`
+        );
+
+        setCurrentWeb3Client(providerIndex);
+      }
+    });
+  }
+
+  provider.on('connect', () => {
+    if (provider.connected) {
+      appLogger.info(`Connected to provider ${providerUrl}`);
+      handleConnect();
     }
+  });
 
-    if (newBlockNumber > app.blocks.latestL2Block) {
-      app.blocks.latestL2Block = newBlockNumber;
-    }
+  provider.on('disconnect', () => {
+    appLogger.error(`Disconnected from provider ${providerUrl}`);
+  });
 
-    app.blocks.web3ClientBlocks[providerIndex] = newBlockNumber;
+  provider.on('reconnect', () => {
+    appLogger.warn(`Provider ${providerUrl} is reconnecting...`);
+  });
 
-    appLogger.debug(`New block received ${newBlockNumber} from provider ${providerUrl}...`);
-
-    if (app.currentlySelectedWeb3ClientIndex === providerIndex) {
-      return;
-    }
-
-    const blockDiff =
-      app.currentlySelectedWeb3ClientIndex === -1
-        ? newBlockNumber
-        : newBlockNumber - app.blocks.web3ClientBlocks[app.currentlySelectedWeb3ClientIndex];
-
-    // Check if this block is more recent than the currently selected provider's block by the max drift
-    // and, if so, switch now
-    if (blockDiff > MAX_PROVIDER_BLOCK_DRIFT && app.lastWeb3ClientPromotion + WEB3_PROVIDER_PROMOTION_TIMEOUT < Date.now()) {
-      appLogger.info(
-        `Switching to provider ${providerUrl} #${providerIndex} because it is ${blockDiff} block(s) ahead of current provider (${newBlockNumber} vs ${
-          app.blocks.web3ClientBlocks[app.currentlySelectedWeb3ClientIndex]
-        })`
-      );
-
-      setCurrentWeb3Client(providerIndex);
-    }
+  provider.on('error', (error) => {
+    appLogger.info(`Provider error: ${providerUrl}`, error);
   });
 
   return web3Client;
