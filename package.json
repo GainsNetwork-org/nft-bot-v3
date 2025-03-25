@@ -18,7 +18,7 @@
     "ethers": "^5.7.2",
     "luxon": "^3.0.1",
     "node-fetch": "^3.2.10",
-    "web3": "^1.7.5",
+    "web3": "^1.10.4",
     "winston": "^3.8.1",
     "winston-cloudwatch": "^6.3.0",
     "ws": "^8.8.1"
