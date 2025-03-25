@@ -288,15 +288,16 @@ async function setCurrentWeb3Client(newWeb3ClientIndex) {
 
 function createWeb3Client(providerIndex, providerUrl) {
   const provider = new Web3.providers.WebsocketProvider(providerUrl, {
-    timeout: 15000,
+    timeout: 40000,
     clientConfig: {
       keepalive: true,
-      keepaliveInterval: 30 * 1000,
-      timeout: 15000,
+      keepaliveInterval: 45 * 1000,
+      timeout: 30000,
     },
     reconnect: {
       auto: true,
-      delay: 1000,
+      delay: 2000,
+      maxAttempts: 10,
       onTimeout: true,
     },
   });
@@ -364,6 +365,8 @@ function createWeb3Client(providerIndex, providerUrl) {
     if (provider.connected) {
       appLogger.info(`Connected to provider ${providerUrl}`);
       handleConnect();
+    } else {
+      appLogger.error(`Received connect event but provider ${providerUrl} is not connected!`);
     }
   });
 
