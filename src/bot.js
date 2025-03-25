@@ -174,6 +174,7 @@ const app = {
   oiWindowsSettings: { startTs: 0, windowsDuration: 0, windowsCount: 0 },
   blocks: {
     web3ClientBlocks: new Array(WEB3_PROVIDER_URLS.length).fill(0),
+    web3ClientBlocksLastTs: new Array(WEB3_PROVIDER_URLS.length).fill(0),
     latestL2Block: 0,
   },
   // storage/tracking
@@ -285,10 +286,6 @@ async function setCurrentWeb3Client(newWeb3ClientIndex) {
   appLogger.info('New web3 client selection completed. Took: ' + (performance.now() - executionStartTime) + 'ms');
 }
 
-function createWeb3Provider(providerUrl) {
-  return provider;
-}
-
 function createWeb3Client(providerIndex, providerUrl) {
   const provider = new Web3.providers.WebsocketProvider(providerUrl, {
     timeout: 15000,
@@ -313,44 +310,54 @@ function createWeb3Client(providerIndex, providerUrl) {
   });
 
   async function handleConnect() {
-    web3Client.eth.subscribe('newBlockHeaders').on('data', async (header) => {
-      const newBlockNumber = header.number;
+    appLogger.warn(`Provider ${providerUrl} is reconnecting... Resubscribing to newBlockHeaders`);
+    web3Client.eth
+      .subscribe('newBlockHeaders')
+      .on('connected', (subscriptionId) => {
+        appLogger.info(`Provider ${providerUrl} newBlockHeaders subscription connected with ID: ${subscriptionId}`);
+      })
+      .on('data', async (header) => {
+        const newBlockNumber = header.number;
 
-      if (newBlockNumber === null) {
-        appLogger.debug(`Received unfinished block from provider ${providerUrl}; ignoring...`);
+        if (newBlockNumber === null) {
+          appLogger.debug(`Received unfinished block from provider ${providerUrl}; ignoring...`);
 
-        return;
-      }
+          return;
+        }
 
-      if (newBlockNumber > app.blocks.latestL2Block) {
-        app.blocks.latestL2Block = newBlockNumber;
-      }
+        if (newBlockNumber > app.blocks.latestL2Block) {
+          app.blocks.latestL2Block = newBlockNumber;
+        }
 
-      app.blocks.web3ClientBlocks[providerIndex] = newBlockNumber;
+        app.blocks.web3ClientBlocks[providerIndex] = newBlockNumber;
+        app.blocks.web3ClientBlocksLastTs[providerIndex] = new Date();
 
-      appLogger.debug(`New block received ${newBlockNumber} from provider ${providerUrl}...`);
+        appLogger.debug(`New block received ${newBlockNumber} from provider ${providerUrl}...`);
 
-      if (app.currentlySelectedWeb3ClientIndex === providerIndex) {
-        return;
-      }
+        if (app.currentlySelectedWeb3ClientIndex === providerIndex) {
+          return;
+        }
 
-      const blockDiff =
-        app.currentlySelectedWeb3ClientIndex === -1
-          ? newBlockNumber
-          : newBlockNumber - app.blocks.web3ClientBlocks[app.currentlySelectedWeb3ClientIndex];
+        const blockDiff =
+          app.currentlySelectedWeb3ClientIndex === -1
+            ? newBlockNumber
+            : newBlockNumber - app.blocks.web3ClientBlocks[app.currentlySelectedWeb3ClientIndex];
 
-      // Check if this block is more recent than the currently selected provider's block by the max drift
-      // and, if so, switch now
-      if (blockDiff > MAX_PROVIDER_BLOCK_DRIFT && app.lastWeb3ClientPromotion + WEB3_PROVIDER_PROMOTION_TIMEOUT < Date.now()) {
-        appLogger.info(
-          `Switching to provider ${providerUrl} #${providerIndex} because it is ${blockDiff} block(s) ahead of current provider (${newBlockNumber} vs ${
-            app.blocks.web3ClientBlocks[app.currentlySelectedWeb3ClientIndex]
-          })`
-        );
+        // Check if this block is more recent than the currently selected provider's block by the max drift
+        // and, if so, switch now
+        if (blockDiff > MAX_PROVIDER_BLOCK_DRIFT && app.lastWeb3ClientPromotion + WEB3_PROVIDER_PROMOTION_TIMEOUT < Date.now()) {
+          appLogger.info(
+            `Switching to provider ${providerUrl} #${providerIndex} because it is ${blockDiff} block(s) ahead of current provider (${newBlockNumber} vs ${
+              app.blocks.web3ClientBlocks[app.currentlySelectedWeb3ClientIndex]
+            })`
+          );
 
-        setCurrentWeb3Client(providerIndex);
-      }
-    });
+          setCurrentWeb3Client(providerIndex);
+        }
+      })
+      .on('error', (error) => {
+        appLogger.error(`Provider ${providerUrl} error from newBlockHeads subscription:`, error);
+      });
   }
 
   provider.on('connect', () => {
@@ -410,6 +417,7 @@ setInterval(() => {
       .diff(DateTime.fromJSDate(executionStats.startTime), ['days', 'hours', 'minutes', 'seconds'])
       .toFormat("d'd'h'h'm'm's's'"),
     blockDiff: [...app.blocks.web3ClientBlocks],
+    blockLastTs: [...app.blocks.web3ClientBlocksLastTs],
     lastWeb3ClientPromotion: app.lastWeb3ClientPromotion,
   };
 
